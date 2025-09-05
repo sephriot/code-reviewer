@@ -131,7 +131,7 @@ class GitHubMonitor:
                     self.processed_prs.add(pr_id)
                 else:
                     repo_name = pr_info.repository_name
-                    logger.debug(f"PR #{pr_info.number} in {repo_name} already processed this session")
+                    logger.info(f"PR #{pr_info.number} in {repo_name} already processed this session")
                     
         except Exception as e:
             logger.error(f"Error checking for PRs: {e}")
