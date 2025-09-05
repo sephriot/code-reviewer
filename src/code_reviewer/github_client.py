@@ -30,6 +30,20 @@ class GitHubClient:
         if self.session:
             await self.session.close()
             
+    async def close(self):
+        """Close the aiohttp session."""
+        logger.debug(f"GitHubClient.close() called, session: {self.session}")
+        if self.session and not self.session.closed:
+            logger.debug("Closing aiohttp session...")
+            await self.session.close()
+            self.session = None
+            logger.debug("aiohttp session closed successfully")
+        elif self.session:
+            logger.debug("aiohttp session already closed")
+            self.session = None
+        else:
+            logger.debug("No session to close")
+            
     async def get_review_requests(self, username: str, repositories: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """Get PRs where the user is requested as a reviewer."""
         try:

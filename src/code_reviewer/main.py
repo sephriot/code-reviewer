@@ -32,6 +32,7 @@ class CodeReviewer:
         """Handle SIGTERM gracefully."""
         click.echo("Received SIGTERM, shutting down gracefully...")
         self.running = False
+        self.monitor.running = False
         
     async def run(self):
         """Main application loop."""
@@ -50,7 +51,17 @@ class CodeReviewer:
             click.echo(f"Error: {e}", err=True)
             sys.exit(1)
         finally:
-            self.monitor.cleanup()
+            try:
+                if hasattr(self.monitor, 'cleanup_sync'):
+                    click.echo("Starting cleanup...")
+                    self.monitor.cleanup_sync()
+                    click.echo("Cleanup completed")
+                else:
+                    click.echo("Monitor does not have cleanup method")
+            except Exception as e:
+                click.echo(f"Error during cleanup: {e}")
+                import traceback
+                traceback.print_exc()
             click.echo("Shutting down...")
 
 

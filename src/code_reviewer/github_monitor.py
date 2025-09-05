@@ -44,11 +44,45 @@ class GitHubMonitor:
         while self.running:
             try:
                 await self._check_for_new_prs()
-                await asyncio.sleep(self.config.poll_interval)
+                # Use asyncio.sleep with shorter intervals to allow faster shutdown
+                for _ in range(self.config.poll_interval):
+                    if not self.running:
+                        break
+                    await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Error during PR monitoring: {e}")
-                await asyncio.sleep(self.config.poll_interval)
-                
+                # Sleep with interruption check
+                for _ in range(self.config.poll_interval):
+                    if not self.running:
+                        break
+                    await asyncio.sleep(1)
+                    
+        logger.info("PR monitoring stopped")
+    
+    def cleanup_sync(self):
+        """Cleanup resources synchronously."""
+        logger.info("Cleaning up GitHub monitor resources...")
+        self.running = False
+        
+        # Close GitHub client session if it exists
+        if hasattr(self.github_client, 'session') and self.github_client.session:
+            if not self.github_client.session.closed:
+                logger.debug("Closing aiohttp session...")
+                import asyncio
+                # Just mark the session for closure - the event loop will handle it
+                logger.debug("Marking aiohttp session for garbage collection")
+                self.github_client.session = None
+        
+        # Database cleanup (sync)
+        try:
+            if hasattr(self.db, 'close'):
+                self.db.close()
+                logger.debug("Database closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing database: {e}")
+            
+        logger.info("Cleanup completed")
+        
     async def _check_for_new_prs(self):
         """Check for new PRs where user is assigned as reviewer."""
         logger.debug("Checking for new PRs to review...")
