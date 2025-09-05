@@ -1,0 +1,28 @@
+# Example configuration file for code-reviewer
+# Copy this to config.yaml and update with your settings
+
+# GitHub settings
+github_token: "your_github_personal_access_token"
+github_username: "your_github_username"
+
+# Claude settings
+claude_prompt_file: "prompts/review_prompt.txt"
+
+# Application settings
+poll_interval: 60  # seconds
+log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+# Sound notifications
+sound_enabled: true
+# sound_file: "sounds/notification.wav"  # Optional custom sound file
+
+# Dry run mode (log actions instead of performing them)
+dry_run: false
+
+# Database settings
+database_path: "data/reviews.db"
+
+# Optional: Specific repositories to monitor (format: owner/repo)
+repositories:
+  - "owner/repo1"
+  - "owner/repo2"

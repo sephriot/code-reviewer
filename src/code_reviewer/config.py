@@ -1,0 +1,160 @@
+"""Configuration management for the code reviewer."""
+
+import logging
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+import yaml
+
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Config:
+    """Configuration class for the code reviewer application."""
+    
+    github_token: str
+    github_username: str
+    claude_prompt_file: Path
+    poll_interval: int = 60
+    log_level: str = "INFO"
+    repositories: Optional[list] = None
+    sound_enabled: bool = True
+    sound_file: Optional[Path] = None
+    dry_run: bool = False
+    database_path: Path = Path("data/reviews.db")
+    
+    @classmethod
+    def load(cls, config_file: Optional[str] = None, **overrides) -> 'Config':
+        """Load configuration from file and environment variables."""
+        config_data = {}
+        
+        # Load from config file if provided
+        if config_file:
+            config_path = Path(config_file)
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    config_data = yaml.safe_load(f) or {}
+            else:
+                raise FileNotFoundError(f"Config file not found: {config_file}")
+        
+        # Override with environment variables
+        env_mappings = {
+            'GITHUB_TOKEN': 'github_token',
+            'GITHUB_USERNAME': 'github_username',
+            'CLAUDE_PROMPT_FILE': 'claude_prompt_file',
+            'POLL_INTERVAL': 'poll_interval',
+            'LOG_LEVEL': 'log_level',
+            'SOUND_ENABLED': 'sound_enabled',
+            'SOUND_FILE': 'sound_file',
+            'DRY_RUN': 'dry_run',
+            'DATABASE_PATH': 'database_path',
+        }
+        
+        for env_var, config_key in env_mappings.items():
+            value = os.getenv(env_var)
+            if value:
+                if config_key in ['poll_interval']:
+                    config_data[config_key] = int(value)
+                elif config_key in ['sound_enabled', 'dry_run']:
+                    config_data[config_key] = value.lower() in ('true', '1', 'yes', 'on')
+                elif config_key in ['sound_file', 'database_path']:
+                    config_data[config_key] = Path(value)
+                else:
+                    config_data[config_key] = value
+        
+        # Override with function parameters
+        for key, value in overrides.items():
+            if value is not None:
+                config_data[key] = value
+        
+        # Validate required fields
+        required_fields = ['github_token', 'github_username']
+        for field in required_fields:
+            if not config_data.get(field):
+                raise ValueError(f"Required configuration field missing: {field}")
+        
+        # Handle claude_prompt_file
+        if 'claude_prompt_file' in config_data:
+            prompt_file = Path(config_data['claude_prompt_file'])
+        else:
+            # Default to prompts/review_prompt.txt
+            prompt_file = Path('prompts/review_prompt.txt')
+            
+        if not prompt_file.exists():
+            # Create default prompt file
+            prompt_file.parent.mkdir(parents=True, exist_ok=True)
+            cls._create_default_prompt(prompt_file)
+        
+        config_data['claude_prompt_file'] = prompt_file
+        
+        # Handle path conversions
+        for path_field in ['sound_file', 'database_path']:
+            if path_field in config_data and config_data[path_field] is not None:
+                if not isinstance(config_data[path_field], Path):
+                    config_data[path_field] = Path(config_data[path_field])
+        
+        return cls(**config_data)
+    
+    @staticmethod
+    def _create_default_prompt(prompt_file: Path):
+        """Create a default prompt file."""
+        default_prompt = """# Code Review Prompt
+
+You are an experienced software engineer conducting a code review. Please analyze the provided PR and respond with a JSON object in the following format:
+
+```json
+{
+  "action": "approve_with_comment" | "approve_without_comment" | "request_changes" | "requires_human_review",
+  "comment": "Optional comment for approval",
+  "summary": "Summary for requested changes", 
+  "reason": "Reason why human review is needed",
+  "comments": [
+    {
+      "file": "path/to/file.py",
+      "line": 42,
+      "message": "Specific feedback for this line"
+    }
+  ]
+}
+```
+
+## PR Information:
+- **Title:** {title}
+- **Description:** {description}
+- **Author:** {author}
+- **Repository:** {repository}
+- **Branch:** {branch} -> {base_branch}
+- **Files Changed:** {changed_files}
+- **Additions:** {additions} lines
+- **Deletions:** {deletions} lines
+
+## Review Guidelines:
+1. Check for code quality and best practices
+2. Look for potential bugs or security issues
+3. Verify tests are included for new functionality
+4. Ensure documentation is updated if needed
+5. Check for proper error handling
+6. Verify performance considerations
+
+## When to Use Each Action:
+- **approve_with_comment**: Code is good but has minor suggestions
+- **approve_without_comment**: Code is perfect and ready to merge
+- **request_changes**: Code has issues that must be fixed before merging
+- **requires_human_review**: PR is too complex, has architectural implications, or needs domain expertise
+
+Please review the files in the current directory and provide your assessment."""
+
+        prompt_file.write_text(default_prompt, encoding='utf-8')
+        logger.info(f"Created default prompt file: {prompt_file}")
+        
+    def setup_logging(self):
+        """Set up logging configuration."""
+        logging.basicConfig(
+            level=getattr(logging, self.log_level.upper()),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
