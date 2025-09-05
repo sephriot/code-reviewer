@@ -102,6 +102,10 @@ class GitHubMonitor:
                 
                 if pr_id not in self.processed_prs:
                     logger.info(f"Found new PR to review: {pr_info['title']} (#{pr_info['number']})")
+                    # Play notification sound for new PR discovery in dry run mode only
+                    if self.config.dry_run:
+                        logger.debug("Playing notification sound for new PR discovery (dry run mode)")
+                        await self.sound_notifier.play_notification()
                     
                     # Get PR details to check if we should review
                     pr_details = await self.github_client.get_pr_details(
