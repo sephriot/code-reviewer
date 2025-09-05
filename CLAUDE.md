@@ -11,12 +11,16 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - **Smart Tracking**: SQLite database prevents duplicate reviews and tracks history
 - **Multi-Modal Actions**: Four different review outcomes including human escalation
 - **Cross-Platform Sound**: Audio notifications work on macOS, Linux, and Windows
+- **Comprehensive Logging**: Debug and info level logging for all operations with proper shutdown handling
+- **Repository Filtering**: Monitor specific repositories or all accessible repositories
+- **Enhanced Prompts**: Exemplary review prompt with breaking change detection and clear action guidelines
+- **Minimal Data Fetching**: GitHub client only fetches minimal PR info; Claude Code handles all detailed data retrieval
 
 ## Key Components
 
 1. **GitHubMonitor**: Orchestrates the monitoring loop, PR processing, and review decision logic
-2. **GitHubClient**: Handles all GitHub API interactions (async) with comprehensive PR data retrieval
-3. **ClaudeIntegration**: Manages Claude Code execution, result parsing, and four action types
+2. **GitHubClient**: Handles GitHub API interactions (async) for PR discovery only - returns minimal PR info
+3. **ClaudeIntegration**: Manages Claude Code execution with PR URLs, result parsing, and four action types
 4. **Config**: Centralized configuration management with validation and path handling
 5. **ReviewDatabase**: SQLite-based PR review tracking with smart duplicate prevention
 6. **SoundNotifier**: Cross-platform audio notification system for human review alerts
@@ -61,13 +65,15 @@ This project is an automated GitHub PR code review system. Here are project-spec
 
 ### Customizing GitHub API Interactions
 - All API calls should be async using aiohttp
+- GitHub client only fetches minimal PR identification info (ID, number, repository, URL)
 - Handle rate limiting (429 responses)
-- Use appropriate GitHub API endpoints
+- Use appropriate GitHub API endpoints for PR discovery
 - Validate response data before processing
 
 ### Modifying Claude Integration
-- Ensure Claude Code CLI is available in PATH
-- Use temporary directories for security
+- Ensure Claude Code CLI is available in PATH  
+- Pass PR URLs directly to Claude Code for data fetching
+- Claude Code handles all PR information retrieval (files, diffs, metadata)
 - Parse output robustly (JSON preferred, text fallback)
 - Validate review results before acting
 
@@ -90,6 +96,9 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - Graceful fallbacks when audio systems unavailable
 - Support for custom sound files via configuration
 - Can be completely disabled via configuration
+- **Startup notification**: Plays sound when app starts monitoring
+- **New PR discovery**: Plays sound for new PRs (dry run mode only)
+- **Human review alerts**: Plays sound when complex PRs require human review
 
 ## Dependencies
 
@@ -134,6 +143,9 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - Test with a simple PR first
 - Check database content with SQLite tools for review history
 - Test sound notifications independently of PR processing
+- **GitHub Token**: Use `gh auth token` to get token from GitHub CLI
+- **Signal handling**: Test graceful shutdown with SIGTERM/SIGINT
+- **Repository filtering**: Verify repository format is `owner/repo`
 
 ## Future Enhancements
 

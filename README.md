@@ -64,9 +64,25 @@ DRY_RUN=false
 DATABASE_PATH=data/reviews.db
 ```
 
-### GitHub Token Permissions
+### GitHub Token Setup
 
-Your GitHub token needs the following scopes:
+#### Option 1: Use GitHub CLI (Recommended)
+
+If you have the GitHub CLI (`gh`) installed and authenticated:
+
+```bash
+# Get your token from GitHub CLI
+gh auth token
+
+# Automatically update your .env file
+sed -i.bak "s/GITHUB_TOKEN=.*/GITHUB_TOKEN=$(gh auth token)/" .env
+```
+
+This uses the same authentication as your `gh` CLI, so no additional setup is needed.
+
+#### Option 2: Create Personal Access Token
+
+If you don't use GitHub CLI, create a Personal Access Token with these scopes:
 - `repo` (for private repositories)
 - `public_repo` (for public repositories) 
 - `pull_requests:read`

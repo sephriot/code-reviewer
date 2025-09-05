@@ -24,75 +24,46 @@ class ClaudeIntegration:
     def __init__(self, prompt_file: Path):
         self.prompt_file = prompt_file
         
-    async def review_pr(self, pr_details: dict) -> dict:
-        """Review PR using Claude Code."""
+    async def review_pr(self, pr_info: dict) -> dict:
+        """Review PR using Claude Code - Claude Code will fetch all PR information."""
         try:
-            # Prepare context for Claude
-            context = self._prepare_context(pr_details)
+            # Run Claude Code with the PR URL - Claude Code will handle all data fetching
+            result = await self._run_claude_code(pr_info)
             
-            # Create temporary files for Claude to work with
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
-                
-                # Write PR files to temp directory
-                await self._write_pr_files(temp_path, pr_details)
-                
-                # Run Claude Code with the prompt
-                result = await self._run_claude_code(temp_path, context)
-                
-                # Parse and validate result
-                return self._parse_review_result(result)
+            # Parse and validate result
+            return self._parse_review_result(result)
                 
         except Exception as e:
             logger.error(f"Error during Claude review: {e}")
             raise
             
-    def _prepare_context(self, pr_details: dict) -> dict:
-        """Prepare context information for Claude."""
-        return {
-            'title': pr_details.get('title', ''),
-            'description': pr_details.get('body', ''),
-            'author': pr_details.get('author', ''),
-            'repository': pr_details.get('repository', ''),
-            'branch': pr_details.get('head_branch', ''),
-            'base_branch': pr_details.get('base_branch', ''),
-            'changed_files': pr_details.get('changed_files', []),
-            'additions': pr_details.get('additions', 0),
-            'deletions': pr_details.get('deletions', 0),
-        }
-        
-    async def _write_pr_files(self, temp_path: Path, pr_details: dict):
-        """Write PR files to temporary directory for Claude to analyze."""
-        files = pr_details.get('files', [])
-        
-        for file_info in files:
-            file_path = temp_path / file_info['filename']
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Write the new content if available, otherwise the patch
-            content = file_info.get('content', file_info.get('patch', ''))
-            if content:
-                file_path.write_text(content, encoding='utf-8')
                 
-    async def _run_claude_code(self, work_dir: Path, context: dict) -> str:
-        """Run Claude Code with the review prompt."""
+    async def _run_claude_code(self, pr_info: dict) -> str:
+        """Run Claude Code with the review prompt and PR URL."""
         try:
             # Read the prompt template
             prompt_template = self.prompt_file.read_text(encoding='utf-8')
             
-            # Format prompt with context
-            formatted_prompt = self._format_prompt(prompt_template, context)
+            # Build the full prompt with PR URL
+            pr_url = pr_info['url']
+            repo_name = '/'.join(pr_info['repository'])
+            pr_number = pr_info['number']
             
-            # Create a temporary prompt file
-            prompt_file = work_dir / "review_prompt.txt"
-            prompt_file.write_text(formatted_prompt, encoding='utf-8')
-            
-            # Run Claude Code
-            cmd = ['claude-code', '--non-interactive', str(prompt_file)]
+            full_prompt = f"""Please review this GitHub pull request: {pr_url}
+
+Repository: {repo_name}
+PR Number: #{pr_number}
+
+{prompt_template}
+
+Please analyze the pull request at {pr_url} and provide your review following the instructions above."""
+
+            # Run Claude Code directly with the prompt
+            cmd = ['claude', '--print']
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
-                cwd=work_dir,
+                input=full_prompt.encode(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -108,13 +79,6 @@ class ClaudeIntegration:
             logger.error(f"Error running Claude Code: {e}")
             raise
             
-    def _format_prompt(self, template: str, context: dict) -> str:
-        """Format the prompt template with context variables."""
-        try:
-            return template.format(**context)
-        except KeyError as e:
-            logger.warning(f"Missing context variable in prompt template: {e}")
-            return template
             
     def _parse_review_result(self, claude_output: str) -> dict:
         """Parse Claude's review output into structured result."""

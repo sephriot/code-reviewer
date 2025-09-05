@@ -45,7 +45,7 @@ class GitHubClient:
             logger.debug("No session to close")
             
     async def get_review_requests(self, username: str, repositories: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-        """Get PRs where the user is requested as a reviewer."""
+        """Get PRs where the user is requested as a reviewer - minimal info only."""
         try:
             # Use GitHub search API to find PRs where user is requested as reviewer
             query = f"type:pr state:open review-requested:{username}"
@@ -94,12 +94,11 @@ class GitHubClient:
                 prs = []
                 for item in data.get('items', []):
                     if item.get('pull_request'):  # Ensure it's a PR
+                        # Only return minimal info - Claude Code will fetch the rest
                         pr_info = {
                             'id': item['id'],
                             'number': item['number'],
-                            'title': item['title'],
                             'repository': item['repository_url'].split('/')[-2:],  # owner/repo
-                            'author': item['user']['login'],
                             'url': item['html_url']
                         }
                         prs.append(pr_info)
@@ -110,93 +109,6 @@ class GitHubClient:
             logger.error(f"Error fetching review requests: {e}")
             return []
             
-    async def get_pr_details(self, repository: List[str], pr_number: int) -> Dict[str, Any]:
-        """Get detailed information about a PR including files and diff."""
-        try:
-            owner, repo_name = repository[0], repository[1]
-            
-            if not self.session:
-                self.session = aiohttp.ClientSession(
-                    headers={
-                        'Authorization': f'token {self.token}',
-                        'Accept': 'application/vnd.github.v3+json',
-                    }
-                )
-            
-            # Get PR details
-            pr_url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}"
-            async with self.session.get(pr_url) as response:
-                pr_data = await response.json()
-                
-                if response.status != 200:
-                    raise Exception(f"GitHub API error: {pr_data}")
-            
-            # Get PR files
-            files_url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/files"
-            async with self.session.get(files_url) as response:
-                files_data = await response.json()
-                
-                if response.status != 200:
-                    raise Exception(f"GitHub API error: {files_data}")
-            
-            # Process files and get content for new/modified files
-            files = []
-            for file_info in files_data:
-                file_data = {
-                    'filename': file_info['filename'],
-                    'status': file_info['status'],
-                    'additions': file_info['additions'],
-                    'deletions': file_info['deletions'],
-                    'patch': file_info.get('patch', '')
-                }
-                
-                # Get full file content for new/modified files
-                if file_info['status'] in ['added', 'modified']:
-                    content = await self._get_file_content(owner, repo_name, file_info['filename'], pr_data['head']['sha'])
-                    if content:
-                        file_data['content'] = content
-                        
-                files.append(file_data)
-            
-            return {
-                'title': pr_data['title'],
-                'body': pr_data.get('body', ''),
-                'author': pr_data['user']['login'],
-                'repository': f"{owner}/{repo_name}",
-                'number': pr_number,
-                'head_branch': pr_data['head']['ref'],
-                'base_branch': pr_data['base']['ref'],
-                'changed_files': [f['filename'] for f in files],
-                'additions': pr_data['additions'],
-                'deletions': pr_data['deletions'],
-                'files': files,
-                'head_sha': pr_data['head']['sha'],
-                'base_sha': pr_data['base']['sha'],
-                'updated_at': pr_data['updated_at']
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting PR details: {e}")
-            raise
-            
-    async def _get_file_content(self, owner: str, repo: str, file_path: str, sha: str) -> Optional[str]:
-        """Get the content of a file at a specific commit."""
-        try:
-            url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
-            params = {'ref': sha}
-            
-            async with self.session.get(url, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    import base64
-                    return base64.b64decode(data['content']).decode('utf-8')
-                else:
-                    logger.warning(f"Could not get content for {file_path}: {response.status}")
-                    return None
-                    
-        except Exception as e:
-            logger.error(f"Error getting file content for {file_path}: {e}")
-            return None
             
     async def approve_pr(self, repository: List[str], pr_number: int, comment: Optional[str] = None):
         """Approve a PR with optional comment."""

@@ -79,23 +79,19 @@ class ReviewDatabase:
         conn.commit()
         logger.info(f"Database initialized at: {self.db_path}")
         
-    async def record_review(self, pr_info: Dict[str, Any], pr_details: Dict[str, Any], 
-                           review_result: Dict[str, Any]) -> int:
+    async def record_review(self, pr_info: Dict[str, Any], review_result: Dict[str, Any]) -> int:
         """Record a completed PR review."""
         return await asyncio.get_event_loop().run_in_executor(
-            None, self._record_review_sync, pr_info, pr_details, review_result
+            None, self._record_review_sync, pr_info, review_result
         )
         
-    def _record_review_sync(self, pr_info: Dict[str, Any], pr_details: Dict[str, Any], 
-                           review_result: Dict[str, Any]) -> int:
+    def _record_review_sync(self, pr_info: Dict[str, Any], review_result: Dict[str, Any]) -> int:
         """Synchronous implementation of record_review."""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         repository = '/'.join(pr_info['repository'])
         pr_number = pr_info['number']
-        head_sha = pr_details.get('head_sha', '')
-        base_sha = pr_details.get('base_sha', '')
         
         # Count inline comments
         inline_comments_count = len(review_result.get('comments', []))
@@ -110,17 +106,17 @@ class ReviewDatabase:
             """, (
                 repository,
                 pr_number,
-                pr_info.get('title', ''),
-                pr_details.get('author', ''),
+                '',  # PR title - Claude Code would have this info but we don't need it for tracking
+                '',  # PR author - Claude Code would have this info but we don't need it for tracking
                 review_result['action'],
                 review_result.get('reason', ''),
                 review_result.get('comment', ''),
                 review_result.get('summary', ''),
                 inline_comments_count,
                 datetime.now(timezone.utc).isoformat(),
-                pr_details.get('updated_at', ''),
-                head_sha,
-                base_sha
+                '',  # PR updated_at - not needed for simplified tracking
+                '',  # head_sha - not needed for simplified tracking
+                ''   # base_sha - not needed for simplified tracking
             ))
             
             review_id = cursor.lastrowid
@@ -154,11 +150,10 @@ class ReviewDatabase:
             return dict(row)
         return None
         
-    async def should_review_pr(self, pr_info: Dict[str, Any], pr_details: Dict[str, Any]) -> bool:
-        """Determine if a PR should be reviewed based on history."""
+    async def should_review_pr(self, pr_info: Dict[str, Any]) -> bool:
+        """Determine if a PR should be reviewed based on history - simplified version."""
         repository = '/'.join(pr_info['repository'])
         pr_number = pr_info['number']
-        current_head_sha = pr_details.get('head_sha', '')
         
         latest_review = await self.get_latest_review(repository, pr_number)
         
@@ -166,25 +161,21 @@ class ReviewDatabase:
             logger.info(f"PR #{pr_number} in {repository}: No previous review found, will review")
             return True
             
-        # Check if this is the same commit we already reviewed
-        if latest_review['head_sha'] == current_head_sha:
-            action = latest_review['review_action']
-            logger.info(f"PR #{pr_number} in {repository}: Already reviewed commit {current_head_sha[:8]} with action '{action}'")
+        # For simplified tracking, we'll be more conservative and re-review if it's been a while
+        # or if the previous action requires human review (in case human has addressed it)
+        action = latest_review['review_action']
+        logger.info(f"PR #{pr_number} in {repository}: Previous review action was '{action}'")
+        
+        # Don't review again if we recently took a decisive action
+        if action in [ReviewAction.APPROVE_WITH_COMMENT.value, 
+                     ReviewAction.APPROVE_WITHOUT_COMMENT.value,
+                     ReviewAction.REQUEST_CHANGES.value]:
+            logger.info(f"PR #{pr_number} in {repository}: Skipping - already processed with decisive action")
+            return False
             
-            # Don't review again if it was marked for human review
-            if action == ReviewAction.REQUIRES_HUMAN_REVIEW.value:
-                logger.info(f"PR #{pr_number} in {repository}: Skipping - requires human review")
-                return False
-                
-            # Don't review again if we already took action (approved or requested changes)
-            if action in [ReviewAction.APPROVE_WITH_COMMENT.value, 
-                         ReviewAction.APPROVE_WITHOUT_COMMENT.value,
-                         ReviewAction.REQUEST_CHANGES.value]:
-                logger.info(f"PR #{pr_number} in {repository}: Skipping - already processed")
-                return False
-                
-        else:
-            logger.info(f"PR #{pr_number} in {repository}: New commit {current_head_sha[:8]}, will review")
+        # Always re-review if it was marked for human review (human might have addressed it)
+        if action == ReviewAction.REQUIRES_HUMAN_REVIEW.value:
+            logger.info(f"PR #{pr_number} in {repository}: Will review - previous human review requirement may have been addressed")
             return True
             
         return True

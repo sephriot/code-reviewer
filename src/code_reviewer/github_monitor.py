@@ -105,23 +105,18 @@ class GitHubMonitor:
                 pr_id = pr_info['id']
                 
                 if pr_id not in self.processed_prs:
-                    logger.info(f"Found new PR to review: {pr_info['title']} (#{pr_info['number']})")
+                    repo_name = '/'.join(pr_info['repository'])
+                    logger.info(f"Found new PR to review: #{pr_info['number']} in {repo_name}")
                     # Play notification sound for new PR discovery in dry run mode only
                     if self.config.dry_run:
                         logger.debug("Playing notification sound for new PR discovery (dry run mode)")
                         await self.sound_notifier.play_notification()
                     
-                    # Get PR details to check if we should review
-                    pr_details = await self.github_client.get_pr_details(
-                        pr_info['repository'], 
-                        pr_info['number']
-                    )
-                    
-                    # Check if we should review this PR based on history
-                    should_review = await self.db.should_review_pr(pr_info, pr_details)
+                    # Check if we should review this PR based on history (simplified check)
+                    should_review = await self.db.should_review_pr(pr_info)
                     
                     if should_review:
-                        await self._process_pr(pr_info, pr_details)
+                        await self._process_pr(pr_info)
                     else:
                         logger.info(f"Skipping PR #{pr_info['number']} - already reviewed or requires human attention")
                     
@@ -130,28 +125,28 @@ class GitHubMonitor:
         except Exception as e:
             logger.error(f"Error checking for PRs: {e}")
             
-    async def _process_pr(self, pr_info: dict, pr_details: dict):
+    async def _process_pr(self, pr_info: dict):
         """Process a single PR for review."""
         repo_name = '/'.join(pr_info['repository'])
-        logger.info(f"Processing PR #{pr_info['number']} in {repo_name}: '{pr_info['title']}'")
+        logger.info(f"Processing PR #{pr_info['number']} in {repo_name}")
         try:
-            # Run Claude code review
+            # Run Claude code review - Claude Code will fetch all PR details
             logger.debug(f"Running Claude code review for PR #{pr_info['number']}")
-            review_result = await self.claude_integration.review_pr(pr_details)
+            review_result = await self.claude_integration.review_pr(pr_info)
             
             # Act on the review result
-            await self._act_on_review(pr_info, pr_details, review_result)
+            await self._act_on_review(pr_info, review_result)
             
             # Record the review in database (unless in dry run mode)
             if not self.config.dry_run:
-                await self.db.record_review(pr_info, pr_details, review_result)
+                await self.db.record_review(pr_info, review_result)
             else:
                 logger.info(f"[DRY RUN] Would record review in database for PR #{pr_info['number']}")
             
         except Exception as e:
             logger.error(f"Error processing PR #{pr_info['number']}: {e}")
             
-    async def _act_on_review(self, pr_info: dict, pr_details: dict, review_result: dict):
+    async def _act_on_review(self, pr_info: dict, review_result: dict):
         """Act on Claude's review result."""
         action = ReviewAction(review_result['action'])
         
