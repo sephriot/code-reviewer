@@ -59,16 +59,16 @@ PR Number: #{pr_number}
 Please analyze the pull request at {pr_url} and provide your review following the instructions above."""
 
             # Run Claude Code directly with the prompt
-            cmd = ['claude', '--print']
+            cmd = ['claude']
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
-                input=full_prompt.encode(),
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await process.communicate(input=full_prompt.encode())
             
             if process.returncode != 0:
                 raise RuntimeError(f"Claude Code failed: {stderr.decode()}")
