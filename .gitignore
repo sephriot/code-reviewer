@@ -141,3 +141,4 @@ Thumbs.db
 config/local_config.yaml
 logs/
 data/
+prompts/review_prompt.txt
