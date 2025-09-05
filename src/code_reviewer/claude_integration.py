@@ -75,20 +75,41 @@ Please analyze the pull request at {pr_url} and provide your review following th
     def _parse_review_result(self, claude_output: str) -> ReviewResult:
         """Parse Claude's review output into structured result."""
         try:
-            # Look for JSON output in Claude's response
-            lines = claude_output.strip().split('\n')
+            # Look for JSON output in Claude's response - try multiple approaches
             
+            # Approach 1: Look for complete JSON blocks (including multiline)
+            import re
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            json_matches = re.findall(json_pattern, claude_output, re.DOTALL)
+            
+            for json_str in json_matches:
+                json_str = json_str.strip()
+                try:
+                    result_dict = json.loads(json_str)
+                    self._validate_review_result(result_dict)
+                    logger.info(f"Successfully parsed JSON: {result_dict}")
+                    return ReviewResult.from_dict(result_dict)
+                except json.JSONDecodeError as e:
+                    logger.debug(f"Failed to parse JSON candidate: {e}")
+                    continue
+            
+            # Approach 2: Look for line-based JSON
+            lines = claude_output.strip().split('\n')
             for line in lines:
                 line = line.strip()
                 if line.startswith('{') and line.endswith('}'):
                     try:
                         result_dict = json.loads(line)
                         self._validate_review_result(result_dict)
+                        logger.info(f"Successfully parsed line JSON: {result_dict}")
                         return ReviewResult.from_dict(result_dict)
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        logger.debug(f"Failed to parse line JSON: {e}")
                         continue
                         
-            # If no JSON found, try to parse structured text
+            # If no JSON found, log the issue and use fallback
+            logger.warning(f"No valid JSON found in Claude output, falling back to text parsing. Output length: {len(claude_output)}")
+            logger.debug(f"Claude output preview: {claude_output[:500]}...")
             return self._parse_text_result(claude_output)
             
         except Exception as e:
@@ -116,26 +137,28 @@ Please analyze the pull request at {pr_url} and provide your review following th
             
     def _parse_text_result(self, output: str) -> ReviewResult:
         """Parse text-based review result as fallback."""
-        # Simple text parsing - this could be enhanced based on your prompt format
+        logger.warning("Using text fallback parsing - this indicates Claude didn't follow JSON-only instructions")
+        
+        # For fast review prompt, we should only have two actions
+        # If we're falling back to text parsing, be more conservative
         output_lower = output.lower()
         
         if 'human' in output_lower and 'review' in output_lower:
+            # Extract a brief reason from the output instead of using the entire text
+            brief_reason = "Requires human review (extracted from text response)"
             return ReviewResult(
                 action=ReviewAction.REQUIRES_HUMAN_REVIEW,
-                reason=output
-            )
-        elif 'approve' in output_lower and 'comment' in output_lower:
-            return ReviewResult(
-                action=ReviewAction.APPROVE_WITH_COMMENT,
-                comment=output
+                reason=brief_reason
             )
         elif 'approve' in output_lower:
+            # Don't use APPROVE_WITH_COMMENT in text fallback to avoid long comments
+            # The fast prompt should only approve without comments anyway
             return ReviewResult(
                 action=ReviewAction.APPROVE_WITHOUT_COMMENT
             )
         else:
+            # Default to requiring human review if unclear
             return ReviewResult(
-                action=ReviewAction.REQUEST_CHANGES,
-                summary=output,
-                comments=[]
+                action=ReviewAction.REQUIRES_HUMAN_REVIEW,
+                reason="Could not parse review decision - requires human review"
             )
