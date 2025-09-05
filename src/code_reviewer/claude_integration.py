@@ -21,7 +21,7 @@ class ClaudeIntegration:
         try:
             # Run Claude Code with the PR URL - Claude Code will handle all data fetching
             result = await self._run_claude_code(pr_info)
-            
+
             # Parse and validate result
             return self._parse_review_result(result)
                 
