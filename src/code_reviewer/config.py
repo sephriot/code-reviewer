@@ -48,6 +48,7 @@ class Config:
             'CLAUDE_PROMPT_FILE': 'claude_prompt_file',
             'POLL_INTERVAL': 'poll_interval',
             'LOG_LEVEL': 'log_level',
+            'REPOSITORIES': 'repositories',
             'SOUND_ENABLED': 'sound_enabled',
             'SOUND_FILE': 'sound_file',
             'DRY_RUN': 'dry_run',
@@ -63,6 +64,10 @@ class Config:
                     config_data[config_key] = value.lower() in ('true', '1', 'yes', 'on')
                 elif config_key in ['sound_file', 'database_path']:
                     config_data[config_key] = Path(value)
+                elif config_key == 'repositories':
+                    # Parse comma-separated repositories
+                    repos = [repo.strip() for repo in value.split(',') if repo.strip()]
+                    config_data[config_key] = repos if repos else None
                 else:
                     config_data[config_key] = value
         
