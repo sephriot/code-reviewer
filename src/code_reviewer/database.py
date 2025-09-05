@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 import threading
 
-from .claude_integration import ReviewAction
+from .models import PRInfo, ReviewResult, ReviewRecord, ReviewAction
 
 
 logger = logging.getLogger(__name__)
@@ -79,22 +79,22 @@ class ReviewDatabase:
         conn.commit()
         logger.info(f"Database initialized at: {self.db_path}")
         
-    async def record_review(self, pr_info: Dict[str, Any], review_result: Dict[str, Any]) -> int:
+    async def record_review(self, pr_info: PRInfo, review_result: ReviewResult) -> int:
         """Record a completed PR review."""
         return await asyncio.get_event_loop().run_in_executor(
             None, self._record_review_sync, pr_info, review_result
         )
         
-    def _record_review_sync(self, pr_info: Dict[str, Any], review_result: Dict[str, Any]) -> int:
+    def _record_review_sync(self, pr_info: PRInfo, review_result: ReviewResult) -> int:
         """Synchronous implementation of record_review."""
         conn = self._get_connection()
         cursor = conn.cursor()
         
-        repository = '/'.join(pr_info['repository'])
-        pr_number = pr_info['number']
+        repository = pr_info.repository_name
+        pr_number = pr_info.number
         
         # Count inline comments
-        inline_comments_count = len(review_result.get('comments', []))
+        inline_comments_count = review_result.inline_comments_count
         
         try:
             cursor.execute("""
@@ -108,10 +108,10 @@ class ReviewDatabase:
                 pr_number,
                 '',  # PR title - Claude Code would have this info but we don't need it for tracking
                 '',  # PR author - Claude Code would have this info but we don't need it for tracking
-                review_result['action'],
-                review_result.get('reason', ''),
-                review_result.get('comment', ''),
-                review_result.get('summary', ''),
+                review_result.action.value,
+                review_result.reason or '',
+                review_result.comment or '',
+                review_result.summary or '',
                 inline_comments_count,
                 datetime.now(timezone.utc).isoformat(),
                 '',  # PR updated_at - not needed for simplified tracking
@@ -127,13 +127,13 @@ class ReviewDatabase:
             logger.error(f"Error recording review: {e}")
             raise
             
-    async def get_latest_review(self, repository: str, pr_number: int) -> Optional[Dict[str, Any]]:
+    async def get_latest_review(self, repository: str, pr_number: int) -> Optional[ReviewRecord]:
         """Get the latest review for a specific PR."""
         return await asyncio.get_event_loop().run_in_executor(
             None, self._get_latest_review_sync, repository, pr_number
         )
         
-    def _get_latest_review_sync(self, repository: str, pr_number: int) -> Optional[Dict[str, Any]]:
+    def _get_latest_review_sync(self, repository: str, pr_number: int) -> Optional[ReviewRecord]:
         """Synchronous implementation of get_latest_review."""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -147,13 +147,13 @@ class ReviewDatabase:
         
         row = cursor.fetchone()
         if row:
-            return dict(row)
+            return ReviewRecord.from_db_row(dict(row))
         return None
         
-    async def should_review_pr(self, pr_info: Dict[str, Any]) -> bool:
+    async def should_review_pr(self, pr_info: PRInfo) -> bool:
         """Determine if a PR should be reviewed based on history - simplified version."""
-        repository = '/'.join(pr_info['repository'])
-        pr_number = pr_info['number']
+        repository = pr_info.repository_name
+        pr_number = pr_info.number
         
         latest_review = await self.get_latest_review(repository, pr_number)
         
@@ -163,18 +163,18 @@ class ReviewDatabase:
             
         # For simplified tracking, we'll be more conservative and re-review if it's been a while
         # or if the previous action requires human review (in case human has addressed it)
-        action = latest_review['review_action']
-        logger.info(f"PR #{pr_number} in {repository}: Previous review action was '{action}'")
+        action = latest_review.review_action
+        logger.info(f"PR #{pr_number} in {repository}: Previous review action was '{action.value}'")
         
         # Don't review again if we recently took a decisive action
-        if action in [ReviewAction.APPROVE_WITH_COMMENT.value, 
-                     ReviewAction.APPROVE_WITHOUT_COMMENT.value,
-                     ReviewAction.REQUEST_CHANGES.value]:
+        if action in [ReviewAction.APPROVE_WITH_COMMENT, 
+                     ReviewAction.APPROVE_WITHOUT_COMMENT,
+                     ReviewAction.REQUEST_CHANGES]:
             logger.info(f"PR #{pr_number} in {repository}: Skipping - already processed with decisive action")
             return False
             
         # Always re-review if it was marked for human review (human might have addressed it)
-        if action == ReviewAction.REQUIRES_HUMAN_REVIEW.value:
+        if action == ReviewAction.REQUIRES_HUMAN_REVIEW:
             logger.info(f"PR #{pr_number} in {repository}: Will review - previous human review requirement may have been addressed")
             return True
             
@@ -222,13 +222,13 @@ class ReviewDatabase:
             'unique_repositories': unique_repos
         }
         
-    async def get_repository_reviews(self, repository: str, limit: int = 20) -> List[Dict[str, Any]]:
+    async def get_repository_reviews(self, repository: str, limit: int = 20) -> List[ReviewRecord]:
         """Get recent reviews for a specific repository."""
         return await asyncio.get_event_loop().run_in_executor(
             None, self._get_repository_reviews_sync, repository, limit
         )
         
-    def _get_repository_reviews_sync(self, repository: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def _get_repository_reviews_sync(self, repository: str, limit: int = 20) -> List[ReviewRecord]:
         """Synchronous implementation of get_repository_reviews."""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -240,7 +240,7 @@ class ReviewDatabase:
             LIMIT ?
         """, (repository, limit))
         
-        return [dict(row) for row in cursor.fetchall()]
+        return [ReviewRecord.from_db_row(dict(row)) for row in cursor.fetchall()]
         
     def close(self):
         """Close database connections."""

@@ -6,10 +6,11 @@ from datetime import datetime, timedelta
 from typing import Set, Optional
 
 from .github_client import GitHubClient
-from .claude_integration import ClaudeIntegration, ReviewAction
+from .claude_integration import ClaudeIntegration
 from .config import Config
 from .sound_notifier import SoundNotifier
 from .database import ReviewDatabase
+from .models import PRInfo, ReviewResult, ReviewAction
 
 
 logger = logging.getLogger(__name__)
@@ -102,11 +103,11 @@ class GitHubMonitor:
                 logger.debug("No PRs found pending review")
             
             for pr_info in prs:
-                pr_id = pr_info['id']
+                pr_id = pr_info.id
                 
                 if pr_id not in self.processed_prs:
-                    repo_name = '/'.join(pr_info['repository'])
-                    logger.info(f"Found new PR to review: #{pr_info['number']} in {repo_name}")
+                    repo_name = pr_info.repository_name
+                    logger.info(f"Found new PR to review: #{pr_info.number} in {repo_name}")
                     # Play notification sound for new PR discovery in dry run mode only
                     if self.config.dry_run:
                         logger.debug("Playing notification sound for new PR discovery (dry run mode)")
@@ -118,20 +119,20 @@ class GitHubMonitor:
                     if should_review:
                         await self._process_pr(pr_info)
                     else:
-                        logger.info(f"Skipping PR #{pr_info['number']} - already reviewed or requires human attention")
+                        logger.info(f"Skipping PR #{pr_info.number} - already reviewed or requires human attention")
                     
                     self.processed_prs.add(pr_id)
                     
         except Exception as e:
             logger.error(f"Error checking for PRs: {e}")
             
-    async def _process_pr(self, pr_info: dict):
+    async def _process_pr(self, pr_info: PRInfo):
         """Process a single PR for review."""
-        repo_name = '/'.join(pr_info['repository'])
-        logger.info(f"Processing PR #{pr_info['number']} in {repo_name}")
+        repo_name = pr_info.repository_name
+        logger.info(f"Processing PR #{pr_info.number} in {repo_name}")
         try:
             # Run Claude code review - Claude Code will fetch all PR details
-            logger.debug(f"Running Claude code review for PR #{pr_info['number']}")
+            logger.debug(f"Running Claude code review for PR #{pr_info.number}")
             review_result = await self.claude_integration.review_pr(pr_info)
             
             # Act on the review result
@@ -141,14 +142,14 @@ class GitHubMonitor:
             if not self.config.dry_run:
                 await self.db.record_review(pr_info, review_result)
             else:
-                logger.info(f"[DRY RUN] Would record review in database for PR #{pr_info['number']}")
+                logger.info(f"[DRY RUN] Would record review in database for PR #{pr_info.number}")
             
         except Exception as e:
-            logger.error(f"Error processing PR #{pr_info['number']}: {e}")
+            logger.error(f"Error processing PR #{pr_info.number}: {e}")
             
-    async def _act_on_review(self, pr_info: dict, review_result: dict):
+    async def _act_on_review(self, pr_info: PRInfo, review_result: ReviewResult):
         """Act on Claude's review result."""
-        action = ReviewAction(review_result['action'])
+        action = review_result.action
         
         if self.config.dry_run:
             await self._log_dry_run_action(pr_info, action, review_result)
@@ -156,64 +157,72 @@ class GitHubMonitor:
         
         if action == ReviewAction.APPROVE_WITH_COMMENT:
             await self.github_client.approve_pr(
-                pr_info['repository'],
-                pr_info['number'],
-                review_result.get('comment', '')
+                pr_info.repository,
+                pr_info.number,
+                review_result.comment or ''
             )
-            logger.info(f"Approved PR #{pr_info['number']} with comment")
+            logger.info(f"Approved PR #{pr_info.number} with comment")
             
         elif action == ReviewAction.APPROVE_WITHOUT_COMMENT:
             await self.github_client.approve_pr(
-                pr_info['repository'],
-                pr_info['number']
+                pr_info.repository,
+                pr_info.number
             )
-            logger.info(f"Approved PR #{pr_info['number']} without comment")
+            logger.info(f"Approved PR #{pr_info.number} without comment")
             
         elif action == ReviewAction.REQUEST_CHANGES:
+            # Convert InlineComment objects to dicts for the GitHub client
+            comments_data = []
+            for comment in review_result.comments:
+                comments_data.append({
+                    'file': comment.file,
+                    'line': comment.line,
+                    'message': comment.message
+                })
+            
             await self.github_client.request_changes(
-                pr_info['repository'],
-                pr_info['number'],
-                review_result.get('comments', []),
-                review_result.get('summary', 'Changes requested based on automated review')
+                pr_info.repository,
+                pr_info.number,
+                comments_data,
+                review_result.summary or 'Changes requested based on automated review'
             )
-            logger.info(f"Requested changes for PR #{pr_info['number']}")
+            logger.info(f"Requested changes for PR #{pr_info.number}")
             
         elif action == ReviewAction.REQUIRES_HUMAN_REVIEW:
-            reason = review_result.get('reason', 'PR requires human review')
-            logger.info(f"PR #{pr_info['number']} requires human review: {reason}")
+            reason = review_result.reason or 'PR requires human review'
+            logger.info(f"PR #{pr_info.number} requires human review: {reason}")
             
             # Play notification sound
             await self.sound_notifier.play_notification()
             
-    async def _log_dry_run_action(self, pr_info: dict, action: ReviewAction, review_result: dict):
+    async def _log_dry_run_action(self, pr_info: PRInfo, action: ReviewAction, review_result: ReviewResult):
         """Log what would be done in dry run mode."""
-        repo_name = '/'.join(pr_info['repository'])
-        pr_number = pr_info['number']
-        pr_title = pr_info['title']
+        repo_name = pr_info.repository_name
+        pr_number = pr_info.number
         
-        logger.info(f"[DRY RUN] PR #{pr_number} in {repo_name}: '{pr_title}'")
+        logger.info(f"[DRY RUN] PR #{pr_number} in {repo_name}")
         
         if action == ReviewAction.APPROVE_WITH_COMMENT:
-            comment = review_result.get('comment', '')
+            comment = review_result.comment or ''
             logger.info(f"[DRY RUN] Would APPROVE PR #{pr_number} with comment: {comment}")
             
         elif action == ReviewAction.APPROVE_WITHOUT_COMMENT:
             logger.info(f"[DRY RUN] Would APPROVE PR #{pr_number} without comment")
             
         elif action == ReviewAction.REQUEST_CHANGES:
-            summary = review_result.get('summary', 'Changes requested based on automated review')
-            comments = review_result.get('comments', [])
+            summary = review_result.summary or 'Changes requested based on automated review'
+            comments = review_result.comments
             logger.info(f"[DRY RUN] Would REQUEST CHANGES for PR #{pr_number}")
             logger.info(f"[DRY RUN] Summary: {summary}")
             if comments:
                 logger.info(f"[DRY RUN] Would add {len(comments)} inline comments:")
                 for i, comment in enumerate(comments[:3], 1):  # Log first 3 comments
-                    logger.info(f"[DRY RUN]   {i}. {comment.get('file', 'unknown')}:{comment.get('line', '?')} - {comment.get('message', '')}")
+                    logger.info(f"[DRY RUN]   {i}. {comment.file}:{comment.line} - {comment.message}")
                 if len(comments) > 3:
                     logger.info(f"[DRY RUN]   ... and {len(comments) - 3} more comments")
                     
         elif action == ReviewAction.REQUIRES_HUMAN_REVIEW:
-            reason = review_result.get('reason', 'PR requires human review')
+            reason = review_result.reason or 'PR requires human review'
             logger.info(f"[DRY RUN] Would mark PR #{pr_number} as REQUIRING HUMAN REVIEW")
             logger.info(f"[DRY RUN] Reason: {reason}")
             logger.info(f"[DRY RUN] Would play notification sound (if enabled)")

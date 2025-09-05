@@ -7,6 +7,8 @@ from typing import List, Dict, Any, Optional
 import aiohttp
 from github import Github, PullRequest
 
+from .models import PRInfo
+
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +46,7 @@ class GitHubClient:
         else:
             logger.debug("No session to close")
             
-    async def get_review_requests(self, username: str, repositories: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    async def get_review_requests(self, username: str, repositories: Optional[List[str]] = None) -> List[PRInfo]:
         """Get PRs where the user is requested as a reviewer - minimal info only."""
         try:
             # Use GitHub search API to find PRs where user is requested as reviewer
@@ -95,12 +97,12 @@ class GitHubClient:
                 for item in data.get('items', []):
                     if item.get('pull_request'):  # Ensure it's a PR
                         # Only return minimal info - Claude Code will fetch the rest
-                        pr_info = {
-                            'id': item['id'],
-                            'number': item['number'],
-                            'repository': item['repository_url'].split('/')[-2:],  # owner/repo
-                            'url': item['html_url']
-                        }
+                        pr_info = PRInfo(
+                            id=item['id'],
+                            number=item['number'],
+                            repository=item['repository_url'].split('/')[-2:],  # [owner, repo]
+                            url=item['html_url']
+                        )
                         prs.append(pr_info)
                         
                 return prs
