@@ -125,7 +125,8 @@ class GitHubMonitor:
                     if should_review:
                         await self._process_pr(pr_info)
                     else:
-                        logger.info(f"Skipping PR #{pr_info.number} - already reviewed or requires human attention")
+                        # Get more specific reason for skipping
+                        await self._log_skip_reason(pr_info)
                     
                     self.processed_prs.add(pr_id)
                     
@@ -201,6 +202,32 @@ class GitHubMonitor:
             # Play notification sound
             await self.sound_notifier.play_notification()
             
+    async def _log_skip_reason(self, pr_info: PRInfo):
+        """Log the specific reason why a PR is being skipped."""
+        repository = pr_info.repository_name
+        pr_number = pr_info.number
+        
+        # Get the latest review to determine the specific skip reason
+        latest_review = await self.db.get_latest_review(repository, pr_number)
+        
+        if not latest_review:
+            # This shouldn't happen if should_review_pr returned False, but handle it
+            logger.info(f"Skipping PR #{pr_number} in {repository} - no previous review found but marked to skip")
+            return
+            
+        action = latest_review.review_action
+        
+        if action in [ReviewAction.APPROVE_WITH_COMMENT, 
+                     ReviewAction.APPROVE_WITHOUT_COMMENT,
+                     ReviewAction.REQUEST_CHANGES]:
+            logger.info(f"Skipping PR #{pr_number} in {repository} - already reviewed with action '{action.value}'")
+        elif action == ReviewAction.REQUIRES_HUMAN_REVIEW:
+            # This case should not occur since should_review_pr returns True for human review
+            # But keeping it for completeness
+            logger.info(f"Skipping PR #{pr_number} in {repository} - marked for human review")
+        else:
+            logger.info(f"Skipping PR #{pr_number} in {repository} - previous action: {action.value}")
+    
     async def _log_dry_run_action(self, pr_info: PRInfo, action: ReviewAction, review_result: ReviewResult):
         """Log what would be done in dry run mode."""
         repo_name = pr_info.repository_name
