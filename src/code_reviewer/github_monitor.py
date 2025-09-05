@@ -51,11 +51,17 @@ class GitHubMonitor:
                 
     async def _check_for_new_prs(self):
         """Check for new PRs where user is assigned as reviewer."""
+        logger.debug("Checking for new PRs to review...")
         try:
             prs = await self.github_client.get_review_requests(
                 self.config.github_username, 
                 self.config.repositories
             )
+            
+            if prs:
+                logger.info(f"Found {len(prs)} PR(s) pending review")
+            else:
+                logger.debug("No PRs found pending review")
             
             for pr_info in prs:
                 pr_id = pr_info['id']
@@ -84,8 +90,11 @@ class GitHubMonitor:
             
     async def _process_pr(self, pr_info: dict, pr_details: dict):
         """Process a single PR for review."""
+        repo_name = '/'.join(pr_info['repository'])
+        logger.info(f"Processing PR #{pr_info['number']} in {repo_name}: '{pr_info['title']}'")
         try:
             # Run Claude code review
+            logger.debug(f"Running Claude code review for PR #{pr_info['number']}")
             review_result = await self.claude_integration.review_pr(pr_details)
             
             # Act on the review result

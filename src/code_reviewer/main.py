@@ -90,6 +90,9 @@ def main(config: Optional[str], prompt: Optional[str], github_token: Optional[st
             dry_run=dry_run
         )
         
+        # Set up logging
+        app_config.setup_logging()
+        
         reviewer = CodeReviewer(app_config)
         asyncio.run(reviewer.run())
         
