@@ -45,6 +45,11 @@ class GitHubMonitor:
             logger.info(f"Repository filtering enabled: {', '.join(self.config.repositories)}")
         else:
             logger.info("Monitoring all repositories where you have review access")
+            
+        if self.config.pr_authors:
+            logger.info(f"PR author filtering enabled: {', '.join(self.config.pr_authors)}")
+        else:
+            logger.info("Monitoring PRs from all authors")
         
         while self.running:
             try:
@@ -94,7 +99,8 @@ class GitHubMonitor:
         try:
             prs = await self.github_client.get_review_requests(
                 self.config.github_username, 
-                self.config.repositories
+                self.config.repositories,
+                self.config.pr_authors
             )
             
             if prs:

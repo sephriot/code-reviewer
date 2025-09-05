@@ -22,6 +22,7 @@ class Config:
     poll_interval: int = 60
     log_level: str = "INFO"
     repositories: Optional[list] = None
+    pr_authors: Optional[list] = None
     sound_enabled: bool = True
     sound_file: Optional[Path] = None
     dry_run: bool = False
@@ -49,6 +50,7 @@ class Config:
             'POLL_INTERVAL': 'poll_interval',
             'LOG_LEVEL': 'log_level',
             'REPOSITORIES': 'repositories',
+            'PR_AUTHORS': 'pr_authors',
             'SOUND_ENABLED': 'sound_enabled',
             'SOUND_FILE': 'sound_file',
             'DRY_RUN': 'dry_run',
@@ -64,10 +66,10 @@ class Config:
                     config_data[config_key] = value.lower() in ('true', '1', 'yes', 'on')
                 elif config_key in ['sound_file', 'database_path']:
                     config_data[config_key] = Path(value)
-                elif config_key == 'repositories':
-                    # Parse comma-separated repositories
-                    repos = [repo.strip() for repo in value.split(',') if repo.strip()]
-                    config_data[config_key] = repos if repos else None
+                elif config_key in ['repositories', 'pr_authors']:
+                    # Parse comma-separated lists
+                    items = [item.strip() for item in value.split(',') if item.strip()]
+                    config_data[config_key] = items if items else None
                 else:
                     config_data[config_key] = value
         

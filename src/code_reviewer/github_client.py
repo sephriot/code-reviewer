@@ -46,7 +46,7 @@ class GitHubClient:
         else:
             logger.debug("No session to close")
             
-    async def get_review_requests(self, username: str, repositories: Optional[List[str]] = None) -> List[PRInfo]:
+    async def get_review_requests(self, username: str, repositories: Optional[List[str]] = None, pr_authors: Optional[List[str]] = None) -> List[PRInfo]:
         """Get PRs where the user is requested as a reviewer - minimal info only."""
         try:
             # Use GitHub search API to find PRs where user is requested as reviewer
@@ -93,9 +93,12 @@ class GitHubClient:
                 if response.status != 200:
                     raise Exception(f"GitHub API error: {data}")
                 
-                prs = []
+                all_prs = []
                 for item in data.get('items', []):
                     if item.get('pull_request'):  # Ensure it's a PR
+                        # Get author information from the API response
+                        author = item.get('user', {}).get('login', '')
+                        
                         # Only return minimal info - Claude Code will fetch the rest
                         pr_info = PRInfo(
                             id=item['id'],
@@ -103,9 +106,34 @@ class GitHubClient:
                             repository=item['repository_url'].split('/')[-2:],  # [owner, repo]
                             url=item['html_url']
                         )
-                        prs.append(pr_info)
+                        # Store author for filtering (not part of PRInfo dataclass)
+                        pr_info._author = author
+                        all_prs.append(pr_info)
+                
+                # Apply filters on the application side
+                filtered_prs = all_prs
+                
+                # Filter by repositories
+                if repositories:
+                    logger.info(f"Filtering PRs to repositories: {', '.join(repositories)}")
+                    filtered_prs = [pr for pr in filtered_prs if pr.repository_name in repositories]
+                
+                # Filter by PR authors
+                if pr_authors:
+                    logger.info(f"Filtering PRs to authors: {', '.join(pr_authors)}")
+                    filtered_prs = [pr for pr in filtered_prs if hasattr(pr, '_author') and pr._author in pr_authors]
+                
+                if repositories or pr_authors:
+                    logger.debug(f"Found {len(all_prs)} total PRs, {len(filtered_prs)} match filters")
+                else:
+                    logger.info("No filters specified, monitoring all accessible PRs")
+                
+                # Clean up temporary author attribute
+                for pr in filtered_prs:
+                    if hasattr(pr, '_author'):
+                        delattr(pr, '_author')
                         
-                return prs
+                return filtered_prs
                 
         except Exception as e:
             logger.error(f"Error fetching review requests: {e}")
