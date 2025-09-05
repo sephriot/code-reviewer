@@ -145,6 +145,9 @@ class GitHubMonitor:
             logger.debug(f"Running Claude code review for PR #{pr_info.number}")
             review_result = await self.claude_integration.review_pr(pr_info)
             
+            # Log the review output
+            await self._log_review_output(pr_info, review_result)
+            
             # Act on the review result
             await self._act_on_review(pr_info, review_result)
             
@@ -230,6 +233,34 @@ class GitHubMonitor:
             logger.info(f"Skipping PR #{pr_number} in {repository} - marked for human review")
         else:
             logger.info(f"Skipping PR #{pr_number} in {repository} - previous action: {action.value}")
+    
+    async def _log_review_output(self, pr_info: PRInfo, review_result: ReviewResult):
+        """Log the complete review output for visibility."""
+        repo_name = pr_info.repository_name
+        pr_number = pr_info.number
+        action = review_result.action
+        
+        logger.info(f"🔍 Review completed for PR #{pr_number} in {repo_name}")
+        logger.info(f"📋 PR: '{pr_info.title}' by {pr_info.author}")
+        logger.info(f"⚡ Action: {action.value.upper()}")
+        
+        # Log reason if provided
+        if review_result.reason:
+            logger.info(f"💭 Reason: {review_result.reason}")
+        
+        # Log comment if provided
+        if review_result.comment:
+            logger.info(f"💬 Comment: {review_result.comment}")
+        
+        # Log summary if provided
+        if review_result.summary:
+            logger.info(f"📝 Summary: {review_result.summary}")
+        
+        # Log inline comments if any
+        if review_result.comments:
+            logger.info(f"📍 Inline comments ({len(review_result.comments)}):")
+            for i, comment in enumerate(review_result.comments, 1):
+                logger.info(f"   {i}. {comment.file}:{comment.line} - {comment.message}")
     
     async def _log_dry_run_action(self, pr_info: PRInfo, action: ReviewAction, review_result: ReviewResult):
         """Log what would be done in dry run mode."""

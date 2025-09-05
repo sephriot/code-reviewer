@@ -20,6 +20,8 @@ class PRInfo:
     number: int
     repository: List[str]  # [owner, repo]
     url: str
+    title: str = ""
+    author: str = ""
     
     @property
     def repository_name(self) -> str:

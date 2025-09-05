@@ -106,8 +106,8 @@ class ReviewDatabase:
             """, (
                 repository,
                 pr_number,
-                '',  # PR title - Claude Code would have this info but we don't need it for tracking
-                '',  # PR author - Claude Code would have this info but we don't need it for tracking
+                pr_info.title,  # Now using actual PR title
+                pr_info.author,  # Now using actual PR author
                 review_result.action.value,
                 review_result.reason or '',
                 review_result.comment or '',

@@ -19,7 +19,9 @@ def test_pr_info():
         id=12345,
         number=123,
         repository=['owner', 'repo'],
-        url='https://github.com/owner/repo/pull/123'
+        url='https://github.com/owner/repo/pull/123',
+        title='Test PR Title',
+        author='testauthor'
     )
     
     assert pr_info.repository_name == 'owner/repo'
@@ -142,7 +144,9 @@ def test_data_flow():
         id=12345,
         number=123,
         repository=['owner', 'repo'],
-        url='https://github.com/owner/repo/pull/123'
+        url='https://github.com/owner/repo/pull/123',
+        title='Test PR Title',
+        author='testauthor'
     )
     
     review_result = ReviewResult(
@@ -155,8 +159,8 @@ def test_data_flow():
         id=None,
         repository=pr_info.repository_name,
         pr_number=pr_info.number,
-        pr_title='',
-        pr_author='',
+        pr_title=pr_info.title,
+        pr_author=pr_info.author,
         review_action=review_result.action,
         review_reason=review_result.reason,
         review_comment=review_result.comment,

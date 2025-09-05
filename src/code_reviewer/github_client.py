@@ -77,25 +77,25 @@ class GitHubClient:
                 all_prs = []
                 for item in data.get('items', []):
                     if item.get('pull_request'):  # Ensure it's a PR
-                        # Get author information from the API response
+                        # Get author and title information from the API response
                         author = item.get('user', {}).get('login', '')
+                        title = item.get('title', '')
                         
-                        # Only return minimal info - Claude Code will fetch the rest
+                        # Include title and author in PRInfo for database storage
                         pr_info = PRInfo(
                             id=item['id'],
                             number=item['number'],
                             repository=item['repository_url'].split('/')[-2:],  # [owner, repo]
-                            url=item['html_url']
+                            url=item['html_url'],
+                            title=title,
+                            author=author
                         )
-                        # Store author for filtering (not part of PRInfo dataclass)
-                        pr_info._author = author
                         all_prs.append(pr_info)
                 
                 # Apply filters on the application side
                 logger.debug(f"Found {len(all_prs)} total PRs before filtering")
                 for pr in all_prs:
-                    author = getattr(pr, '_author', 'unknown')
-                    logger.debug(f"  PR #{pr.number} in {pr.repository_name} by {author}")
+                    logger.debug(f"  PR #{pr.number} in {pr.repository_name} by {pr.author}: {pr.title}")
                 
                 filtered_prs = all_prs
                 
@@ -108,17 +108,12 @@ class GitHubClient:
                 # Filter by PR authors
                 if pr_authors:
                     logger.info(f"Filtering PRs to authors: {', '.join(pr_authors)}")
-                    filtered_prs = [pr for pr in filtered_prs if hasattr(pr, '_author') and pr._author in pr_authors]
+                    filtered_prs = [pr for pr in filtered_prs if pr.author in pr_authors]
                 
                 if repositories or pr_authors:
                     logger.debug(f"Found {len(all_prs)} total PRs, {len(filtered_prs)} match filters")
                 else:
                     logger.info("No filters specified, monitoring all accessible PRs")
-                
-                # Clean up temporary author attribute
-                for pr in filtered_prs:
-                    if hasattr(pr, '_author'):
-                        delattr(pr, '_author')
                         
                 return filtered_prs
                 
