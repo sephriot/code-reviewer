@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Set, Optional
 
 from .github_client import GitHubClient
-from .claude_integration import ClaudeIntegration
+from .claude_integration import ClaudeIntegration, ClaudeOutputParseError
 from .config import Config
 from .sound_notifier import SoundNotifier
 from .database import ReviewDatabase
@@ -156,6 +156,15 @@ class GitHubMonitor:
                 await self.db.record_review(pr_info, review_result)
             else:
                 logger.info(f"[DRY RUN] Would record review in database for PR #{pr_info.number}")
+            
+        except ClaudeOutputParseError as e:
+            logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from Claude")
+            logger.error(f"📋 PR: '{pr_info.title}' by {pr_info.author}")
+            logger.error(f"❗ Reason: {str(e)}")
+            logger.error(f"🚫 No action will be taken on this PR - skipping approval/comments and database storage")
+            # Log a preview of the output (truncated for readability)
+            output_preview = e.claude_output[:1000] + "..." if len(e.claude_output) > 1000 else e.claude_output
+            logger.error(f"📤 Claude output preview: {output_preview}")
             
         except Exception as e:
             logger.error(f"Error processing PR #{pr_info.number}: {e}")

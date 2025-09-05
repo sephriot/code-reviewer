@@ -12,6 +12,13 @@ from .models import PRInfo, ReviewResult, ReviewAction
 logger = logging.getLogger(__name__)
 
 
+class ClaudeOutputParseError(Exception):
+    """Raised when Claude's output cannot be parsed as valid JSON."""
+    def __init__(self, message: str, claude_output: str):
+        super().__init__(message)
+        self.claude_output = claude_output
+
+
 class ClaudeIntegration:
     def __init__(self, prompt_file: Path):
         self.prompt_file = prompt_file
@@ -73,53 +80,44 @@ Please analyze the pull request at {pr_url} and provide your review following th
             
             
     def _parse_review_result(self, claude_output: str) -> ReviewResult:
-        """Parse Claude's review output into structured result."""
-        try:
-            # Look for JSON output in Claude's response - try multiple approaches
-            
-            # Approach 1: Look for complete JSON blocks (including multiline)
-            import re
-            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-            json_matches = re.findall(json_pattern, claude_output, re.DOTALL)
-            
-            for json_str in json_matches:
-                json_str = json_str.strip()
+        """Parse Claude's review output into structured result. Fails hard if not valid JSON."""
+        # Look for JSON output in Claude's response - try multiple approaches
+        
+        # Approach 1: Look for complete JSON blocks (including multiline)
+        import re
+        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        json_matches = re.findall(json_pattern, claude_output, re.DOTALL)
+        
+        for json_str in json_matches:
+            json_str = json_str.strip()
+            try:
+                result_dict = json.loads(json_str)
+                self._validate_review_result(result_dict)
+                logger.info(f"Successfully parsed JSON: {result_dict}")
+                return ReviewResult.from_dict(result_dict)
+            except json.JSONDecodeError as e:
+                logger.debug(f"Failed to parse JSON candidate: {e}")
+                continue
+        
+        # Approach 2: Look for line-based JSON
+        lines = claude_output.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.startswith('{') and line.endswith('}'):
                 try:
-                    result_dict = json.loads(json_str)
+                    result_dict = json.loads(line)
                     self._validate_review_result(result_dict)
-                    logger.info(f"Successfully parsed JSON: {result_dict}")
+                    logger.info(f"Successfully parsed line JSON: {result_dict}")
                     return ReviewResult.from_dict(result_dict)
                 except json.JSONDecodeError as e:
-                    logger.debug(f"Failed to parse JSON candidate: {e}")
+                    logger.debug(f"Failed to parse line JSON: {e}")
                     continue
-            
-            # Approach 2: Look for line-based JSON
-            lines = claude_output.strip().split('\n')
-            for line in lines:
-                line = line.strip()
-                if line.startswith('{') and line.endswith('}'):
-                    try:
-                        result_dict = json.loads(line)
-                        self._validate_review_result(result_dict)
-                        logger.info(f"Successfully parsed line JSON: {result_dict}")
-                        return ReviewResult.from_dict(result_dict)
-                    except json.JSONDecodeError as e:
-                        logger.debug(f"Failed to parse line JSON: {e}")
-                        continue
-                        
-            # If no JSON found, log the issue and use fallback
-            logger.warning(f"No valid JSON found in Claude output, falling back to text parsing. Output length: {len(claude_output)}")
-            logger.debug(f"Claude output preview: {claude_output[:500]}...")
-            return self._parse_text_result(claude_output)
-            
-        except Exception as e:
-            logger.error(f"Error parsing Claude output: {e}")
-            # Return default safe action
-            return ReviewResult(
-                action=ReviewAction.REQUEST_CHANGES,
-                summary='Failed to parse review result',
-                comments=[]
-            )
+                    
+        # If no valid JSON found, fail the review completely
+        error_msg = f"Claude output does not contain valid JSON. Output length: {len(claude_output)}"
+        logger.error(error_msg)
+        logger.error(f"Claude output: {claude_output}")
+        raise ClaudeOutputParseError(error_msg, claude_output)
             
     def _validate_review_result(self, result: dict):
         """Validate the review result structure."""
@@ -134,31 +132,3 @@ Please analyze the pull request at {pr_url} and provide your review following th
             ReviewAction(result['action'])
         except ValueError:
             raise ValueError(f"Invalid action: {result['action']}")
-            
-    def _parse_text_result(self, output: str) -> ReviewResult:
-        """Parse text-based review result as fallback."""
-        logger.warning("Using text fallback parsing - this indicates Claude didn't follow JSON-only instructions")
-        
-        # For fast review prompt, we should only have two actions
-        # If we're falling back to text parsing, be more conservative
-        output_lower = output.lower()
-        
-        if 'human' in output_lower and 'review' in output_lower:
-            # Extract a brief reason from the output instead of using the entire text
-            brief_reason = "Requires human review (extracted from text response)"
-            return ReviewResult(
-                action=ReviewAction.REQUIRES_HUMAN_REVIEW,
-                reason=brief_reason
-            )
-        elif 'approve' in output_lower:
-            # Don't use APPROVE_WITH_COMMENT in text fallback to avoid long comments
-            # The fast prompt should only approve without comments anyway
-            return ReviewResult(
-                action=ReviewAction.APPROVE_WITHOUT_COMMENT
-            )
-        else:
-            # Default to requiring human review if unclear
-            return ReviewResult(
-                action=ReviewAction.REQUIRES_HUMAN_REVIEW,
-                reason="Could not parse review decision - requires human review"
-            )
