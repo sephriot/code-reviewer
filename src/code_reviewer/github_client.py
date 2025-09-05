@@ -50,27 +50,8 @@ class GitHubClient:
         """Get PRs where the user is requested as a reviewer - minimal info only."""
         try:
             # Use GitHub search API to find PRs where user is requested as reviewer
+            # Don't add any filters to the query - filter on application side instead
             query = f"type:pr state:open review-requested:{username}"
-            
-            # Add repository filtering if specified
-            if repositories:
-                repo_filters = []
-                for repo in repositories:
-                    # Handle both "owner/repo" and "repo" formats
-                    if '/' in repo:
-                        repo_filters.append(f"repo:{repo}")
-                    else:
-                        # If just repo name, we can't filter without owner
-                        logger.warning(f"Repository '{repo}' should be in 'owner/repo' format for filtering")
-                        continue
-                
-                if repo_filters:
-                    # Add repository filters to query
-                    repo_query = " OR ".join(repo_filters)
-                    query += f" ({repo_query})"
-                    logger.info(f"Filtering PRs to repositories: {', '.join(repositories)}")
-                else:
-                    logger.warning("No valid repositories found for filtering, monitoring all repositories")
             
             if not self.session:
                 self.session = aiohttp.ClientSession(
@@ -111,11 +92,17 @@ class GitHubClient:
                         all_prs.append(pr_info)
                 
                 # Apply filters on the application side
+                logger.debug(f"Found {len(all_prs)} total PRs before filtering")
+                for pr in all_prs:
+                    author = getattr(pr, '_author', 'unknown')
+                    logger.debug(f"  PR #{pr.number} in {pr.repository_name} by {author}")
+                
                 filtered_prs = all_prs
                 
                 # Filter by repositories
                 if repositories:
                     logger.info(f"Filtering PRs to repositories: {', '.join(repositories)}")
+                    logger.debug(f"Available repositories: {[pr.repository_name for pr in filtered_prs]}")
                     filtered_prs = [pr for pr in filtered_prs if pr.repository_name in repositories]
                 
                 # Filter by PR authors
