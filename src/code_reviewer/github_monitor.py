@@ -33,6 +33,10 @@ class GitHubMonitor:
         mode = "DRY RUN" if self.config.dry_run else "LIVE"
         logger.info(f"Starting GitHub PR monitoring in {mode} mode...")
         
+        # Play startup notification sound
+        logger.debug("Playing startup notification sound")
+        await self.sound_notifier.play_notification()
+        
         if self.config.dry_run:
             logger.info("DRY RUN MODE: No actual GitHub actions will be performed, only logged")
             
