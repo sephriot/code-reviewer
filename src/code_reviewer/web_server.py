@@ -555,25 +555,31 @@ class ReviewWebServer:
         try:
             if review_result.action == ReviewAction.APPROVE_WITH_COMMENT:
                 success = await self.github_client.approve_pr(
-                    pr_info.owner,
-                    pr_info.repo,
+                    [pr_info.owner, pr_info.repo],
                     pr_info.number,
                     review_result.comment
                 )
             elif review_result.action == ReviewAction.APPROVE_WITHOUT_COMMENT:
                 success = await self.github_client.approve_pr(
-                    pr_info.owner,
-                    pr_info.repo,
-                    pr_info.number,
-                    None
+                    [pr_info.owner, pr_info.repo],
+                    pr_info.number
                 )
             elif review_result.action == ReviewAction.REQUEST_CHANGES:
+                # Convert inline comments to GitHub format
+                github_comments = [
+                    {
+                        'path': comment.file,
+                        'line': comment.line,
+                        'body': comment.message
+                    }
+                    for comment in review_result.comments
+                ]
+                
                 success = await self.github_client.request_changes(
-                    pr_info.owner,
-                    pr_info.repo,
+                    [pr_info.owner, pr_info.repo],
                     pr_info.number,
-                    review_result.summary or "Changes requested",
-                    review_result.comments
+                    github_comments,
+                    review_result.summary or "Changes requested"
                 )
             else:
                 logger.warning(f"Unsupported review action for GitHub posting: {review_result.action}")
