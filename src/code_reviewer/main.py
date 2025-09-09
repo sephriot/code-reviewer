@@ -88,6 +88,11 @@ class CodeReviewer:
             log_level="info"
         )
         server = uvicorn.Server(config)
+        
+        # Add a startup message
+        click.echo(f"🌐 Web dashboard is running at: http://{self.config.web_host}:{self.config.web_port}")
+        click.echo("   Visit the dashboard to manage pending approvals and human reviews")
+        
         await server.serve()
 
 
