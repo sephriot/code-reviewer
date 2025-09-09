@@ -259,7 +259,6 @@
                 
                 if (response.ok) {
                     document.getElementById(`inline-comment-${approvalId}-${commentIndex}`).style.display = 'none';
-                    alert('Inline comment deleted successfully!');
                     // Refresh to update comment count
                     loadPendingApprovals();
                 } else {
