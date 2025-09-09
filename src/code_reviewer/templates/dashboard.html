@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Code Review Dashboard</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .section { margin-bottom: 30px; }
+        .pr-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
+        .pr-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+        .pr-meta { color: #666; margin-bottom: 10px; }
+        .review-comment { background: #f8f9fa; padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .inline-comments { margin-top: 10px; }
+        .inline-comment { background: #fff3cd; padding: 8px; border-left: 3px solid #ffc107; margin: 5px 0; }
+        .buttons { margin-top: 15px; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; }
+        .btn-approve { background: #28a745; color: white; }
+        .btn-reject { background: #dc3545; color: white; }
+        .btn-view { background: #17a2b8; color: white; }
+        .tabs { border-bottom: 1px solid #ddd; margin-bottom: 20px; }
+        .tab { display: inline-block; padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; }
+        .tab.active { border-bottom-color: #007bff; color: #007bff; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
+        .modal-content { background: white; margin: 5% auto; padding: 20px; width: 80%; max-width: 600px; border-radius: 8px; }
+        .close { float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+        textarea { width: 100%; height: 100px; margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Code Review Dashboard</h1>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="showTab('pending')">Pending Approvals</div>
+            <div class="tab" onclick="showTab('human-review')">Human Reviews</div>
+        </div>
+        
+        <div id="pending" class="tab-content active">
+            <div class="section">
+                <h2>PRs Awaiting Your Approval</h2>
+                <div id="pending-approvals"></div>
+            </div>
+        </div>
+        
+        <div id="human-review" class="tab-content">
+            <div class="section">
+                <h2>PRs Requiring Human Review</h2>
+                <div id="human-reviews"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for approval confirmation -->
+    <div id="approval-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h3>Review Approval</h3>
+            <div id="modal-pr-info"></div>
+            <textarea id="user-comment" placeholder="Optional: Modify the review comment before posting..."></textarea>
+            <div class="buttons">
+                <button class="btn btn-approve" onclick="confirmApproval()">Approve & Post Review</button>
+                <button class="btn btn-reject" onclick="rejectApproval()">Reject</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentApprovalId = null;
+
+        function showTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+            
+            // Load data for the tab
+            if (tabName === 'pending') {
+                loadPendingApprovals();
+            } else if (tabName === 'human-review') {
+                loadHumanReviews();
+            }
+        }
+
+        async function loadPendingApprovals() {
+            try {
+                const response = await fetch('/api/pending-approvals');
+                const approvals = await response.json();
+                const container = document.getElementById('pending-approvals');
+                
+                if (approvals.length === 0) {
+                    container.innerHTML = '<p>No pending approvals.</p>';
+                    return;
+                }
+                
+                container.innerHTML = approvals.map(approval => `
+                    <div class="pr-card">
+                        <div class="pr-title">${approval.pr_title}</div>
+                        <div class="pr-meta">
+                            ${approval.repository} #${approval.pr_number} by ${approval.pr_author}
+                            <br><small>Created: ${new Date(approval.created_at).toLocaleString()}</small>
+                        </div>
+                        ${approval.review_comment ? `<div class="review-comment"><strong>Proposed Comment:</strong><br>${approval.review_comment}</div>` : ''}
+                        ${approval.review_summary ? `<div class="review-comment"><strong>Summary:</strong><br>${approval.review_summary}</div>` : ''}
+                        ${approval.inline_comments.length > 0 ? `
+                            <div class="inline-comments">
+                                <strong>Inline Comments (${approval.inline_comments.length}):</strong>
+                                ${approval.inline_comments.map(comment => `
+                                    <div class="inline-comment">
+                                        <strong>${comment.file}:${comment.line}</strong><br>
+                                        ${comment.message}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                        <div class="buttons">
+                            <button class="btn btn-approve" onclick="showApprovalModal(${approval.id}, '${approval.pr_title}', '${approval.review_comment || ''}')">
+                                Review & Approve
+                            </button>
+                            <button class="btn btn-reject" onclick="rejectPR(${approval.id})">Reject</button>
+                            <a href="${approval.pr_url}" target="_blank" class="btn btn-view">View PR</a>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load pending approvals:', error);
+            }
+        }
+
+        async function loadHumanReviews() {
+            try {
+                const response = await fetch('/api/human-reviews');
+                const reviews = await response.json();
+                const container = document.getElementById('human-reviews');
+                
+                if (reviews.length === 0) {
+                    container.innerHTML = '<p>No PRs marked for human review.</p>';
+                    return;
+                }
+                
+                container.innerHTML = reviews.map(review => `
+                    <div class="pr-card">
+                        <div class="pr-title">${review.pr_title}</div>
+                        <div class="pr-meta">
+                            ${review.repository} #${review.pr_number} by ${review.pr_author}
+                            <br><small>Reviewed: ${new Date(review.reviewed_at).toLocaleString()}</small>
+                        </div>
+                        ${review.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${review.review_reason}</div>` : ''}
+                        <div class="buttons">
+                            <a href="https://github.com/${review.repository}/pull/${review.pr_number}" target="_blank" class="btn btn-view">View PR</a>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load human reviews:', error);
+            }
+        }
+
+        function showApprovalModal(id, title, comment) {
+            currentApprovalId = id;
+            document.getElementById('modal-pr-info').innerHTML = `<strong>${title}</strong>`;
+            document.getElementById('user-comment').value = comment;
+            document.getElementById('approval-modal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('approval-modal').style.display = 'none';
+            currentApprovalId = null;
+        }
+
+        async function confirmApproval() {
+            if (!currentApprovalId) return;
+            
+            const userComment = document.getElementById('user-comment').value;
+            
+            try {
+                const response = await fetch(`/api/approvals/${currentApprovalId}/approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment: userComment })
+                });
+                
+                if (response.ok) {
+                    closeModal();
+                    loadPendingApprovals();
+                    alert('PR approved and review posted!');
+                } else {
+                    alert('Failed to approve PR');
+                }
+            } catch (error) {
+                console.error('Failed to approve PR:', error);
+                alert('Failed to approve PR');
+            }
+        }
+
+        async function rejectApproval() {
+            if (!currentApprovalId) return;
+            
+            const reason = prompt('Optional: Why are you rejecting this approval?');
+            
+            try {
+                const response = await fetch(`/api/approvals/${currentApprovalId}/reject`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: reason || '' })
+                });
+                
+                if (response.ok) {
+                    closeModal();
+                    loadPendingApprovals();
+                    alert('Approval rejected');
+                } else {
+                    alert('Failed to reject approval');
+                }
+            } catch (error) {
+                console.error('Failed to reject approval:', error);
+                alert('Failed to reject approval');
+            }
+        }
+
+        async function rejectPR(id) {
+            const reason = prompt('Optional: Why are you rejecting this approval?');
+            
+            try {
+                const response = await fetch(`/api/approvals/${id}/reject`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: reason || '' })
+                });
+                
+                if (response.ok) {
+                    loadPendingApprovals();
+                    alert('Approval rejected');
+                } else {
+                    alert('Failed to reject approval');
+                }
+            } catch (error) {
+                console.error('Failed to reject approval:', error);
+                alert('Failed to reject approval');
+            }
+        }
+
+        // Load initial data
+        loadPendingApprovals();
+    </script>
+</body>
+</html>

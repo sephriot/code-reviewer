@@ -27,6 +27,9 @@ class Config:
     sound_file: Optional[Path] = None
     dry_run: bool = False
     database_path: Path = Path("data/reviews.db")
+    web_enabled: bool = False
+    web_host: str = "127.0.0.1"
+    web_port: int = 8000
     
     @classmethod
     def load(cls, config_file: Optional[str] = None, **overrides) -> 'Config':
@@ -55,14 +58,17 @@ class Config:
             'SOUND_FILE': 'sound_file',
             'DRY_RUN': 'dry_run',
             'DATABASE_PATH': 'database_path',
+            'WEB_ENABLED': 'web_enabled',
+            'WEB_HOST': 'web_host',
+            'WEB_PORT': 'web_port',
         }
         
         for env_var, config_key in env_mappings.items():
             value = os.getenv(env_var)
             if value:
-                if config_key in ['poll_interval']:
+                if config_key in ['poll_interval', 'web_port']:
                     config_data[config_key] = int(value)
-                elif config_key in ['sound_enabled', 'dry_run']:
+                elif config_key in ['sound_enabled', 'dry_run', 'web_enabled']:
                     config_data[config_key] = value.lower() in ('true', '1', 'yes', 'on')
                 elif config_key in ['sound_file', 'database_path']:
                     config_data[config_key] = Path(value)

@@ -151,11 +151,12 @@ class GitHubMonitor:
             # Act on the review result
             await self._act_on_review(pr_info, review_result)
             
-            # Record the review in database (unless in dry run mode)
-            if not self.config.dry_run:
+            # Record the review in database (unless in dry run mode or pending approval)
+            if not self.config.dry_run and review_result.action != ReviewAction.APPROVE_WITH_COMMENT:
                 await self.db.record_review(pr_info, review_result)
-            else:
+            elif self.config.dry_run:
                 logger.info(f"[DRY RUN] Would record review in database for PR #{pr_info.number}")
+            # Note: APPROVE_WITH_COMMENT reviews are recorded when the human approves via web UI
             
         except ClaudeOutputParseError as e:
             logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from Claude")
@@ -178,16 +179,17 @@ class GitHubMonitor:
             return
         
         if action == ReviewAction.APPROVE_WITH_COMMENT:
-            await self.github_client.approve_pr(
-                pr_info.repository,
-                pr_info.number,
-                review_result.comment or ''
-            )
-            logger.info(f"Approved PR #{pr_info.number} with comment")
+            # Create pending approval instead of immediate approval
+            await self.db.create_pending_approval(pr_info, review_result)
+            logger.info(f"Created pending approval for PR #{pr_info.number} - awaiting human confirmation")
+            
+            # Play notification sound for human attention
+            await self.sound_notifier.play_notification()
             
         elif action == ReviewAction.APPROVE_WITHOUT_COMMENT:
             await self.github_client.approve_pr(
-                pr_info.repository,
+                pr_info.owner,
+                pr_info.repo,
                 pr_info.number
             )
             logger.info(f"Approved PR #{pr_info.number} without comment")
@@ -203,10 +205,11 @@ class GitHubMonitor:
                 })
             
             await self.github_client.request_changes(
-                pr_info.repository,
+                pr_info.owner,
+                pr_info.repo,
                 pr_info.number,
-                comments_data,
-                review_result.summary or 'Changes requested based on automated review'
+                review_result.summary or 'Changes requested based on automated review',
+                review_result.comments
             )
             logger.info(f"Requested changes for PR #{pr_info.number}")
             

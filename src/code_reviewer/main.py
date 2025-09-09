@@ -9,11 +9,13 @@ from typing import Optional
 
 import click
 from dotenv import load_dotenv
+import uvicorn
 
 from .config import Config
 from .github_monitor import GitHubMonitor
 from .claude_integration import ClaudeIntegration
 from .github_client import GitHubClient
+from .web_server import ReviewWebServer
 
 
 class CodeReviewer:
@@ -27,6 +29,9 @@ class CodeReviewer:
             self.claude_integration, 
             config
         )
+        self.web_server = None
+        if config.web_enabled:
+            self.web_server = ReviewWebServer(self.monitor.db, self.github_client)
         
     def signal_handler(self, signum, frame):
         """Handle SIGTERM gracefully."""
@@ -43,8 +48,18 @@ class CodeReviewer:
         click.echo(f"Monitoring user: {self.config.github_username}")
         click.echo(f"Using prompt file: {self.config.claude_prompt_file}")
         
+        if self.config.web_enabled:
+            click.echo(f"Web UI enabled at http://{self.config.web_host}:{self.config.web_port}")
+        
         try:
-            await self.monitor.start_monitoring()
+            if self.config.web_enabled:
+                # Run both the monitor and web server concurrently
+                await asyncio.gather(
+                    self.monitor.start_monitoring(),
+                    self._run_web_server()
+                )
+            else:
+                await self.monitor.start_monitoring()
         except KeyboardInterrupt:
             click.echo("Interrupted by user")
         except Exception as e:
@@ -63,6 +78,17 @@ class CodeReviewer:
                 import traceback
                 traceback.print_exc()
             click.echo("Shutting down...")
+    
+    async def _run_web_server(self):
+        """Run the web server in asyncio event loop."""
+        config = uvicorn.Config(
+            self.web_server.get_app(),
+            host=self.config.web_host,
+            port=self.config.web_port,
+            log_level="info"
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
 
 
 @click.command()
@@ -82,9 +108,16 @@ class CodeReviewer:
               help='Custom sound file for notifications')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Log what actions would be taken without actually performing them')
+@click.option('--web-enabled/--no-web', default=False,
+              help='Enable/disable web UI for managing approvals (default: disabled)')
+@click.option('--web-host', default='127.0.0.1',
+              help='Host for web UI server (default: 127.0.0.1)')
+@click.option('--web-port', default=8000, type=int,
+              help='Port for web UI server (default: 8000)')
 def main(config: Optional[str], prompt: Optional[str], github_token: Optional[str], 
          github_username: Optional[str], poll_interval: int, sound_enabled: bool,
-         sound_file: Optional[str], dry_run: bool):
+         sound_file: Optional[str], dry_run: bool, web_enabled: bool,
+         web_host: str, web_port: int):
     """Automated GitHub PR code review using Claude."""
     
     load_dotenv()
@@ -92,13 +125,16 @@ def main(config: Optional[str], prompt: Optional[str], github_token: Optional[st
     try:
         app_config = Config.load(
             config_file=config,
-            prompt_file=prompt,
+            claude_prompt_file=prompt,
             github_token=github_token,
             github_username=github_username,
             poll_interval=poll_interval,
             sound_enabled=sound_enabled,
             sound_file=sound_file,
-            dry_run=dry_run
+            dry_run=dry_run,
+            web_enabled=web_enabled,
+            web_host=web_host,
+            web_port=web_port
         )
         
         # Set up logging
