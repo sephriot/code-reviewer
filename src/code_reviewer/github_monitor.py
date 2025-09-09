@@ -152,11 +152,11 @@ class GitHubMonitor:
             await self._act_on_review(pr_info, review_result)
             
             # Record the review in database (unless in dry run mode or pending approval)
-            if not self.config.dry_run and review_result.action != ReviewAction.APPROVE_WITH_COMMENT:
+            if not self.config.dry_run and review_result.action not in [ReviewAction.APPROVE_WITH_COMMENT, ReviewAction.REQUEST_CHANGES]:
                 await self.db.record_review(pr_info, review_result)
             elif self.config.dry_run:
                 logger.info(f"[DRY RUN] Would record review in database for PR #{pr_info.number}")
-            # Note: APPROVE_WITH_COMMENT reviews are recorded when the human approves via web UI
+            # Note: APPROVE_WITH_COMMENT and REQUEST_CHANGES reviews are recorded when the human approves via web UI
             
         except ClaudeOutputParseError as e:
             logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from Claude")
@@ -195,23 +195,12 @@ class GitHubMonitor:
             logger.info(f"Approved PR #{pr_info.number} without comment")
             
         elif action == ReviewAction.REQUEST_CHANGES:
-            # Convert InlineComment objects to dicts for the GitHub client
-            comments_data = []
-            for comment in review_result.comments:
-                comments_data.append({
-                    'file': comment.file,
-                    'line': comment.line,
-                    'message': comment.message
-                })
+            # Create pending approval instead of immediate change request
+            await self.db.create_pending_approval(pr_info, review_result)
+            logger.info(f"Created pending change request for PR #{pr_info.number} - awaiting human confirmation")
             
-            await self.github_client.request_changes(
-                pr_info.owner,
-                pr_info.repo,
-                pr_info.number,
-                review_result.summary or 'Changes requested based on automated review',
-                review_result.comments
-            )
-            logger.info(f"Requested changes for PR #{pr_info.number}")
+            # Play notification sound for human attention
+            await self.sound_notifier.play_notification()
             
         elif action == ReviewAction.REQUIRES_HUMAN_REVIEW:
             reason = review_result.reason or 'PR requires human review'
