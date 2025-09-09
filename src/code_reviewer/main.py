@@ -113,12 +113,12 @@ class CodeReviewer:
               help='Custom sound file for notifications')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Log what actions would be taken without actually performing them')
-@click.option('--web-enabled/--no-web', default=False,
-              help='Enable/disable web UI for managing approvals (default: disabled)')
-@click.option('--web-host', default='127.0.0.1',
-              help='Host for web UI server (default: 127.0.0.1)')
-@click.option('--web-port', default=8000, type=int,
-              help='Port for web UI server (default: 8000)')
+@click.option('--web-enabled/--no-web', envvar='WEB_ENABLED', default=False,
+              help='Enable/disable web UI for managing approvals (default: disabled, env: WEB_ENABLED)')
+@click.option('--web-host', envvar='WEB_HOST', default='127.0.0.1',
+              help='Host for web UI server (default: 127.0.0.1, env: WEB_HOST)')
+@click.option('--web-port', envvar='WEB_PORT', default=8000, type=int,
+              help='Port for web UI server (default: 8000, env: WEB_PORT)')
 def main(config: Optional[str], prompt: Optional[str], github_token: Optional[str], 
          github_username: Optional[str], poll_interval: int, sound_enabled: bool,
          sound_file: Optional[str], dry_run: bool, web_enabled: bool,
