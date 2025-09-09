@@ -81,6 +81,10 @@ class ReviewDatabase:
                 review_reason TEXT,
                 inline_comments TEXT, -- JSON string of inline comments
                 inline_comments_count INTEGER DEFAULT 0,
+                -- Edited versions (null = no edits made)
+                edited_review_comment TEXT,
+                edited_review_summary TEXT, 
+                edited_inline_comments TEXT, -- JSON string of edited inline comments
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
                 UNIQUE(repository, pr_number)
@@ -102,6 +106,22 @@ class ReviewDatabase:
             CREATE INDEX IF NOT EXISTS idx_pending_status 
             ON pending_approvals(status)
         """)
+        
+        # Add new columns for edited content if they don't exist (migration)
+        try:
+            cursor.execute("ALTER TABLE pending_approvals ADD COLUMN edited_review_comment TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+            
+        try:
+            cursor.execute("ALTER TABLE pending_approvals ADD COLUMN edited_review_summary TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+            
+        try:
+            cursor.execute("ALTER TABLE pending_approvals ADD COLUMN edited_inline_comments TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         
         conn.commit()
         logger.info(f"Database initialized at: {self.db_path}")
@@ -340,11 +360,17 @@ class ReviewDatabase:
         approvals = []
         for row in cursor.fetchall():
             approval = dict(row)
-            # Parse inline comments JSON
-            if approval['inline_comments']:
-                approval['inline_comments'] = json.loads(approval['inline_comments'])
+            # Parse inline comments JSON - use edited version if available
+            inline_comments_json = approval['edited_inline_comments'] or approval['inline_comments']
+            if inline_comments_json:
+                approval['inline_comments'] = json.loads(inline_comments_json)
             else:
                 approval['inline_comments'] = []
+            
+            # Use edited versions for display if they exist
+            approval['display_review_comment'] = approval['edited_review_comment'] or approval['review_comment']
+            approval['display_review_summary'] = approval['edited_review_summary'] or approval['review_summary']
+            
             approvals.append(approval)
 
         return approvals
@@ -426,13 +452,239 @@ class ReviewDatabase:
         row = cursor.fetchone()
         if row:
             approval = dict(row)
-            # Parse inline comments JSON
-            if approval['inline_comments']:
-                approval['inline_comments'] = json.loads(approval['inline_comments'])
+            # Parse inline comments JSON - use edited version if available
+            inline_comments_json = approval['edited_inline_comments'] or approval['inline_comments']
+            if inline_comments_json:
+                approval['inline_comments'] = json.loads(inline_comments_json)
             else:
                 approval['inline_comments'] = []
+            
+            # Use edited versions for display if they exist
+            approval['display_review_comment'] = approval['edited_review_comment'] or approval['review_comment']
+            approval['display_review_summary'] = approval['edited_review_summary'] or approval['review_summary']
+            
             return approval
         return None
+
+    async def update_approval_comment(self, approval_id: int, new_comment: str) -> bool:
+        """Update the edited review comment for a pending approval."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._update_approval_comment_sync, approval_id, new_comment
+        )
+
+    def _update_approval_comment_sync(self, approval_id: int, new_comment: str) -> bool:
+        """Synchronous implementation of update_approval_comment."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                UPDATE pending_approvals 
+                SET edited_review_comment = ? 
+                WHERE id = ?
+            """, (new_comment, approval_id))
+
+            if cursor.rowcount > 0:
+                logger.info(f"Updated comment for pending approval {approval_id}")
+                return True
+            else:
+                logger.warning(f"No pending approval found with ID: {approval_id}")
+                return False
+
+        except sqlite3.Error as e:
+            logger.error(f"Error updating approval comment: {e}")
+            raise
+
+    async def update_approval_summary(self, approval_id: int, new_summary: str) -> bool:
+        """Update the edited review summary for a pending approval."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._update_approval_summary_sync, approval_id, new_summary
+        )
+
+    def _update_approval_summary_sync(self, approval_id: int, new_summary: str) -> bool:
+        """Synchronous implementation of update_approval_summary."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                UPDATE pending_approvals 
+                SET edited_review_summary = ? 
+                WHERE id = ?
+            """, (new_summary, approval_id))
+
+            if cursor.rowcount > 0:
+                logger.info(f"Updated summary for pending approval {approval_id}")
+                return True
+            else:
+                logger.warning(f"No pending approval found with ID: {approval_id}")
+                return False
+
+        except sqlite3.Error as e:
+            logger.error(f"Error updating approval summary: {e}")
+            raise
+
+    async def update_approval_inline_comment(self, approval_id: int, comment_index: int, new_message: str) -> bool:
+        """Update a specific inline comment for a pending approval."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._update_approval_inline_comment_sync, approval_id, comment_index, new_message
+        )
+
+    def _update_approval_inline_comment_sync(self, approval_id: int, comment_index: int, new_message: str) -> bool:
+        """Synchronous implementation of update_approval_inline_comment."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # Get current approval data
+            cursor.execute("""
+                SELECT inline_comments, edited_inline_comments FROM pending_approvals 
+                WHERE id = ?
+            """, (approval_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                logger.warning(f"No pending approval found with ID: {approval_id}")
+                return False
+
+            # Use edited comments if they exist, otherwise use original
+            current_comments_json = row['edited_inline_comments'] or row['inline_comments']
+            current_comments = json.loads(current_comments_json) if current_comments_json else []
+
+            if comment_index >= len(current_comments):
+                logger.warning(f"Comment index {comment_index} out of range for approval {approval_id}")
+                return False
+
+            # Update the specific comment
+            current_comments[comment_index]['message'] = new_message
+
+            # Save the updated comments
+            updated_comments_json = json.dumps(current_comments)
+            cursor.execute("""
+                UPDATE pending_approvals 
+                SET edited_inline_comments = ? 
+                WHERE id = ?
+            """, (updated_comments_json, approval_id))
+
+            if cursor.rowcount > 0:
+                logger.info(f"Updated inline comment {comment_index} for pending approval {approval_id}")
+                return True
+            else:
+                return False
+
+        except sqlite3.Error as e:
+            logger.error(f"Error updating inline comment: {e}")
+            raise
+
+    async def delete_approval_comment(self, approval_id: int) -> bool:
+        """Delete the review comment for a pending approval."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._delete_approval_comment_sync, approval_id
+        )
+
+    def _delete_approval_comment_sync(self, approval_id: int) -> bool:
+        """Synchronous implementation of delete_approval_comment."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                UPDATE pending_approvals 
+                SET edited_review_comment = '' 
+                WHERE id = ?
+            """, (approval_id,))
+
+            if cursor.rowcount > 0:
+                logger.info(f"Deleted comment for pending approval {approval_id}")
+                return True
+            else:
+                logger.warning(f"No pending approval found with ID: {approval_id}")
+                return False
+
+        except sqlite3.Error as e:
+            logger.error(f"Error deleting approval comment: {e}")
+            raise
+
+    async def delete_approval_summary(self, approval_id: int) -> bool:
+        """Delete the review summary for a pending approval."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._delete_approval_summary_sync, approval_id
+        )
+
+    def _delete_approval_summary_sync(self, approval_id: int) -> bool:
+        """Synchronous implementation of delete_approval_summary."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                UPDATE pending_approvals 
+                SET edited_review_summary = '' 
+                WHERE id = ?
+            """, (approval_id,))
+
+            if cursor.rowcount > 0:
+                logger.info(f"Deleted summary for pending approval {approval_id}")
+                return True
+            else:
+                logger.warning(f"No pending approval found with ID: {approval_id}")
+                return False
+
+        except sqlite3.Error as e:
+            logger.error(f"Error deleting approval summary: {e}")
+            raise
+
+    async def delete_approval_inline_comment(self, approval_id: int, comment_index: int) -> bool:
+        """Delete a specific inline comment for a pending approval."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._delete_approval_inline_comment_sync, approval_id, comment_index
+        )
+
+    def _delete_approval_inline_comment_sync(self, approval_id: int, comment_index: int) -> bool:
+        """Synchronous implementation of delete_approval_inline_comment."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # Get current approval data
+            cursor.execute("""
+                SELECT inline_comments, edited_inline_comments FROM pending_approvals 
+                WHERE id = ?
+            """, (approval_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                logger.warning(f"No pending approval found with ID: {approval_id}")
+                return False
+
+            # Use edited comments if they exist, otherwise use original
+            current_comments_json = row['edited_inline_comments'] or row['inline_comments']
+            current_comments = json.loads(current_comments_json) if current_comments_json else []
+
+            if comment_index >= len(current_comments):
+                logger.warning(f"Comment index {comment_index} out of range for approval {approval_id}")
+                return False
+
+            # Remove the specific comment
+            current_comments.pop(comment_index)
+
+            # Save the updated comments
+            updated_comments_json = json.dumps(current_comments)
+            cursor.execute("""
+                UPDATE pending_approvals 
+                SET edited_inline_comments = ? 
+                WHERE id = ?
+            """, (updated_comments_json, approval_id))
+
+            if cursor.rowcount > 0:
+                logger.info(f"Deleted inline comment {comment_index} for pending approval {approval_id}")
+                return True
+            else:
+                return False
+
+        except sqlite3.Error as e:
+            logger.error(f"Error deleting inline comment: {e}")
+            raise
         
     def close(self):
         """Close database connections."""

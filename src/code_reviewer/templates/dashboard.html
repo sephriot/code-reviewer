@@ -28,6 +28,12 @@
         .modal-content { background: white; margin: 5% auto; padding: 20px; width: 80%; max-width: 600px; border-radius: 8px; }
         .close { float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
         textarea { width: 100%; height: 100px; margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        .btn-small { padding: 4px 8px; font-size: 12px; margin-left: 10px; }
+        .btn-edit { background: #ffc107; color: black; }
+        .btn-delete { background: #dc3545; color: white; }
+        .editing-textarea { width: 100%; min-height: 60px; margin: 5px 0; padding: 5px; border: 1px solid #007bff; border-radius: 4px; }
+        .edit-buttons { margin-top: 5px; }
+        .edit-buttons .btn-small { margin-right: 5px; }
     </style>
 </head>
 <body>
@@ -70,6 +76,200 @@
 
     <script>
         let currentApprovalId = null;
+
+        // Edit/Delete functionality for comments
+        function editReviewComment(approvalId, currentText) {
+            const textElement = document.getElementById(`comment-text-${approvalId}`);
+            const originalContent = textElement.innerHTML;
+            
+            const textarea = document.createElement('textarea');
+            textarea.className = 'editing-textarea';
+            textarea.value = currentText;
+            
+            const buttonDiv = document.createElement('div');
+            buttonDiv.className = 'edit-buttons';
+            buttonDiv.innerHTML = `
+                <button class="btn btn-small" onclick="saveReviewComment(${approvalId}, this.parentElement.previousElementSibling.value)">Save</button>
+                <button class="btn btn-small" onclick="cancelEdit('comment-text-${approvalId}', '${originalContent.replace(/'/g, "\\'")}')">Cancel</button>
+            `;
+            
+            textElement.innerHTML = '';
+            textElement.appendChild(textarea);
+            textElement.appendChild(buttonDiv);
+            textarea.focus();
+        }
+
+        function editReviewSummary(approvalId, currentText) {
+            const textElement = document.getElementById(`summary-text-${approvalId}`);
+            const originalContent = textElement.innerHTML;
+            
+            const textarea = document.createElement('textarea');
+            textarea.className = 'editing-textarea';
+            textarea.value = currentText;
+            
+            const buttonDiv = document.createElement('div');
+            buttonDiv.className = 'edit-buttons';
+            buttonDiv.innerHTML = `
+                <button class="btn btn-small" onclick="saveReviewSummary(${approvalId}, this.parentElement.previousElementSibling.value)">Save</button>
+                <button class="btn btn-small" onclick="cancelEdit('summary-text-${approvalId}', '${originalContent.replace(/'/g, "\\'")}')">Cancel</button>
+            `;
+            
+            textElement.innerHTML = '';
+            textElement.appendChild(textarea);
+            textElement.appendChild(buttonDiv);
+            textarea.focus();
+        }
+
+        function editInlineComment(approvalId, commentIndex, currentText, file, line) {
+            const textElement = document.getElementById(`inline-comment-text-${approvalId}-${commentIndex}`);
+            const originalContent = textElement.innerHTML;
+            
+            const textarea = document.createElement('textarea');
+            textarea.className = 'editing-textarea';
+            textarea.value = currentText;
+            
+            const buttonDiv = document.createElement('div');
+            buttonDiv.className = 'edit-buttons';
+            buttonDiv.innerHTML = `
+                <button class="btn btn-small" onclick="saveInlineComment(${approvalId}, ${commentIndex}, this.parentElement.previousElementSibling.value)">Save</button>
+                <button class="btn btn-small" onclick="cancelEdit('inline-comment-text-${approvalId}-${commentIndex}', '${originalContent.replace(/'/g, "\\'")}')">Cancel</button>
+            `;
+            
+            textElement.innerHTML = '';
+            textElement.appendChild(textarea);
+            textElement.appendChild(buttonDiv);
+            textarea.focus();
+        }
+
+        function cancelEdit(elementId, originalContent) {
+            document.getElementById(elementId).innerHTML = originalContent;
+        }
+
+        async function saveReviewComment(approvalId, newText) {
+            try {
+                const response = await fetch(`/api/approvals/${approvalId}/update-comment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment: newText })
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`comment-text-${approvalId}`).innerHTML = newText;
+                    alert('Comment updated successfully!');
+                } else {
+                    alert('Failed to update comment');
+                }
+            } catch (error) {
+                console.error('Failed to update comment:', error);
+                alert('Failed to update comment');
+            }
+        }
+
+        async function saveReviewSummary(approvalId, newText) {
+            try {
+                const response = await fetch(`/api/approvals/${approvalId}/update-summary`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ summary: newText })
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`summary-text-${approvalId}`).innerHTML = newText;
+                    alert('Summary updated successfully!');
+                } else {
+                    alert('Failed to update summary');
+                }
+            } catch (error) {
+                console.error('Failed to update summary:', error);
+                alert('Failed to update summary');
+            }
+        }
+
+        async function saveInlineComment(approvalId, commentIndex, newText) {
+            try {
+                const response = await fetch(`/api/approvals/${approvalId}/update-inline-comment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ index: commentIndex, message: newText })
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`inline-comment-text-${approvalId}-${commentIndex}`).innerHTML = newText;
+                    alert('Inline comment updated successfully!');
+                } else {
+                    alert('Failed to update inline comment');
+                }
+            } catch (error) {
+                console.error('Failed to update inline comment:', error);
+                alert('Failed to update inline comment');
+            }
+        }
+
+        async function deleteReviewComment(approvalId) {
+            if (!confirm('Are you sure you want to delete this comment?')) return;
+            
+            try {
+                const response = await fetch(`/api/approvals/${approvalId}/delete-comment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`review-comment-${approvalId}`).style.display = 'none';
+                    alert('Comment deleted successfully!');
+                } else {
+                    alert('Failed to delete comment');
+                }
+            } catch (error) {
+                console.error('Failed to delete comment:', error);
+                alert('Failed to delete comment');
+            }
+        }
+
+        async function deleteReviewSummary(approvalId) {
+            if (!confirm('Are you sure you want to delete this summary?')) return;
+            
+            try {
+                const response = await fetch(`/api/approvals/${approvalId}/delete-summary`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`review-summary-${approvalId}`).style.display = 'none';
+                    alert('Summary deleted successfully!');
+                } else {
+                    alert('Failed to delete summary');
+                }
+            } catch (error) {
+                console.error('Failed to delete summary:', error);
+                alert('Failed to delete summary');
+            }
+        }
+
+        async function deleteInlineComment(approvalId, commentIndex) {
+            if (!confirm('Are you sure you want to delete this inline comment?')) return;
+            
+            try {
+                const response = await fetch(`/api/approvals/${approvalId}/delete-inline-comment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ index: commentIndex })
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`inline-comment-${approvalId}-${commentIndex}`).style.display = 'none';
+                    alert('Inline comment deleted successfully!');
+                    // Refresh to update comment count
+                    loadPendingApprovals();
+                } else {
+                    alert('Failed to delete inline comment');
+                }
+            } catch (error) {
+                console.error('Failed to delete inline comment:', error);
+                alert('Failed to delete inline comment');
+            }
+        }
 
         function showTab(tabName) {
             // Hide all tabs
@@ -114,21 +314,35 @@
                             ${approval.repository} #${approval.pr_number} by ${approval.pr_author}
                             <br><small>Created: ${new Date(approval.created_at).toLocaleString()}</small>
                         </div>
-                        ${approval.review_comment ? `<div class="review-comment"><strong>${isApproval ? 'Proposed Comment:' : 'Proposed Review Comment:'}</strong><br>${approval.review_comment}</div>` : ''}
-                        ${approval.review_summary ? `<div class="review-comment"><strong>${isApproval ? 'Summary:' : 'Issues Summary:'}</strong><br>${approval.review_summary}</div>` : ''}
+                        ${approval.display_review_comment ? `
+                            <div class="review-comment" id="review-comment-${approval.id}">
+                                <strong>${isApproval ? 'Proposed Comment:' : 'Proposed Review Comment:'}</strong>
+                                <button class="btn-small btn-edit" onclick="editReviewComment(${approval.id}, '${approval.display_review_comment.replace(/'/g, "\\'")}')">Edit</button>
+                                <button class="btn-small btn-delete" onclick="deleteReviewComment(${approval.id})">Delete</button>
+                                <br><span id="comment-text-${approval.id}">${approval.display_review_comment}</span>
+                            </div>` : ''}
+                        ${approval.display_review_summary ? `
+                            <div class="review-comment" id="review-summary-${approval.id}">
+                                <strong>${isApproval ? 'Summary:' : 'Issues Summary:'}</strong>
+                                <button class="btn-small btn-edit" onclick="editReviewSummary(${approval.id}, '${approval.display_review_summary.replace(/'/g, "\\'")}')">Edit</button>
+                                <button class="btn-small btn-delete" onclick="deleteReviewSummary(${approval.id})">Delete</button>
+                                <br><span id="summary-text-${approval.id}">${approval.display_review_summary}</span>
+                            </div>` : ''}
                         ${approval.inline_comments.length > 0 ? `
                             <div class="inline-comments">
                                 <strong>Inline Comments (${approval.inline_comments.length}):</strong>
-                                ${approval.inline_comments.map(comment => `
-                                    <div class="inline-comment">
-                                        <strong>${comment.file}:${comment.line}</strong><br>
-                                        ${comment.message}
+                                ${approval.inline_comments.map((comment, index) => `
+                                    <div class="inline-comment" id="inline-comment-${approval.id}-${index}">
+                                        <strong>${comment.file}:${comment.line}</strong>
+                                        <button class="btn-small btn-edit" onclick="editInlineComment(${approval.id}, ${index}, '${comment.message.replace(/'/g, "\\'")}', '${comment.file}', ${comment.line})">Edit</button>
+                                        <button class="btn-small btn-delete" onclick="deleteInlineComment(${approval.id}, ${index})">Delete</button>
+                                        <br><span id="inline-comment-text-${approval.id}-${index}">${comment.message}</span>
                                     </div>
                                 `).join('')}
                             </div>
                         ` : ''}
                         <div class="buttons">
-                            <button class="btn ${primaryButtonClass}" onclick="showApprovalModal(${approval.id}, '${approval.pr_title}', '${approval.review_comment || ''}', '${approval.review_action}')">
+                            <button class="btn ${primaryButtonClass}" onclick="showApprovalModal(${approval.id}, '${approval.pr_title}', '${approval.display_review_comment || ''}', '${approval.review_action}')">
                                 ${primaryButton}
                             </button>
                             <button class="btn btn-reject" onclick="rejectPR(${approval.id})">Reject</button>

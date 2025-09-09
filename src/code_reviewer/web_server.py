@@ -373,12 +373,16 @@ class ReviewWebServer:
                     for comment in approval['inline_comments']
                 ]
                 
+                # Use edited versions if available, otherwise use originals
+                final_comment = user_comment or approval['display_review_comment']
+                final_summary = approval['display_review_summary']
+                
                 review_result = ReviewResult(
                     action=ReviewAction(approval['review_action']),
-                    comment=user_comment or approval['review_comment'],
-                    summary=approval['review_summary'],
+                    comment=final_comment,
+                    summary=final_summary,
                     reason=approval['review_reason'],
-                    comments=inline_comments
+                    comments=inline_comments  # Already using edited comments from approval['inline_comments']
                 )
                 
                 # Post the review to GitHub
@@ -430,6 +434,120 @@ class ReviewWebServer:
                 return JSONResponse(content=stats)
             except Exception as e:
                 logger.error(f"Failed to get stats: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        # Edit/Delete API endpoints
+        @self.app.post("/api/approvals/{approval_id}/update-comment")
+        async def update_approval_comment(approval_id: int, request: Request):
+            """Update the review comment for a pending approval."""
+            try:
+                body = await request.json()
+                new_comment = body.get('comment', '')
+                
+                success = await self.database.update_approval_comment(approval_id, new_comment)
+                
+                if success:
+                    return JSONResponse(content={"status": "success"})
+                else:
+                    raise HTTPException(status_code=404, detail="Approval not found")
+                    
+            except Exception as e:
+                logger.error(f"Failed to update comment for approval {approval_id}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.post("/api/approvals/{approval_id}/update-summary")
+        async def update_approval_summary(approval_id: int, request: Request):
+            """Update the review summary for a pending approval."""
+            try:
+                body = await request.json()
+                new_summary = body.get('summary', '')
+                
+                success = await self.database.update_approval_summary(approval_id, new_summary)
+                
+                if success:
+                    return JSONResponse(content={"status": "success"})
+                else:
+                    raise HTTPException(status_code=404, detail="Approval not found")
+                    
+            except Exception as e:
+                logger.error(f"Failed to update summary for approval {approval_id}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.post("/api/approvals/{approval_id}/update-inline-comment")
+        async def update_inline_comment(approval_id: int, request: Request):
+            """Update a specific inline comment for a pending approval."""
+            try:
+                body = await request.json()
+                comment_index = body.get('index')
+                new_message = body.get('message', '')
+                
+                if comment_index is None:
+                    raise HTTPException(status_code=400, detail="Comment index is required")
+                
+                success = await self.database.update_approval_inline_comment(
+                    approval_id, comment_index, new_message
+                )
+                
+                if success:
+                    return JSONResponse(content={"status": "success"})
+                else:
+                    raise HTTPException(status_code=404, detail="Approval or comment not found")
+                    
+            except Exception as e:
+                logger.error(f"Failed to update inline comment for approval {approval_id}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.post("/api/approvals/{approval_id}/delete-comment")
+        async def delete_approval_comment(approval_id: int):
+            """Delete the review comment for a pending approval."""
+            try:
+                success = await self.database.delete_approval_comment(approval_id)
+                
+                if success:
+                    return JSONResponse(content={"status": "success"})
+                else:
+                    raise HTTPException(status_code=404, detail="Approval not found")
+                    
+            except Exception as e:
+                logger.error(f"Failed to delete comment for approval {approval_id}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.post("/api/approvals/{approval_id}/delete-summary")
+        async def delete_approval_summary(approval_id: int):
+            """Delete the review summary for a pending approval."""
+            try:
+                success = await self.database.delete_approval_summary(approval_id)
+                
+                if success:
+                    return JSONResponse(content={"status": "success"})
+                else:
+                    raise HTTPException(status_code=404, detail="Approval not found")
+                    
+            except Exception as e:
+                logger.error(f"Failed to delete summary for approval {approval_id}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.post("/api/approvals/{approval_id}/delete-inline-comment")
+        async def delete_inline_comment(approval_id: int, request: Request):
+            """Delete a specific inline comment for a pending approval."""
+            try:
+                body = await request.json()
+                comment_index = body.get('index')
+                
+                if comment_index is None:
+                    raise HTTPException(status_code=400, detail="Comment index is required")
+                
+                success = await self.database.delete_approval_inline_comment(
+                    approval_id, comment_index
+                )
+                
+                if success:
+                    return JSONResponse(content={"status": "success"})
+                else:
+                    raise HTTPException(status_code=404, detail="Approval or comment not found")
+                    
+            except Exception as e:
+                logger.error(f"Failed to delete inline comment for approval {approval_id}: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
     
     async def _post_github_review(self, pr_info: PRInfo, review_result: ReviewResult) -> bool:
