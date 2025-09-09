@@ -12,6 +12,7 @@
         .pr-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
         .pr-meta { color: #666; margin-bottom: 10px; }
         .review-comment { background: #f8f9fa; padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .original-review-comment { background: #e9ecef; padding: 10px; border-radius: 4px; margin: 10px 0; border-left: 3px solid #6c757d; }
         .inline-comments { margin-top: 10px; }
         .inline-comment { background: #fff3cd; padding: 8px; border-left: 3px solid #ffc107; margin: 5px 0; }
         .buttons { margin-top: 15px; }
@@ -314,15 +315,27 @@
                             <br><small>Created: ${new Date(approval.created_at).toLocaleString()}</small>
                         </div>
                         ${approval.display_review_comment ? `
+                            ${approval.edited_review_comment && approval.edited_review_comment !== approval.review_comment ? `
+                                <div class="original-review-comment">
+                                    <strong>Original ${isApproval ? 'Comment:' : 'Review Comment:'}</strong><br>
+                                    ${approval.review_comment}
+                                </div>
+                            ` : ''}
                             <div class="review-comment" id="review-comment-${approval.id}">
-                                <strong>${isApproval ? 'Proposed Comment:' : 'Proposed Review Comment:'}</strong>
+                                <strong>${approval.edited_review_comment && approval.edited_review_comment !== approval.review_comment ? 'Edited ' : ''}${isApproval ? 'Comment:' : 'Review Comment:'}</strong>
                                 <button class="btn-small btn-edit" onclick="editReviewComment(${approval.id}, '${approval.display_review_comment.replace(/'/g, "\\'")}')">Edit</button>
                                 <button class="btn-small btn-delete" onclick="deleteReviewComment(${approval.id})">Delete</button>
                                 <br><span id="comment-text-${approval.id}">${approval.display_review_comment}</span>
                             </div>` : ''}
                         ${approval.display_review_summary ? `
+                            ${approval.edited_review_summary && approval.edited_review_summary !== approval.review_summary ? `
+                                <div class="original-review-comment">
+                                    <strong>Original ${isApproval ? 'Summary:' : 'Issues Summary:'}</strong><br>
+                                    ${approval.review_summary}
+                                </div>
+                            ` : ''}
                             <div class="review-comment" id="review-summary-${approval.id}">
-                                <strong>${isApproval ? 'Summary:' : 'Issues Summary:'}</strong>
+                                <strong>${approval.edited_review_summary && approval.edited_review_summary !== approval.review_summary ? 'Edited ' : ''}${isApproval ? 'Summary:' : 'Issues Summary:'}</strong>
                                 <button class="btn-small btn-edit" onclick="editReviewSummary(${approval.id}, '${approval.display_review_summary.replace(/'/g, "\\'")}')">Edit</button>
                                 <button class="btn-small btn-delete" onclick="deleteReviewSummary(${approval.id})">Delete</button>
                                 <br><span id="summary-text-${approval.id}">${approval.display_review_summary}</span>

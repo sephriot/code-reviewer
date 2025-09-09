@@ -58,6 +58,7 @@ class ReviewWebServer:
         .pr-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
         .pr-meta { color: #666; margin-bottom: 10px; }
         .review-comment { background: #f8f9fa; padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .original-review-comment { background: #e9ecef; padding: 10px; border-radius: 4px; margin: 10px 0; border-left: 3px solid #6c757d; }
         .inline-comments { margin-top: 10px; }
         .inline-comment { background: #fff3cd; padding: 8px; border-left: 3px solid #ffc107; margin: 5px 0; }
         .buttons { margin-top: 15px; }
@@ -152,8 +153,28 @@ class ReviewWebServer:
                             ${approval.repository} #${approval.pr_number} by ${approval.pr_author}
                             <br><small>Created: ${new Date(approval.created_at).toLocaleString()}</small>
                         </div>
-                        ${approval.review_comment ? `<div class="review-comment"><strong>Proposed Comment:</strong><br>${approval.review_comment}</div>` : ''}
-                        ${approval.review_summary ? `<div class="review-comment"><strong>Summary:</strong><br>${approval.review_summary}</div>` : ''}
+                        ${approval.display_review_comment ? `
+                            ${approval.edited_review_comment && approval.edited_review_comment !== approval.review_comment ? `
+                                <div class="original-review-comment">
+                                    <strong>Original Comment:</strong><br>
+                                    ${approval.review_comment}
+                                </div>
+                            ` : ''}
+                            <div class="review-comment">
+                                <strong>${approval.edited_review_comment && approval.edited_review_comment !== approval.review_comment ? 'Edited ' : ''}Comment:</strong><br>
+                                ${approval.display_review_comment}
+                            </div>` : ''}
+                        ${approval.display_review_summary ? `
+                            ${approval.edited_review_summary && approval.edited_review_summary !== approval.review_summary ? `
+                                <div class="original-review-comment">
+                                    <strong>Original Summary:</strong><br>
+                                    ${approval.review_summary}
+                                </div>
+                            ` : ''}
+                            <div class="review-comment">
+                                <strong>${approval.edited_review_summary && approval.edited_review_summary !== approval.review_summary ? 'Edited ' : ''}Summary:</strong><br>
+                                ${approval.display_review_summary}
+                            </div>` : ''}
                         ${approval.inline_comments.length > 0 ? `
                             <div class="inline-comments">
                                 <strong>Inline Comments (${approval.inline_comments.length}):</strong>
