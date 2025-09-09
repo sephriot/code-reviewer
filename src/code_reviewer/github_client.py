@@ -151,10 +151,11 @@ class GitHubClient:
                     raise Exception(f"GitHub API error: {result}")
                     
                 logger.info(f"Successfully approved PR #{pr_number}")
+                return True
                 
         except Exception as e:
             logger.error(f"Error approving PR: {e}")
-            raise
+            return False
             
     async def request_changes(self, repository: List[str], pr_number: int, 
                            comments: List[Dict[str, Any]], summary: str):
@@ -182,9 +183,9 @@ class GitHubClient:
                 data['comments'] = []
                 for comment in comments:
                     inline_comment = {
-                        'path': comment['file'],
-                        'line': comment['line'],
-                        'body': comment['message']
+                        'path': comment.get('path', comment.get('file')),
+                        'line': comment.get('line'),
+                        'body': comment.get('body', comment.get('message'))
                     }
                     data['comments'].append(inline_comment)
                     
@@ -195,10 +196,11 @@ class GitHubClient:
                     raise Exception(f"GitHub API error: {result}")
                     
                 logger.info(f"Successfully requested changes for PR #{pr_number}")
+                return True
                 
         except Exception as e:
             logger.error(f"Error requesting changes: {e}")
-            raise
+            return False
             
     async def add_review_comment(self, repository: List[str], pr_number: int, comment: str):
         """Add a general comment to a PR without approving or requesting changes."""
