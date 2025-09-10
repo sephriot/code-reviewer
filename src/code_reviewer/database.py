@@ -85,9 +85,11 @@ class ReviewDatabase:
                 edited_review_comment TEXT,
                 edited_review_summary TEXT, 
                 edited_inline_comments TEXT, -- JSON string of edited inline comments
+                head_sha TEXT NOT NULL,
+                base_sha TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
-                UNIQUE(repository, pr_number)
+                UNIQUE(repository, pr_number, head_sha)
             )
         """)
 
@@ -120,6 +122,17 @@ class ReviewDatabase:
             
         try:
             cursor.execute("ALTER TABLE pending_approvals ADD COLUMN edited_inline_comments TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        # Add head_sha and base_sha columns for commit-based pending approval tracking
+        try:
+            cursor.execute("ALTER TABLE pending_approvals ADD COLUMN head_sha TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+            
+        try:
+            cursor.execute("ALTER TABLE pending_approvals ADD COLUMN base_sha TEXT")
         except sqlite3.OperationalError:
             pass  # Column already exists
         
@@ -218,6 +231,29 @@ class ReviewDatabase:
         row = cursor.fetchone()
         if row:
             return ReviewRecord.from_db_row(dict(row))
+        return None
+
+    async def get_pending_approval_for_commit(self, repository: str, pr_number: int, head_sha: str) -> Optional[dict]:
+        """Get existing pending approval for a specific commit of a PR."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_pending_approval_for_commit_sync, repository, pr_number, head_sha
+        )
+        
+    def _get_pending_approval_for_commit_sync(self, repository: str, pr_number: int, head_sha: str) -> Optional[dict]:
+        """Synchronous implementation of get_pending_approval_for_commit."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT * FROM pending_approvals 
+            WHERE repository = ? AND pr_number = ? AND head_sha = ? AND status = 'pending'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (repository, pr_number, head_sha))
+        
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
         return None
         
     async def should_review_pr(self, pr_info: PRInfo) -> bool:
@@ -328,6 +364,30 @@ class ReviewDatabase:
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        # Check if a pending approval already exists for this PR (any commit)
+        cursor.execute("""
+            SELECT * FROM pending_approvals 
+            WHERE repository = ? AND pr_number = ? AND status = 'pending'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (pr_info.repository_name, pr_info.number))
+        
+        existing_pending = cursor.fetchone()
+        
+        if existing_pending:
+            existing_pending_dict = dict(existing_pending)
+            logger.info(f"Found existing pending approval for PR #{pr_info.number} (ID: {existing_pending_dict['id']}) - will overwrite with new commit {pr_info.head_sha[:8]}")
+            return self._update_pending_approval_sync(existing_pending_dict['id'], pr_info, review_result)
+        
+        # Check if this exact commit already has a pending approval (duplicate prevention)
+        existing_commit = self._get_pending_approval_for_commit_sync(
+            pr_info.repository_name, pr_info.number, pr_info.head_sha
+        )
+        
+        if existing_commit:
+            logger.info(f"Pending approval already exists for PR #{pr_info.number} commit {pr_info.head_sha[:8]}, returning existing ID: {existing_commit['id']}")
+            return existing_commit['id']
+
         # Serialize inline comments to JSON
         inline_comments_json = json.dumps([
             {
@@ -340,11 +400,11 @@ class ReviewDatabase:
 
         try:
             cursor.execute("""
-                INSERT OR REPLACE INTO pending_approvals 
+                INSERT INTO pending_approvals 
                 (repository, pr_number, pr_title, pr_author, pr_url, review_action,
                  review_comment, review_summary, review_reason, inline_comments, 
-                 inline_comments_count, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 inline_comments_count, head_sha, base_sha, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 pr_info.repository_name,
                 pr_info.number,
@@ -357,6 +417,8 @@ class ReviewDatabase:
                 review_result.reason or '',
                 inline_comments_json,
                 review_result.inline_comments_count,
+                pr_info.head_sha,
+                pr_info.base_sha,
                 'pending'
             ))
 
@@ -366,6 +428,55 @@ class ReviewDatabase:
 
         except sqlite3.Error as e:
             logger.error(f"Error creating pending approval: {e}")
+            raise
+            
+    def _update_pending_approval_sync(self, approval_id: int, pr_info: PRInfo, review_result: ReviewResult) -> int:
+        """Update an existing pending approval with new commit information."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # Serialize inline comments to JSON
+        inline_comments_json = json.dumps([
+            {
+                'file': comment.file,
+                'line': comment.line,
+                'message': comment.message
+            }
+            for comment in review_result.comments
+        ])
+
+        try:
+            cursor.execute("""
+                UPDATE pending_approvals 
+                SET pr_title = ?, pr_author = ?, pr_url = ?, review_action = ?,
+                    review_comment = ?, review_summary = ?, review_reason = ?, 
+                    inline_comments = ?, inline_comments_count = ?, 
+                    head_sha = ?, base_sha = ?,
+                    -- Reset edited fields since this is new content
+                    edited_review_comment = NULL, edited_review_summary = NULL, 
+                    edited_inline_comments = NULL,
+                    created_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (
+                pr_info.title,
+                pr_info.author,
+                pr_info.url,
+                review_result.action.value,
+                review_result.comment or '',
+                review_result.summary or '',
+                review_result.reason or '',
+                inline_comments_json,
+                review_result.inline_comments_count,
+                pr_info.head_sha,
+                pr_info.base_sha,
+                approval_id
+            ))
+
+            logger.info(f"Updated pending approval ID {approval_id} with new commit {pr_info.head_sha[:8]} for PR #{pr_info.number}")
+            return approval_id
+            
+        except sqlite3.Error as e:
+            logger.error(f"Error updating pending approval: {e}")
             raise
 
     async def get_pending_approvals(self, status: str = 'pending') -> List[Dict[str, Any]]:
