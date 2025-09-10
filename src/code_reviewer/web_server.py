@@ -211,10 +211,18 @@ class ReviewWebServer:
                         ${approval.inline_comments.length > 0 ? `
                             <div class="inline-comments">
                                 <strong>Inline Comments (${approval.inline_comments.length}):</strong>
-                                ${approval.inline_comments.map(comment => `
-                                    <div class="inline-comment">
-                                        <strong>${comment.file}:${comment.line}</strong><br>
-                                        ${comment.message}
+                                ${approval.inline_comments.map((comment, index) => `
+                                    <div class="inline-comment" id="inline-comment-section-${approval.id}-${index}">
+                                        <strong>${comment.file}:${comment.line}</strong>
+                                        <button class="btn-small edit-btn" onclick="editInlineComment(${approval.id}, ${index})" style="margin-left: 10px; font-size: 12px; padding: 2px 6px;">Edit</button>
+                                        <button class="btn-small delete-btn" onclick="deleteInlineComment(${approval.id}, ${index})" style="margin-left: 5px; font-size: 12px; padding: 2px 6px; background: #dc3545;">Delete</button>
+                                        <br>
+                                        <div id="inline-comment-display-${approval.id}-${index}" class="inline-comment-display">${comment.message}</div>
+                                        <textarea id="inline-comment-edit-${approval.id}-${index}" class="inline-comment-editor" style="display: none; width: 100%; height: 80px; margin: 10px 0;">${comment.message}</textarea>
+                                        <div id="inline-comment-edit-buttons-${approval.id}-${index}" style="display: none; margin-top: 5px;">
+                                            <button class="btn btn-approve" onclick="saveInlineComment(${approval.id}, ${index})" style="margin-right: 5px;">Save</button>
+                                            <button class="btn" onclick="cancelEditInlineComment(${approval.id}, ${index})">Cancel</button>
+                                        </div>
                                     </div>
                                 `).join('')}
                             </div>
@@ -466,6 +474,65 @@ class ReviewWebServer:
             } catch (error) {
                 console.error('Failed to delete summary:', error);
                 alert('Failed to delete summary');
+            }
+        }
+
+        // Inline comment editing functions
+        function editInlineComment(approvalId, commentIndex) {
+            document.getElementById(`inline-comment-display-${approvalId}-${commentIndex}`).style.display = 'none';
+            document.getElementById(`inline-comment-edit-${approvalId}-${commentIndex}`).style.display = 'block';
+            document.getElementById(`inline-comment-edit-buttons-${approvalId}-${commentIndex}`).style.display = 'block';
+        }
+
+        function cancelEditInlineComment(approvalId, commentIndex) {
+            document.getElementById(`inline-comment-display-${approvalId}-${commentIndex}`).style.display = 'block';
+            document.getElementById(`inline-comment-edit-${approvalId}-${commentIndex}`).style.display = 'none';
+            document.getElementById(`inline-comment-edit-buttons-${approvalId}-${commentIndex}`).style.display = 'none';
+            // Reset textarea to original value
+            const displayText = document.getElementById(`inline-comment-display-${approvalId}-${commentIndex}`).textContent;
+            document.getElementById(`inline-comment-edit-${approvalId}-${commentIndex}`).value = displayText;
+        }
+
+        async function saveInlineComment(approvalId, commentIndex) {
+            const newMessage = document.getElementById(`inline-comment-edit-${approvalId}-${commentIndex}`).value;
+            try {
+                const response = await fetch(`/api/approvals/${approvalId}/update-inline-comment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ index: commentIndex, message: newMessage })
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`inline-comment-display-${approvalId}-${commentIndex}`).textContent = newMessage;
+                    cancelEditInlineComment(approvalId, commentIndex);
+                } else {
+                    alert('Failed to save inline comment');
+                }
+            } catch (error) {
+                console.error('Failed to save inline comment:', error);
+                alert('Failed to save inline comment');
+            }
+        }
+
+        async function deleteInlineComment(approvalId, commentIndex) {
+            if (!confirm('Delete this inline comment? It will be removed from the review.')) return;
+            
+            try {
+                const response = await fetch(`/api/approvals/${approvalId}/delete-inline-comment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ index: commentIndex })
+                });
+                
+                if (response.ok) {
+                    // Refresh the entire pending approvals list to update counts and indices
+                    loadPendingApprovals();
+                } else {
+                    alert('Failed to delete inline comment');
+                }
+            } catch (error) {
+                console.error('Failed to delete inline comment:', error);
+                alert('Failed to delete inline comment');
             }
         }
 
