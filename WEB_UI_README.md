@@ -18,7 +18,14 @@ The code reviewer now includes an optional web UI that provides a dashboard for 
 ### 📊 **Centralized Management**
 - Single dashboard to manage all review activities
 - Real-time updates of pending approvals and human reviews
+- Complete approval history with before/after comparisons
 - Clean, responsive interface that works on desktop and mobile
+
+### 📚 **Approval History Tracking**
+- **Approved History**: View all approved reviews with original vs final comparison
+- **Rejected History**: See what would have been posted if you had approved
+- **Side-by-side Comparison**: Original Claude suggestions vs your final edits
+- **Complete Context**: PR details, inline comments, and direct GitHub links
 
 ## Configuration
 
@@ -80,6 +87,22 @@ When the system processes PRs:
 - See reason why human review was required
 - Direct links to GitHub PRs
 
+#### **Approved History Tab**
+- Complete history of all approved reviews
+- Side-by-side comparison of original vs final content:
+  - Review comments (what Claude suggested vs what you posted)
+  - Review summaries (for change requests)
+  - Inline comments (with file paths and line numbers)
+- Status badges showing approval status
+- Direct links to GitHub PRs
+
+#### **Rejected History Tab**
+- Complete history of all rejected reviews
+- Shows what would have been posted if approved
+- Side-by-side comparison of original vs edited content (before rejection)
+- Rejection reasons when provided
+- Direct links to GitHub PRs
+
 ## API Endpoints
 
 The web server exposes REST API endpoints:
@@ -101,6 +124,12 @@ Body: {"reason": "optional rejection reason"}
 
 # Get review statistics
 GET /api/stats
+
+# Get approved approval history
+GET /api/approved-approvals
+
+# Get rejected approval history  
+GET /api/rejected-approvals
 ```
 
 ## Database Schema

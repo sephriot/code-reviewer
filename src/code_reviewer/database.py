@@ -700,6 +700,116 @@ class ReviewDatabase:
             logger.error(f"Error deleting inline comment: {e}")
             raise
         
+    async def get_approved_approvals(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get approved approvals history."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_approved_approvals_sync, limit
+        )
+
+    def _get_approved_approvals_sync(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Synchronous implementation of get_approved_approvals."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM pending_approvals 
+            WHERE status = 'approved'
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,))
+
+        approvals = []
+        for row in cursor.fetchall():
+            approval = dict(row)
+            
+            # Store both original and edited versions for comparison
+            approval['original_review_comment'] = approval['review_comment']
+            approval['original_review_summary'] = approval['review_summary']
+            
+            # Parse original inline comments for comparison (from the raw database field)
+            original_comments_json = approval['inline_comments']  # Raw database field
+            if original_comments_json:
+                approval['original_inline_comments'] = json.loads(original_comments_json)
+            else:
+                approval['original_inline_comments'] = []
+            
+            # Parse inline comments JSON - use edited version if available for final display
+            inline_comments_json = approval['edited_inline_comments'] or approval['inline_comments']
+            if inline_comments_json:
+                approval['inline_comments'] = json.loads(inline_comments_json)
+            else:
+                approval['inline_comments'] = []
+            
+            # Use edited versions for display if they exist, handle deletions properly
+            if approval['edited_review_comment'] is not None:
+                approval['final_review_comment'] = approval['edited_review_comment']
+            else:
+                approval['final_review_comment'] = approval['review_comment']
+                
+            if approval['edited_review_summary'] is not None:
+                approval['final_review_summary'] = approval['edited_review_summary']
+            else:
+                approval['final_review_summary'] = approval['review_summary']
+            
+            approvals.append(approval)
+
+        return approvals
+
+    async def get_rejected_approvals(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get rejected approvals history."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_rejected_approvals_sync, limit
+        )
+
+    def _get_rejected_approvals_sync(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Synchronous implementation of get_rejected_approvals."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM pending_approvals 
+            WHERE status = 'rejected'
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,))
+
+        approvals = []
+        for row in cursor.fetchall():
+            approval = dict(row)
+            
+            # Store both original and edited versions for comparison
+            approval['original_review_comment'] = approval['review_comment']
+            approval['original_review_summary'] = approval['review_summary']
+            
+            # Parse original inline comments for comparison (from the raw database field)
+            original_comments_json = approval['inline_comments']  # Raw database field
+            if original_comments_json:
+                approval['original_inline_comments'] = json.loads(original_comments_json)
+            else:
+                approval['original_inline_comments'] = []
+            
+            # Parse inline comments JSON - use edited version if available for final display
+            inline_comments_json = approval['edited_inline_comments'] or approval['inline_comments']
+            if inline_comments_json:
+                approval['inline_comments'] = json.loads(inline_comments_json)
+            else:
+                approval['inline_comments'] = []
+            
+            # Use edited versions for display if they exist, handle deletions properly
+            if approval['edited_review_comment'] is not None:
+                approval['final_review_comment'] = approval['edited_review_comment']
+            else:
+                approval['final_review_comment'] = approval['review_comment']
+                
+            if approval['edited_review_summary'] is not None:
+                approval['final_review_summary'] = approval['edited_review_summary']
+            else:
+                approval['final_review_summary'] = approval['review_summary']
+            
+            approvals.append(approval)
+
+        return approvals
+        
     def close(self):
         """Close database connections."""
         if hasattr(self._local, 'connection'):

@@ -94,7 +94,8 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - Database automatically handles duplicate prevention via unique constraints
 - Use `get_review_stats()` for monitoring and analytics
 - **Pending Approvals**: Use `create_pending_approval()` for `approve_with_comments` actions
-- **Web UI Support**: Methods for retrieving pending approvals and human reviews
+- **Web UI Support**: Methods for retrieving pending approvals, human reviews, and approval history
+- **History Tracking**: `get_approved_approvals()` and `get_rejected_approvals()` for complete interaction history
 
 ### Sound Notification System
 - Cross-platform audio support (macOS, Linux, Windows)
@@ -110,6 +111,7 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - FastAPI-based REST API with HTML dashboard
 - **Pending Approvals Management**: Review and approve/reject `approve_with_comments` actions before GitHub posting
 - **Human Review Tracking**: Display PRs marked as `requires_human_review` with reasons and timestamps
+- **Approval History**: Complete history of approved and rejected reviews with before/after comparison
 - **Real-time Updates**: JavaScript-based interface with async API calls
 - **Mobile Responsive**: Works on desktop and mobile devices
 - **Configuration Options**: Enable/disable via CLI, environment variables, or config file
@@ -193,3 +195,30 @@ Consider these areas for improvement:
 - **Web UI Enhancements**: User authentication, batch operations, review templates
 - **Mobile App**: Native mobile interface for approval management
 - **API Extensions**: Webhook endpoints for external integrations
+
+## Important Development Notes
+
+### Python Environment
+**CRITICAL**: Always use the project's virtual environment when executing Python commands:
+```bash
+# Correct - use venv
+./venv/bin/python -m src.code_reviewer.main
+./venv/bin/python tests/test_something.py
+
+# Incorrect - don't use system python
+python -m src.code_reviewer.main
+python3 tests/test_something.py
+```
+
+The venv ensures all dependencies are available and prevents import/version conflicts.
+
+### Documentation Maintenance
+**IMPORTANT**: This CLAUDE.md file should be updated whenever significant changes are made to the project:
+- New features or components
+- API changes or new endpoints
+- Database schema modifications
+- Configuration options
+- Workflow changes
+- New dependencies
+
+Keep this documentation current to help with future development and troubleshooting.

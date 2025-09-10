@@ -10,8 +10,9 @@ An automated GitHub PR code review system using Claude Code. This tool monitors 
 - ✅ **Multiple Actions**: Approve, request changes, or flag for human review
 - 💬 **Inline Comments**: Specific feedback on problematic code lines
 - 🔔 **Sound Notifications**: Audio alerts for PRs requiring human attention
+- 🌐 **Web Dashboard**: Optional web interface for managing pending approvals and review history
 - 🧠 **Smart Tracking**: Never reviews the same commit twice
-- 🗄️ **Review History**: SQLite database tracks all review decisions
+- 🗄️ **Review History**: SQLite database tracks all review decisions with complete approval history
 - 🏃 **Dry Run Mode**: Test behavior without making actual PR actions
 - 🔄 **Continuous Monitoring**: Graceful shutdown with SIGTERM handling
 
@@ -62,6 +63,11 @@ DRY_RUN=false
 
 # Database path
 DATABASE_PATH=data/reviews.db
+
+# Web UI settings (optional)
+WEB_ENABLED=true
+WEB_HOST=127.0.0.1
+WEB_PORT=8000
 ```
 
 ### GitHub Token Setup
@@ -108,6 +114,11 @@ sound_enabled: true
 dry_run: false
 database_path: "data/reviews.db"
 
+# Web UI settings (optional)
+web_enabled: true
+web_host: "127.0.0.1"
+web_port: 8000
+
 # Optional: Specific repositories to monitor (format: owner/repo)
 repositories:
   - "owner/repo1"
@@ -130,6 +141,12 @@ code-reviewer --config config/config.yaml
 
 # Using custom prompt file
 code-reviewer --prompt prompts/my_custom_prompt.txt
+
+# Enable web UI dashboard
+code-reviewer --web-enabled
+
+# Run with web UI on custom host and port
+code-reviewer --web-enabled --web-host 0.0.0.0 --web-port 8080
 ```
 
 ### Command Line Options
@@ -141,6 +158,9 @@ code-reviewer --prompt prompts/my_custom_prompt.txt
 - `--poll-interval`: Polling interval in seconds (default: 60)
 - `--sound-enabled/--no-sound`: Enable/disable sound notifications
 - `--sound-file`: Custom sound file for notifications
+- `--web-enabled/--no-web`: Enable/disable web UI dashboard
+- `--web-host`: Web server host address (default: 127.0.0.1)
+- `--web-port`: Web server port (default: 8000)
 - `--dry-run`: Log actions instead of performing them
 
 ## Customizing Review Prompts
@@ -224,6 +244,23 @@ The system automatically tracks review history:
 - 🔄 **Re-reviews when new commits are pushed**
 - 🚫 **Permanently skips PRs marked for human review**
 - 📊 **Maintains complete audit trail in SQLite database**
+- 🌐 **Web dashboard shows complete approval history with before/after comparisons**
+
+### Web Dashboard Features
+
+When web UI is enabled (`--web-enabled` or `WEB_ENABLED=true`):
+
+- 📋 **Pending Approvals**: Review and approve/reject `approve_with_comments` actions before posting to GitHub
+- 👤 **Human Reviews**: View all PRs flagged for human attention with reasons and timestamps
+- 📚 **Approval History**: Complete history of approved and rejected reviews with:
+  - Original vs final comments comparison
+  - Original vs final inline comments
+  - Original vs final review summaries
+  - Direct links to GitHub PRs
+- 🔄 **Real-time Updates**: JavaScript interface with automatic refresh
+- 📱 **Mobile Responsive**: Works on both desktop and mobile devices
+
+Access the dashboard at `http://localhost:8000` (or your configured host/port).
 
 ### Repository Filtering
 

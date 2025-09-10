@@ -61,6 +61,17 @@ class ReviewWebServer:
         .original-review-comment { background: #e9ecef; padding: 10px; border-radius: 4px; margin: 10px 0; border-left: 3px solid #6c757d; }
         .inline-comments { margin-top: 10px; }
         .inline-comment { background: #fff3cd; padding: 8px; border-left: 3px solid #ffc107; margin: 5px 0; }
+        .history-section { margin: 15px 0; }
+        .history-title { font-weight: bold; color: #495057; margin-bottom: 8px; }
+        .comparison-container { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 10px 0; }
+        .original-content, .final-content { padding: 10px; border-radius: 4px; }
+        .original-content { background: #f8f9fa; border-left: 3px solid #6c757d; }
+        .final-content { background: #d1ecf1; border-left: 3px solid #bee5eb; }
+        .section-header { font-weight: bold; margin-bottom: 5px; color: #495057; }
+        .no-content { font-style: italic; color: #6c757d; }
+        .status-badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .status-approved { background: #d4edda; color: #155724; }
+        .status-rejected { background: #f8d7da; color: #721c24; }
         .buttons { margin-top: 15px; }
         .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; }
         .btn-approve { background: #28a745; color: white; }
@@ -84,6 +95,8 @@ class ReviewWebServer:
         <div class="tabs">
             <div class="tab active" onclick="showTab('pending')">Pending Approvals</div>
             <div class="tab" onclick="showTab('human-review')">Human Reviews</div>
+            <div class="tab" onclick="showTab('approved')">Approved History</div>
+            <div class="tab" onclick="showTab('rejected')">Rejected History</div>
         </div>
         
         <div id="pending" class="tab-content active">
@@ -97,6 +110,20 @@ class ReviewWebServer:
             <div class="section">
                 <h2>PRs Requiring Human Review</h2>
                 <div id="human-reviews"></div>
+            </div>
+        </div>
+
+        <div id="approved" class="tab-content">
+            <div class="section">
+                <h2>Approved Approvals History</h2>
+                <div id="approved-approvals"></div>
+            </div>
+        </div>
+
+        <div id="rejected" class="tab-content">
+            <div class="section">
+                <h2>Rejected Approvals History</h2>
+                <div id="rejected-approvals"></div>
             </div>
         </div>
     </div>
@@ -132,6 +159,10 @@ class ReviewWebServer:
                 loadPendingApprovals();
             } else if (tabName === 'human-review') {
                 loadHumanReviews();
+            } else if (tabName === 'approved') {
+                loadApprovedHistory();
+            } else if (tabName === 'rejected') {
+                loadRejectedHistory();
             }
         }
 
@@ -466,6 +497,217 @@ class ReviewWebServer:
             }
         }
 
+        async function loadApprovedHistory() {
+            try {
+                const response = await fetch('/api/approved-approvals');
+                const approvals = await response.json();
+                const container = document.getElementById('approved-approvals');
+                
+                if (approvals.length === 0) {
+                    container.innerHTML = '<p>No approved approvals found.</p>';
+                    return;
+                }
+                
+                container.innerHTML = approvals.map(approval => {
+                    const originalComment = approval.original_review_comment || '';
+                    const finalComment = approval.final_review_comment || '';
+                    const originalSummary = approval.original_review_summary || '';
+                    const finalSummary = approval.final_review_summary || '';
+                    const originalInlineComments = approval.original_inline_comments || [];
+                    const finalInlineComments = approval.inline_comments || [];
+                    
+                    return `
+                        <div class="pr-card">
+                            <div class="pr-title">${approval.pr_title}
+                                <span class="status-badge status-approved">APPROVED</span>
+                            </div>
+                            <div class="pr-meta">
+                                ${approval.repository} #${approval.pr_number} by ${approval.pr_author}
+                                <br><small>Created: ${new Date(approval.created_at).toLocaleString()}</small>
+                                <br><small>Action: ${approval.review_action.replace('_', ' ').toUpperCase()}</small>
+                            </div>
+                            
+                            ${(originalComment || finalComment) ? `
+                                <div class="history-section">
+                                    <div class="history-title">Review Comments</div>
+                                    <div class="comparison-container">
+                                        <div class="original-content">
+                                            <div class="section-header">Original</div>
+                                            <div class="content">${originalComment || '<span class="no-content">No comment</span>'}</div>
+                                        </div>
+                                        <div class="final-content">
+                                            <div class="section-header">Final (Posted to GitHub)</div>
+                                            <div class="content">${finalComment || '<span class="no-content">No comment</span>'}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            ${(originalSummary || finalSummary) ? `
+                                <div class="history-section">
+                                    <div class="history-title">Review Summary</div>
+                                    <div class="comparison-container">
+                                        <div class="original-content">
+                                            <div class="section-header">Original</div>
+                                            <div class="content">${originalSummary || '<span class="no-content">No summary</span>'}</div>
+                                        </div>
+                                        <div class="final-content">
+                                            <div class="section-header">Final (Posted to GitHub)</div>
+                                            <div class="content">${finalSummary || '<span class="no-content">No summary</span>'}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            ${(originalInlineComments.length > 0 || finalInlineComments.length > 0) ? `
+                                <div class="history-section">
+                                    <div class="history-title">Inline Comments</div>
+                                    <div class="comparison-container">
+                                        <div class="original-content">
+                                            <div class="section-header">Original (${originalInlineComments.length})</div>
+                                            ${originalInlineComments.length > 0 ? 
+                                                originalInlineComments.map(comment => `
+                                                    <div class="inline-comment">
+                                                        <strong>${comment.file}:${comment.line}</strong><br>
+                                                        ${comment.message}
+                                                    </div>
+                                                `).join('') : 
+                                                '<span class="no-content">No inline comments</span>'
+                                            }
+                                        </div>
+                                        <div class="final-content">
+                                            <div class="section-header">Final - Posted to GitHub (${finalInlineComments.length})</div>
+                                            ${finalInlineComments.length > 0 ? 
+                                                finalInlineComments.map(comment => `
+                                                    <div class="inline-comment">
+                                                        <strong>${comment.file}:${comment.line}</strong><br>
+                                                        ${comment.message}
+                                                    </div>
+                                                `).join('') : 
+                                                '<span class="no-content">No inline comments</span>'
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            <div class="buttons">
+                                <a href="${approval.pr_url}" target="_blank" class="btn btn-view">View PR</a>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Failed to load approved history:', error);
+            }
+        }
+
+        async function loadRejectedHistory() {
+            try {
+                const response = await fetch('/api/rejected-approvals');
+                const approvals = await response.json();
+                const container = document.getElementById('rejected-approvals');
+                
+                if (approvals.length === 0) {
+                    container.innerHTML = '<p>No rejected approvals found.</p>';
+                    return;
+                }
+                
+                container.innerHTML = approvals.map(approval => {
+                    const originalComment = approval.original_review_comment || '';
+                    const finalComment = approval.final_review_comment || '';
+                    const originalSummary = approval.original_review_summary || '';
+                    const finalSummary = approval.final_review_summary || '';
+                    const originalInlineComments = approval.original_inline_comments || [];
+                    const finalInlineComments = approval.inline_comments || [];
+                    
+                    return `
+                        <div class="pr-card">
+                            <div class="pr-title">${approval.pr_title}
+                                <span class="status-badge status-rejected">REJECTED</span>
+                            </div>
+                            <div class="pr-meta">
+                                ${approval.repository} #${approval.pr_number} by ${approval.pr_author}
+                                <br><small>Created: ${new Date(approval.created_at).toLocaleString()}</small>
+                                <br><small>Action: ${approval.review_action.replace('_', ' ').toUpperCase()}</small>
+                                ${approval.review_comment ? `<br><small>Rejection Reason: ${approval.review_comment}</small>` : ''}
+                            </div>
+                            
+                            ${(originalComment || finalComment) ? `
+                                <div class="history-section">
+                                    <div class="history-title">Review Comments (Not Posted)</div>
+                                    <div class="comparison-container">
+                                        <div class="original-content">
+                                            <div class="section-header">Original</div>
+                                            <div class="content">${originalComment || '<span class="no-content">No comment</span>'}</div>
+                                        </div>
+                                        <div class="final-content">
+                                            <div class="section-header">Final (Not Posted - Rejected)</div>
+                                            <div class="content">${finalComment || '<span class="no-content">No comment</span>'}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            ${(originalSummary || finalSummary) ? `
+                                <div class="history-section">
+                                    <div class="history-title">Review Summary (Not Posted)</div>
+                                    <div class="comparison-container">
+                                        <div class="original-content">
+                                            <div class="section-header">Original</div>
+                                            <div class="content">${originalSummary || '<span class="no-content">No summary</span>'}</div>
+                                        </div>
+                                        <div class="final-content">
+                                            <div class="section-header">Final (Not Posted - Rejected)</div>
+                                            <div class="content">${finalSummary || '<span class="no-content">No summary</span>'}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            ${(originalInlineComments.length > 0 || finalInlineComments.length > 0) ? `
+                                <div class="history-section">
+                                    <div class="history-title">Inline Comments (Not Posted)</div>
+                                    <div class="comparison-container">
+                                        <div class="original-content">
+                                            <div class="section-header">Original (${originalInlineComments.length})</div>
+                                            ${originalInlineComments.length > 0 ? 
+                                                originalInlineComments.map(comment => `
+                                                    <div class="inline-comment">
+                                                        <strong>${comment.file}:${comment.line}</strong><br>
+                                                        ${comment.message}
+                                                    </div>
+                                                `).join('') : 
+                                                '<span class="no-content">No inline comments</span>'
+                                            }
+                                        </div>
+                                        <div class="final-content">
+                                            <div class="section-header">Final (Not Posted - Rejected) (${finalInlineComments.length})</div>
+                                            ${finalInlineComments.length > 0 ? 
+                                                finalInlineComments.map(comment => `
+                                                    <div class="inline-comment">
+                                                        <strong>${comment.file}:${comment.line}</strong><br>
+                                                        ${comment.message}
+                                                    </div>
+                                                `).join('') : 
+                                                '<span class="no-content">No inline comments</span>'
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            <div class="buttons">
+                                <a href="${approval.pr_url}" target="_blank" class="btn btn-view">View PR</a>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Failed to load rejected history:', error);
+            }
+        }
+
         // Load initial data
         loadPendingApprovals();
     </script>
@@ -473,8 +715,8 @@ class ReviewWebServer:
 </html>"""
         
         dashboard_path = self.templates_dir / "dashboard.html"
-        if not dashboard_path.exists():
-            dashboard_path.write_text(dashboard_html, encoding='utf-8')
+        # Always write the template to ensure we have the latest version
+        dashboard_path.write_text(dashboard_html, encoding='utf-8')
     
     def _setup_routes(self):
         """Setup FastAPI routes."""
@@ -608,6 +850,26 @@ class ReviewWebServer:
                 logger.error(f"Failed to reject PR {approval_id}: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
         
+        @self.app.get("/api/approved-approvals")
+        async def get_approved_approvals():
+            """Get approved approvals history."""
+            try:
+                approvals = await self.database.get_approved_approvals()
+                return JSONResponse(content=approvals)
+            except Exception as e:
+                logger.error(f"Failed to get approved approvals: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/rejected-approvals")
+        async def get_rejected_approvals():
+            """Get rejected approvals history."""
+            try:
+                approvals = await self.database.get_rejected_approvals()
+                return JSONResponse(content=approvals)
+            except Exception as e:
+                logger.error(f"Failed to get rejected approvals: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
         @self.app.get("/api/stats")
         async def get_stats():
             """Get review statistics."""
