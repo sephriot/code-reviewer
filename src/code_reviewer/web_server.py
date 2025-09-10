@@ -472,16 +472,12 @@ class ReviewWebServer:
         async function approveDirectly(id) {
             if (!confirm('Approve and post this review to GitHub?')) return;
             
-            // Get current comment text (visible or empty if deleted)
-            const commentSection = document.getElementById(`comment-section-${id}`);
-            const commentText = commentSection && commentSection.style.display !== 'none' ? 
-                document.getElementById(`comment-display-${id}`).textContent : '';
-            
+            // Don't pass comment from DOM - let server use database edited versions
             try {
                 const response = await fetch(`/api/approvals/${id}/approve`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ comment: commentText })
+                    body: JSON.stringify({})
                 });
                 
                 if (response.ok) {
@@ -791,7 +787,8 @@ class ReviewWebServer:
                 ]
                 
                 # Use edited versions if available, otherwise use originals
-                final_comment = user_comment or approval['display_review_comment']
+                # If user_comment is provided from modal, use it; otherwise use display_review_comment (which prioritizes edited)
+                final_comment = user_comment if user_comment else approval['display_review_comment']
                 final_summary = approval['display_review_summary']
                 
                 review_result = ReviewResult(
