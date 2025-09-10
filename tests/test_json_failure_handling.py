@@ -150,11 +150,11 @@ async def test_github_monitor_error_handling():
                 logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from Claude")
                 logger.error(f"📋 PR: '{pr_info.title}' by {pr_info.author}")
                 logger.error(f"❗ Reason: {str(e)}")
-                logger.error(f"🚫 No action will be taken on this PR - skipping approval/comments and database storage")
+                logger.error(f"🔄 This PR will be retried in the next monitoring loop")
                 # Log a preview of the output (truncated for readability)
                 output_preview = e.claude_output[:1000] + "..." if len(e.claude_output) > 1000 else e.claude_output
                 logger.error(f"📤 Claude output preview: {output_preview}")
-                return True
+                return False  # Return False to indicate review failed and should be retried
                 
             except Exception as e:
                 logger.error(f"Error processing PR #{pr_info.number}: {e}")
@@ -175,12 +175,15 @@ async def test_github_monitor_error_handling():
     print("Testing GitHubMonitor error handling:")
     result = await monitor._process_pr(pr_info)
     
-    if result:
+    if not result:  # We expect False (review failed, should retry)
         print("✅ SUCCESS: GitHubMonitor handled ClaudeOutputParseError correctly")
         print("✅ No PR actions were taken (approve/comment)")
         print("✅ No database record was stored")
+        print("✅ PR marked for retry in next monitoring loop")
+        result = True  # Test passed
     else:
-        print("❌ FAILED: GitHubMonitor error handling did not work as expected")
+        print("❌ FAILED: GitHubMonitor should return False for failed reviews")
+        result = False
     
     return result
 
