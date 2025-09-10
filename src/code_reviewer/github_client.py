@@ -122,8 +122,9 @@ class GitHubClient:
             return []
             
             
-    async def approve_pr(self, repository: List[str], pr_number: int, comment: Optional[str] = None):
-        """Approve a PR with optional comment."""
+    async def approve_pr(self, repository: List[str], pr_number: int, comment: Optional[str] = None, 
+                       inline_comments: Optional[List[Dict[str, Any]]] = None):
+        """Approve a PR with optional comment and inline comments."""
         try:
             owner, repo_name = repository[0], repository[1]
             
@@ -144,6 +145,21 @@ class GitHubClient:
             if comment:
                 data['body'] = comment
                 
+            # Add inline comments if provided
+            if inline_comments:
+                data['comments'] = []
+                for comment_data in inline_comments:
+                    inline_comment = {
+                        'path': comment_data.get('path', comment_data.get('file')),
+                        'line': comment_data.get('line'),
+                        'body': comment_data.get('body', comment_data.get('message'))
+                    }
+                    data['comments'].append(inline_comment)
+                logger.info(f"Added {len(data['comments'])} inline comments to approval")
+                for i, comment in enumerate(data['comments']):
+                    logger.info(f"  Comment {i}: {comment['path']}:{comment['line']} - {comment['body'][:100]}...")
+                
+            logger.info(f"Posting approval to GitHub with data: {data}")
             async with self.session.post(url, json=data) as response:
                 result = await response.json()
                 

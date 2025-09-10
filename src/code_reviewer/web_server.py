@@ -562,6 +562,9 @@ class ReviewWebServer:
                 
                 # Post the review to GitHub
                 logger.info(f"Attempting to post GitHub review for PR #{pr_info.number} in {pr_info.repository_name}")
+                logger.info(f"Review action: {review_result.action}, comment: '{review_result.comment}', inline comments: {len(review_result.comments)}")
+                for i, comment in enumerate(review_result.comments):
+                    logger.info(f"  Inline comment {i}: {comment.file}:{comment.line} - {comment.message[:100]}...")
                 success = await self._post_github_review(pr_info, review_result)
                 logger.info(f"GitHub review post result: {success}")
                 
@@ -733,15 +736,38 @@ class ReviewWebServer:
         """Post a review to GitHub."""
         try:
             if review_result.action == ReviewAction.APPROVE_WITH_COMMENT:
+                # Convert inline comments to GitHub format
+                github_comments = [
+                    {
+                        'path': comment.file,
+                        'line': comment.line,
+                        'body': comment.message
+                    }
+                    for comment in review_result.comments
+                ] if review_result.comments else None
+                
                 success = await self.github_client.approve_pr(
                     [pr_info.owner, pr_info.repo],
                     pr_info.number,
-                    review_result.comment
+                    review_result.comment,
+                    github_comments
                 )
             elif review_result.action == ReviewAction.APPROVE_WITHOUT_COMMENT:
+                # Convert inline comments to GitHub format even for approve without comment
+                github_comments = [
+                    {
+                        'path': comment.file,
+                        'line': comment.line,
+                        'body': comment.message
+                    }
+                    for comment in review_result.comments
+                ] if review_result.comments else None
+                
                 success = await self.github_client.approve_pr(
                     [pr_info.owner, pr_info.repo],
-                    pr_info.number
+                    pr_info.number,
+                    None,
+                    github_comments
                 )
             elif review_result.action == ReviewAction.REQUEST_CHANGES:
                 # Convert inline comments to GitHub format
