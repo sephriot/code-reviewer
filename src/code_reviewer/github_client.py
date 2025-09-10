@@ -80,15 +80,24 @@ class GitHubClient:
                         # Get author and title information from the API response
                         author = item.get('user', {}).get('login', '')
                         title = item.get('title', '')
+                        repository = item['repository_url'].split('/')[-2:]  # [owner, repo]
                         
-                        # Include title and author in PRInfo for database storage
+                        # Fetch detailed PR information including head/base SHAs
+                        detailed_pr = await self._fetch_pr_details(repository[0], repository[1], item['number'])
+                        if not detailed_pr:
+                            logger.warning(f"Failed to fetch details for PR #{item['number']} in {'/'.join(repository)}")
+                            continue
+                            
+                        # Include title, author, and SHA information in PRInfo
                         pr_info = PRInfo(
                             id=item['id'],
                             number=item['number'],
-                            repository=item['repository_url'].split('/')[-2:],  # [owner, repo]
+                            repository=repository,
                             url=item['html_url'],
                             title=title,
-                            author=author
+                            author=author,
+                            head_sha=detailed_pr.get('head', {}).get('sha', ''),
+                            base_sha=detailed_pr.get('base', {}).get('sha', '')
                         )
                         all_prs.append(pr_info)
                 
@@ -120,6 +129,29 @@ class GitHubClient:
         except Exception as e:
             logger.error(f"Error fetching review requests: {e}")
             return []
+
+    async def _fetch_pr_details(self, owner: str, repo: str, pr_number: int) -> Optional[dict]:
+        """Fetch detailed PR information including head and base SHAs."""
+        try:
+            if not self.session:
+                self.session = aiohttp.ClientSession(
+                    headers={
+                        'Authorization': f'token {self.token}',
+                        'Accept': 'application/vnd.github.v3+json',
+                    }
+                )
+            
+            url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+            async with self.session.get(url) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    logger.error(f"Failed to fetch PR details: {response.status}")
+                    return None
+                    
+        except Exception as e:
+            logger.error(f"Error fetching PR details for #{pr_number} in {owner}/{repo}: {e}")
+            return None
             
             
     async def approve_pr(self, repository: List[str], pr_number: int, comment: Optional[str] = None, 

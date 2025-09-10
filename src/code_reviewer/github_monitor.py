@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Set, Optional
+from typing import Optional
 
 from .github_client import GitHubClient
 from .claude_integration import ClaudeIntegration, ClaudeOutputParseError
@@ -21,7 +21,6 @@ class GitHubMonitor:
         self.github_client = github_client
         self.claude_integration = claude_integration
         self.config = config
-        self.processed_prs: Set[int] = set()
         self.running = True
         self.sound_notifier = SoundNotifier(
             enabled=config.sound_enabled,
@@ -109,41 +108,29 @@ class GitHubMonitor:
                 logger.debug("No PRs found pending review")
             
             for pr_info in prs:
-                pr_id = pr_info.id
+                repo_name = pr_info.repository_name
+                logger.debug(f"Checking PR #{pr_info.number} in {repo_name} (head: {pr_info.head_sha[:8] if pr_info.head_sha else 'unknown'})")
                 
-                if pr_id not in self.processed_prs:
-                    repo_name = pr_info.repository_name
-                    logger.info(f"Found new PR to review: #{pr_info.number} in {repo_name}")
+                # Check if we should review this PR based on commit SHA comparison
+                should_review = await self.db.should_review_pr(pr_info)
+                
+                if should_review:
+                    logger.info(f"Found PR to review: #{pr_info.number} in {repo_name}")
                     # Play notification sound for new PR discovery in dry run mode only
                     if self.config.dry_run:
                         logger.debug("Playing notification sound for new PR discovery (dry run mode)")
                         await self.sound_notifier.play_notification()
                     
-                    # Check if we should review this PR based on history (simplified check)
-                    should_review = await self.db.should_review_pr(pr_info)
-                    
-                    if should_review:
-                        review_successful = await self._process_pr(pr_info)
-                        # Only mark as processed if review was successful
-                        if review_successful:
-                            self.processed_prs.add(pr_id)
-                    else:
-                        # Get more specific reason for skipping
-                        await self._log_skip_reason(pr_info)
-                        self.processed_prs.add(pr_id)
+                    await self._process_pr(pr_info)
                 else:
-                    repo_name = pr_info.repository_name
-                    logger.info(f"PR #{pr_info.number} in {repo_name} already processed this session")
+                    # Get more specific reason for skipping
+                    await self._log_skip_reason(pr_info)
                     
         except Exception as e:
             logger.error(f"Error checking for PRs: {e}")
             
-    async def _process_pr(self, pr_info: PRInfo) -> bool:
-        """Process a single PR for review.
-        
-        Returns:
-            bool: True if review was successful, False if it failed and should be retried
-        """
+    async def _process_pr(self, pr_info: PRInfo) -> None:
+        """Process a single PR for review."""
         repo_name = pr_info.repository_name
         logger.info(f"Processing PR #{pr_info.number} in {repo_name}")
         try:
@@ -164,21 +151,18 @@ class GitHubMonitor:
                 logger.info(f"[DRY RUN] Would record review in database for PR #{pr_info.number}")
             # Note: APPROVE_WITH_COMMENT and REQUEST_CHANGES reviews are recorded when the human approves via web UI
             
-            return True  # Review completed successfully
             
         except ClaudeOutputParseError as e:
             logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from Claude")
             logger.error(f"📋 PR: '{pr_info.title}' by {pr_info.author}")
             logger.error(f"❗ Reason: {str(e)}")
-            logger.error(f"🔄 This PR will be retried in the next monitoring loop")
+            logger.error(f"🔄 This PR will be retried when the commit changes")
             # Log a preview of the output (truncated for readability)
             output_preview = e.claude_output[:1000] + "..." if len(e.claude_output) > 1000 else e.claude_output
             logger.error(f"📤 Claude output preview: {output_preview}")
-            return False  # Review failed, should be retried
             
         except Exception as e:
             logger.error(f"Error processing PR #{pr_info.number}: {e}")
-            return False  # Review failed, should be retried
             
     async def _act_on_review(self, pr_info: PRInfo, review_result: ReviewResult):
         """Act on Claude's review result."""

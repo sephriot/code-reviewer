@@ -22,6 +22,8 @@ class PRInfo:
     url: str
     title: str = ""
     author: str = ""
+    head_sha: str = ""
+    base_sha: str = ""
     
     @property
     def repository_name(self) -> str:

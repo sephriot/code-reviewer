@@ -153,17 +153,17 @@ class ReviewDatabase:
             """, (
                 repository,
                 pr_number,
-                pr_info.title,  # Now using actual PR title
-                pr_info.author,  # Now using actual PR author
+                pr_info.title,
+                pr_info.author,
                 review_result.action.value,
                 review_result.reason or '',
                 review_result.comment or '',
                 review_result.summary or '',
                 inline_comments_count,
                 datetime.now(timezone.utc).isoformat(),
-                '',  # PR updated_at - not needed for simplified tracking
-                '',  # head_sha - not needed for simplified tracking
-                ''   # base_sha - not needed for simplified tracking
+                '',  # PR updated_at - not needed for commit-based tracking
+                pr_info.head_sha,  # Track the reviewed commit SHA
+                pr_info.base_sha   # Track the base commit SHA
             ))
             
             review_id = cursor.lastrowid
@@ -196,28 +196,56 @@ class ReviewDatabase:
         if row:
             return ReviewRecord.from_db_row(dict(row))
         return None
+
+    async def get_review_for_commit(self, repository: str, pr_number: int, head_sha: str) -> Optional[ReviewRecord]:
+        """Get the review for a specific commit of a PR."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_review_for_commit_sync, repository, pr_number, head_sha
+        )
+        
+    def _get_review_for_commit_sync(self, repository: str, pr_number: int, head_sha: str) -> Optional[ReviewRecord]:
+        """Synchronous implementation of get_review_for_commit."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT * FROM pr_reviews 
+            WHERE repository = ? AND pr_number = ? AND head_sha = ?
+            ORDER BY reviewed_at DESC
+            LIMIT 1
+        """, (repository, pr_number, head_sha))
+        
+        row = cursor.fetchone()
+        if row:
+            return ReviewRecord.from_db_row(dict(row))
+        return None
         
     async def should_review_pr(self, pr_info: PRInfo) -> bool:
-        """Determine if a PR should be reviewed based on history - simplified version."""
+        """Determine if a PR should be reviewed based on commit SHA comparison."""
         repository = pr_info.repository_name
         pr_number = pr_info.number
+        current_head_sha = pr_info.head_sha
         
-        latest_review = await self.get_latest_review(repository, pr_number)
+        if not current_head_sha:
+            logger.warning(f"PR #{pr_number} in {repository}: No head SHA available, skipping review")
+            return False
+        
+        # Get the latest review for this specific head SHA
+        latest_review = await self.get_review_for_commit(repository, pr_number, current_head_sha)
         
         if not latest_review:
-            logger.info(f"PR #{pr_number} in {repository}: No previous review found, will review")
+            logger.info(f"PR #{pr_number} in {repository}: No review found for head SHA {current_head_sha[:8]}, will review")
             return True
             
-        # For simplified tracking, we'll be more conservative and re-review if it's been a while
-        # or if the previous action requires human review (in case human has addressed it)
+        # If we've already reviewed this exact commit, check the action
         action = latest_review.review_action
-        logger.info(f"PR #{pr_number} in {repository}: Previous review action was '{action.value}'")
+        logger.info(f"PR #{pr_number} in {repository}: Already reviewed head SHA {current_head_sha[:8]} with action '{action.value}'")
         
-        # Don't review again if we recently took a decisive action
+        # Don't review again if we've taken a decisive action on this exact commit
         if action in [ReviewAction.APPROVE_WITH_COMMENT, 
                      ReviewAction.APPROVE_WITHOUT_COMMENT,
                      ReviewAction.REQUEST_CHANGES]:
-            logger.info(f"PR #{pr_number} in {repository}: Skipping - already processed with decisive action")
+            logger.info(f"PR #{pr_number} in {repository}: Skipping - already processed this commit with decisive action")
             return False
             
         # Always re-review if it was marked for human review (human might have addressed it)
