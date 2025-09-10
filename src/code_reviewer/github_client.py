@@ -229,7 +229,8 @@ class GitHubClient:
                     raise Exception(f"GitHub API error: {result}")
                     
                 logger.info(f"Successfully added comment to PR #{pr_number}")
+                return True
                 
         except Exception as e:
             logger.error(f"Error adding review comment: {e}")
-            raise
+            return False

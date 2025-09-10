@@ -154,26 +154,28 @@ class ReviewWebServer:
                             <br><small>Created: ${new Date(approval.created_at).toLocaleString()}</small>
                         </div>
                         ${approval.display_review_comment ? `
-                            ${approval.edited_review_comment && approval.edited_review_comment !== approval.review_comment ? `
-                                <div class="original-review-comment">
-                                    <strong>Original Comment:</strong><br>
-                                    ${approval.review_comment}
+                            <div class="review-comment" id="comment-section-${approval.id}">
+                                <strong>Review Comment:</strong>
+                                <button class="btn-small edit-btn" onclick="editComment(${approval.id})" style="margin-left: 10px; font-size: 12px; padding: 2px 6px;">Edit</button>
+                                <button class="btn-small delete-btn" onclick="deleteComment(${approval.id})" style="margin-left: 5px; font-size: 12px; padding: 2px 6px; background: #dc3545;">Delete</button>
+                                <div id="comment-display-${approval.id}" class="comment-display">${approval.display_review_comment}</div>
+                                <textarea id="comment-edit-${approval.id}" class="comment-editor" style="display: none; width: 100%; height: 100px; margin: 10px 0;">${approval.display_review_comment}</textarea>
+                                <div id="comment-edit-buttons-${approval.id}" style="display: none; margin-top: 5px;">
+                                    <button class="btn btn-approve" onclick="saveComment(${approval.id})" style="margin-right: 5px;">Save</button>
+                                    <button class="btn" onclick="cancelEditComment(${approval.id})">Cancel</button>
                                 </div>
-                            ` : ''}
-                            <div class="review-comment">
-                                <strong>${approval.edited_review_comment && approval.edited_review_comment !== approval.review_comment ? 'Edited ' : ''}Comment:</strong><br>
-                                ${approval.display_review_comment}
                             </div>` : ''}
                         ${approval.display_review_summary ? `
-                            ${approval.edited_review_summary && approval.edited_review_summary !== approval.review_summary ? `
-                                <div class="original-review-comment">
-                                    <strong>Original Summary:</strong><br>
-                                    ${approval.review_summary}
+                            <div class="review-summary" id="summary-section-${approval.id}">
+                                <strong>Review Summary:</strong>
+                                <button class="btn-small edit-btn" onclick="editSummary(${approval.id})" style="margin-left: 10px; font-size: 12px; padding: 2px 6px;">Edit</button>
+                                <button class="btn-small delete-btn" onclick="deleteSummary(${approval.id})" style="margin-left: 5px; font-size: 12px; padding: 2px 6px; background: #dc3545;">Delete</button>
+                                <div id="summary-display-${approval.id}" class="summary-display">${approval.display_review_summary}</div>
+                                <textarea id="summary-edit-${approval.id}" class="summary-editor" style="display: none; width: 100%; height: 100px; margin: 10px 0;">${approval.display_review_summary}</textarea>
+                                <div id="summary-edit-buttons-${approval.id}" style="display: none; margin-top: 5px;">
+                                    <button class="btn btn-approve" onclick="saveSummary(${approval.id})" style="margin-right: 5px;">Save</button>
+                                    <button class="btn" onclick="cancelEditSummary(${approval.id})">Cancel</button>
                                 </div>
-                            ` : ''}
-                            <div class="review-comment">
-                                <strong>${approval.edited_review_summary && approval.edited_review_summary !== approval.review_summary ? 'Edited ' : ''}Summary:</strong><br>
-                                ${approval.display_review_summary}
                             </div>` : ''}
                         ${approval.inline_comments.length > 0 ? `
                             <div class="inline-comments">
@@ -187,8 +189,8 @@ class ReviewWebServer:
                             </div>
                         ` : ''}
                         <div class="buttons">
-                            <button class="btn btn-approve" onclick="showApprovalModal(${approval.id}, '${approval.pr_title}', '${approval.review_comment || ''}')">
-                                Review & Approve
+                            <button class="btn btn-approve" onclick="approveDirectly(${approval.id})">
+                                Approve & Post Review
                             </button>
                             <button class="btn btn-reject" onclick="rejectPR(${approval.id})">Reject</button>
                             <a href="${approval.pr_url}" target="_blank" class="btn btn-view">View PR</a>
@@ -230,10 +232,12 @@ class ReviewWebServer:
         }
 
         function showApprovalModal(id, title, comment) {
+            console.log('showApprovalModal called with:', id, title, comment);
             currentApprovalId = id;
             document.getElementById('modal-pr-info').innerHTML = `<strong>${title}</strong>`;
             document.getElementById('user-comment').value = comment;
             document.getElementById('approval-modal').style.display = 'block';
+            console.log('Modal displayed, currentApprovalId:', currentApprovalId);
         }
 
         function closeModal() {
@@ -242,27 +246,37 @@ class ReviewWebServer:
         }
 
         async function confirmApproval() {
-            if (!currentApprovalId) return;
+            console.log('confirmApproval called, currentApprovalId:', currentApprovalId);
+            if (!currentApprovalId) {
+                console.log('No currentApprovalId, returning');
+                return;
+            }
             
             const userComment = document.getElementById('user-comment').value;
+            console.log('User comment:', userComment);
             
             try {
+                console.log('Sending approval request to:', `/api/approvals/${currentApprovalId}/approve`);
                 const response = await fetch(`/api/approvals/${currentApprovalId}/approve`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ comment: userComment })
                 });
                 
+                console.log('Response received:', response.status, response.ok);
+                
                 if (response.ok) {
                     closeModal();
                     loadPendingApprovals();
                     alert('PR approved and review posted!');
                 } else {
-                    alert('Failed to approve PR');
+                    const errorText = await response.text();
+                    console.error('Server error:', errorText);
+                    alert('Failed to approve PR: ' + errorText);
                 }
             } catch (error) {
                 console.error('Failed to approve PR:', error);
-                alert('Failed to approve PR');
+                alert('Failed to approve PR: ' + error.message);
             }
         }
 
@@ -310,6 +324,145 @@ class ReviewWebServer:
             } catch (error) {
                 console.error('Failed to reject approval:', error);
                 alert('Failed to reject approval');
+            }
+        }
+
+        // Inline editing functions
+        function editComment(id) {
+            document.getElementById(`comment-display-${id}`).style.display = 'none';
+            document.getElementById(`comment-edit-${id}`).style.display = 'block';
+            document.getElementById(`comment-edit-buttons-${id}`).style.display = 'block';
+        }
+
+        function cancelEditComment(id) {
+            document.getElementById(`comment-display-${id}`).style.display = 'block';
+            document.getElementById(`comment-edit-${id}`).style.display = 'none';
+            document.getElementById(`comment-edit-buttons-${id}`).style.display = 'none';
+            // Reset textarea to original value
+            const displayText = document.getElementById(`comment-display-${id}`).textContent;
+            document.getElementById(`comment-edit-${id}`).value = displayText;
+        }
+
+        async function saveComment(id) {
+            const newComment = document.getElementById(`comment-edit-${id}`).value;
+            try {
+                const response = await fetch(`/api/approvals/${id}/update-comment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment: newComment })
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`comment-display-${id}`).textContent = newComment;
+                    cancelEditComment(id);
+                } else {
+                    alert('Failed to save comment');
+                }
+            } catch (error) {
+                console.error('Failed to save comment:', error);
+                alert('Failed to save comment');
+            }
+        }
+
+        async function deleteComment(id) {
+            if (!confirm('Delete this comment? It will be removed from the review.')) return;
+            
+            try {
+                const response = await fetch(`/api/approvals/${id}/delete-comment`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`comment-section-${id}`).style.display = 'none';
+                } else {
+                    alert('Failed to delete comment');
+                }
+            } catch (error) {
+                console.error('Failed to delete comment:', error);
+                alert('Failed to delete comment');
+            }
+        }
+
+        function editSummary(id) {
+            document.getElementById(`summary-display-${id}`).style.display = 'none';
+            document.getElementById(`summary-edit-${id}`).style.display = 'block';
+            document.getElementById(`summary-edit-buttons-${id}`).style.display = 'block';
+        }
+
+        function cancelEditSummary(id) {
+            document.getElementById(`summary-display-${id}`).style.display = 'block';
+            document.getElementById(`summary-edit-${id}`).style.display = 'none';
+            document.getElementById(`summary-edit-buttons-${id}`).style.display = 'none';
+            // Reset textarea to original value
+            const displayText = document.getElementById(`summary-display-${id}`).textContent;
+            document.getElementById(`summary-edit-${id}`).value = displayText;
+        }
+
+        async function saveSummary(id) {
+            const newSummary = document.getElementById(`summary-edit-${id}`).value;
+            try {
+                const response = await fetch(`/api/approvals/${id}/update-summary`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ summary: newSummary })
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`summary-display-${id}`).textContent = newSummary;
+                    cancelEditSummary(id);
+                } else {
+                    alert('Failed to save summary');
+                }
+            } catch (error) {
+                console.error('Failed to save summary:', error);
+                alert('Failed to save summary');
+            }
+        }
+
+        async function deleteSummary(id) {
+            if (!confirm('Delete this summary? It will be removed from the review.')) return;
+            
+            try {
+                const response = await fetch(`/api/approvals/${id}/delete-summary`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    document.getElementById(`summary-section-${id}`).style.display = 'none';
+                } else {
+                    alert('Failed to delete summary');
+                }
+            } catch (error) {
+                console.error('Failed to delete summary:', error);
+                alert('Failed to delete summary');
+            }
+        }
+
+        async function approveDirectly(id) {
+            if (!confirm('Approve and post this review to GitHub?')) return;
+            
+            // Get current comment text (visible or empty if deleted)
+            const commentSection = document.getElementById(`comment-section-${id}`);
+            const commentText = commentSection && commentSection.style.display !== 'none' ? 
+                document.getElementById(`comment-display-${id}`).textContent : '';
+            
+            try {
+                const response = await fetch(`/api/approvals/${id}/approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ comment: commentText })
+                });
+                
+                if (response.ok) {
+                    loadPendingApprovals();
+                    alert('PR approved and review posted!');
+                } else {
+                    const errorText = await response.text();
+                    alert('Failed to approve PR: ' + errorText);
+                }
+            } catch (error) {
+                console.error('Failed to approve PR:', error);
+                alert('Failed to approve PR: ' + error.message);
             }
         }
 
@@ -365,6 +518,7 @@ class ReviewWebServer:
             try:
                 body = await request.json()
                 user_comment = body.get('comment', '')
+                logger.info(f"Received approval request for ID {approval_id} with comment: '{user_comment}'")
                 
                 # Get the pending approval
                 approval = await self.database.get_pending_approval(approval_id)
@@ -407,7 +561,9 @@ class ReviewWebServer:
                 )
                 
                 # Post the review to GitHub
+                logger.info(f"Attempting to post GitHub review for PR #{pr_info.number} in {pr_info.repository_name}")
                 success = await self._post_github_review(pr_info, review_result)
+                logger.info(f"GitHub review post result: {success}")
                 
                 if success:
                     # Update approval status
@@ -418,8 +574,10 @@ class ReviewWebServer:
                     # Record the review in main reviews table
                     await self.database.record_review(pr_info, review_result)
                     
+                    logger.info(f"Successfully approved PR {approval_id}")
                     return JSONResponse(content={"status": "success"})
                 else:
+                    logger.error(f"Failed to post GitHub review for approval {approval_id}")
                     raise HTTPException(status_code=500, detail="Failed to post GitHub review")
                     
             except Exception as e:

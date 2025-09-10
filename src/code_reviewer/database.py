@@ -367,9 +367,16 @@ class ReviewDatabase:
             else:
                 approval['inline_comments'] = []
             
-            # Use edited versions for display if they exist
-            approval['display_review_comment'] = approval['edited_review_comment'] or approval['review_comment']
-            approval['display_review_summary'] = approval['edited_review_summary'] or approval['review_summary']
+            # Use edited versions for display if they exist, handle deletions properly
+            if approval['edited_review_comment'] is not None:
+                approval['display_review_comment'] = approval['edited_review_comment']
+            else:
+                approval['display_review_comment'] = approval['review_comment']
+                
+            if approval['edited_review_summary'] is not None:
+                approval['display_review_summary'] = approval['edited_review_summary']
+            else:
+                approval['display_review_summary'] = approval['review_summary']
             
             approvals.append(approval)
 
@@ -459,9 +466,16 @@ class ReviewDatabase:
             else:
                 approval['inline_comments'] = []
             
-            # Use edited versions for display if they exist
-            approval['display_review_comment'] = approval['edited_review_comment'] or approval['review_comment']
-            approval['display_review_summary'] = approval['edited_review_summary'] or approval['review_summary']
+            # Use edited versions for display if they exist, handle deletions properly
+            if approval['edited_review_comment'] is not None:
+                approval['display_review_comment'] = approval['edited_review_comment']
+            else:
+                approval['display_review_comment'] = approval['review_comment']
+                
+            if approval['edited_review_summary'] is not None:
+                approval['display_review_summary'] = approval['edited_review_summary']
+            else:
+                approval['display_review_summary'] = approval['review_summary']
             
             return approval
         return None
