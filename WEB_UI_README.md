@@ -11,6 +11,7 @@ The code reviewer now includes an optional web UI that provides a dashboard for 
 
 ### ✅ **Pending Approvals Workflow** 
 - **New Behavior**: `approve_with_comments` actions now create pending approvals instead of immediately posting to GitHub
+- **Smart Overwrite Logic**: Pending approvals are updated when new commits arrive, but approved/rejected reviews are preserved
 - Review proposed comments and inline feedback before posting
 - Edit comments before approval or reject with optional reason
 - Complete control over what gets posted to your GitHub PRs
@@ -132,6 +133,8 @@ GET /api/approved-approvals
 GET /api/rejected-approvals
 ```
 
+**Note**: The pending approvals system now includes commit SHA tracking, allowing the system to intelligently handle PR updates by overwriting pending approvals while preserving human decisions (approved/rejected reviews).
+
 ## Database Schema
 
 The web UI adds a new `pending_approvals` table:
@@ -150,9 +153,11 @@ CREATE TABLE pending_approvals (
     review_reason TEXT,
     inline_comments TEXT, -- JSON string
     inline_comments_count INTEGER DEFAULT 0,
+    head_sha TEXT NOT NULL, -- Commit SHA for tracking
+    base_sha TEXT NOT NULL, -- Base commit SHA
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
-    UNIQUE(repository, pr_number)
+    UNIQUE(repository, pr_number, head_sha) -- Updated unique constraint
 );
 ```
 

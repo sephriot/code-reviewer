@@ -8,23 +8,23 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - **Modular Structure**: Clear separation between GitHub API, Claude integration, monitoring logic, and data persistence
 - **Configuration-Driven**: Supports both environment variables and YAML config files
 - **Signal Handling**: Graceful shutdown on SIGTERM/SIGINT
-- **Smart Tracking**: SQLite database prevents duplicate reviews and tracks history
+- **Smart Tracking**: SQLite database prevents duplicate reviews using commit SHA comparison and tracks complete history
 - **Multi-Modal Actions**: Four different review outcomes including human escalation
 - **Cross-Platform Sound**: Audio notifications work on macOS, Linux, and Windows
 - **Comprehensive Logging**: Debug and info level logging for all operations with proper shutdown handling
 - **Repository Filtering**: Monitor specific repositories or all accessible repositories
 - **Enhanced Prompts**: Exemplary review prompt with breaking change detection and clear action guidelines
-- **Minimal Data Fetching**: GitHub client only fetches minimal PR info; Claude Code handles all detailed data retrieval
+- **Minimal Data Fetching**: GitHub client only fetches minimal PR info including commit SHAs; Claude Code handles all detailed data retrieval
 - **Web UI Dashboard**: Optional FastAPI-based web interface for managing pending approvals and human reviews
 - **Pending Approval Workflow**: `approve_with_comments` actions require human confirmation via web UI before posting to GitHub
 
 ## Key Components
 
 1. **GitHubMonitor**: Orchestrates the monitoring loop, PR processing, and review decision logic
-2. **GitHubClient**: Handles GitHub API interactions (async) for PR discovery only - returns minimal PR info
+2. **GitHubClient**: Handles GitHub API interactions (async) for PR discovery only - returns minimal PR info with commit SHAs
 3. **ClaudeIntegration**: Manages Claude Code execution with PR URLs, result parsing, and four action types
 4. **Config**: Centralized configuration management with validation and path handling
-5. **ReviewDatabase**: SQLite-based PR review tracking with smart duplicate prevention and pending approval management
+5. **ReviewDatabase**: SQLite-based PR review tracking with commit SHA-based duplicate prevention and pending approval management with conditional overwrite logic
 6. **SoundNotifier**: Cross-platform audio notification system for human review alerts
 7. **ReviewWebServer**: FastAPI-based web server providing dashboard for managing pending approvals and human reviews
 
@@ -68,10 +68,11 @@ This project is an automated GitHub PR code review system. Here are project-spec
 
 ### Customizing GitHub API Interactions
 - All API calls should be async using aiohttp
-- GitHub client only fetches minimal PR identification info (ID, number, repository, URL)
+- GitHub client only fetches minimal PR identification info (ID, number, repository, URL, head/base commit SHAs)
 - Handle rate limiting (429 responses)
 - Use appropriate GitHub API endpoints for PR discovery
 - Validate response data before processing
+- Commit SHAs are essential for tracking review state
 
 ### Modifying Claude Integration
 - Ensure Claude Code CLI is available in PATH  
@@ -89,13 +90,15 @@ This project is an automated GitHub PR code review system. Here are project-spec
 
 ### Database Operations
 - All database operations are async and thread-safe
-- Use `should_review_pr()` to check review history before processing
+- Use `should_review_pr()` to check review history before processing (compares commit SHAs)
 - Call `record_review()` after successful review completion (except for pending approvals)
-- Database automatically handles duplicate prevention via unique constraints
+- Database automatically handles duplicate prevention via unique constraints on (repository, pr_number, head_sha)
 - Use `get_review_stats()` for monitoring and analytics
-- **Pending Approvals**: Use `create_pending_approval()` for `approve_with_comments` actions
+- **Pending Approvals**: Use `create_pending_approval()` for `approve_with_comments` actions with conditional overwrite logic
+- **Conditional Overwrites**: Pending approvals are overwritten when new commits arrive, but approved/rejected reviews are preserved
 - **Web UI Support**: Methods for retrieving pending approvals, human reviews, and approval history
 - **History Tracking**: `get_approved_approvals()` and `get_rejected_approvals()` for complete interaction history
+- **Commit-Based Tracking**: Reviews are tied to specific commit SHAs, enabling automatic re-review when PRs are updated
 
 ### Sound Notification System
 - Cross-platform audio support (macOS, Linux, Windows)
@@ -116,7 +119,7 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - **Mobile Responsive**: Works on desktop and mobile devices
 - **Configuration Options**: Enable/disable via CLI, environment variables, or config file
 - **Security**: Runs on localhost by default, no built-in authentication (single-user design)
-- **Database Integration**: New `pending_approvals` table with JSON storage for inline comments
+- **Database Integration**: New `pending_approvals` table with JSON storage for inline comments and commit SHA tracking
 
 #### Web UI Workflow
 1. **Monitor detects PR** → Claude reviews → `approve_with_comments` action

@@ -11,7 +11,7 @@ An automated GitHub PR code review system using Claude Code. This tool monitors 
 - 💬 **Inline Comments**: Specific feedback on problematic code lines
 - 🔔 **Sound Notifications**: Audio alerts for PRs requiring human attention
 - 🌐 **Web Dashboard**: Optional web interface for managing pending approvals and review history
-- 🧠 **Smart Tracking**: Never reviews the same commit twice
+- 🧠 **Smart Tracking**: Never reviews the same commit twice, automatically re-reviews when new commits are pushed
 - 🗄️ **Review History**: SQLite database tracks all review decisions with complete approval history
 - 🏃 **Dry Run Mode**: Test behavior without making actual PR actions
 - 🔄 **Continuous Monitoring**: Graceful shutdown with SIGTERM handling
@@ -238,13 +238,14 @@ The system can take four different actions based on Claude's analysis:
 
 ### Smart Review Tracking
 
-The system automatically tracks review history:
+The system automatically tracks review history using commit SHA comparison:
 
 - ✅ **Never reviews the same commit twice**
-- 🔄 **Re-reviews when new commits are pushed**
+- 🔄 **Automatically re-reviews when new commits are pushed**
 - 🚫 **Permanently skips PRs marked for human review**
-- 📊 **Maintains complete audit trail in SQLite database**
+- 📊 **Maintains complete audit trail in SQLite database with commit SHA tracking**
 - 🌐 **Web dashboard shows complete approval history with before/after comparisons**
+- 🔄 **Conditional pending approval overwrites**: Preserves approved/rejected reviews while updating pending ones for new commits
 
 ### Web Dashboard Features
 
