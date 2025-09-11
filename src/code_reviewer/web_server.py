@@ -1073,7 +1073,7 @@ class ReviewWebServer:
                 ] if review_result.comments else None
                 
                 success = await self.github_client.approve_pr(
-                    [pr_info.owner, pr_info.repo],
+                    pr_info.repository,
                     pr_info.number,
                     review_result.comment,
                     github_comments
@@ -1090,7 +1090,7 @@ class ReviewWebServer:
                 ] if review_result.comments else None
                 
                 success = await self.github_client.approve_pr(
-                    [pr_info.owner, pr_info.repo],
+                    pr_info.repository,
                     pr_info.number,
                     None,
                     github_comments
@@ -1107,7 +1107,7 @@ class ReviewWebServer:
                 ]
                 
                 success = await self.github_client.request_changes(
-                    [pr_info.owner, pr_info.repo],
+                    pr_info.repository,
                     pr_info.number,
                     github_comments,
                     review_result.summary or "Changes requested"

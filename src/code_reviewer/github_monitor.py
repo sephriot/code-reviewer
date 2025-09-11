@@ -182,8 +182,7 @@ class GitHubMonitor:
             
         elif action == ReviewAction.APPROVE_WITHOUT_COMMENT:
             await self.github_client.approve_pr(
-                pr_info.owner,
-                pr_info.repo,
+                pr_info.repository,
                 pr_info.number
             )
             logger.info(f"Approved PR #{pr_info.number} without comment")
