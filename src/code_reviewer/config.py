@@ -109,7 +109,7 @@ class Config:
         config_data['claude_prompt_file'] = prompt_file
         
         # Handle path conversions
-        for path_field in ['sound_file', 'database_path']:
+        for path_field in ['sound_file', 'approval_sound_file', 'database_path']:
             if path_field in config_data and config_data[path_field] is not None:
                 if not isinstance(config_data[path_field], Path):
                     config_data[path_field] = Path(config_data[path_field])
