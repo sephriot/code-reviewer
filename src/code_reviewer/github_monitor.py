@@ -24,7 +24,9 @@ class GitHubMonitor:
         self.running = True
         self.sound_notifier = SoundNotifier(
             enabled=config.sound_enabled,
-            sound_file=config.sound_file
+            sound_file=config.sound_file,
+            approval_sound_enabled=config.approval_sound_enabled,
+            approval_sound_file=config.approval_sound_file
         )
         self.db = ReviewDatabase(config.database_path)
         
@@ -36,6 +38,10 @@ class GitHubMonitor:
         # Play startup notification sound
         logger.debug("Playing startup notification sound")
         await self.sound_notifier.play_notification()
+        
+        # Play approval sound test
+        logger.debug("Playing approval notification sound")
+        await self.sound_notifier.play_approval_sound()
         
         if self.config.dry_run:
             logger.info("DRY RUN MODE: No actual GitHub actions will be performed, only logged")
@@ -186,6 +192,9 @@ class GitHubMonitor:
                 pr_info.number
             )
             logger.info(f"Approved PR #{pr_info.number} without comment")
+            
+            # Play approval sound
+            await self.sound_notifier.play_approval_sound()
             
         elif action == ReviewAction.REQUEST_CHANGES:
             # Create pending approval instead of immediate change request

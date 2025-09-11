@@ -25,6 +25,8 @@ class Config:
     pr_authors: Optional[list] = None
     sound_enabled: bool = True
     sound_file: Optional[Path] = None
+    approval_sound_enabled: bool = True
+    approval_sound_file: Optional[Path] = None
     dry_run: bool = False
     database_path: Path = Path("data/reviews.db")
     web_enabled: bool = False
@@ -56,6 +58,8 @@ class Config:
             'PR_AUTHORS': 'pr_authors',
             'SOUND_ENABLED': 'sound_enabled',
             'SOUND_FILE': 'sound_file',
+            'APPROVAL_SOUND_ENABLED': 'approval_sound_enabled',
+            'APPROVAL_SOUND_FILE': 'approval_sound_file',
             'DRY_RUN': 'dry_run',
             'DATABASE_PATH': 'database_path',
             'WEB_ENABLED': 'web_enabled',
@@ -68,9 +72,9 @@ class Config:
             if value:
                 if config_key in ['poll_interval', 'web_port']:
                     config_data[config_key] = int(value)
-                elif config_key in ['sound_enabled', 'dry_run', 'web_enabled']:
+                elif config_key in ['sound_enabled', 'approval_sound_enabled', 'dry_run', 'web_enabled']:
                     config_data[config_key] = value.lower() in ('true', '1', 'yes', 'on')
-                elif config_key in ['sound_file', 'database_path']:
+                elif config_key in ['sound_file', 'approval_sound_file', 'database_path']:
                     config_data[config_key] = Path(value)
                 elif config_key in ['repositories', 'pr_authors']:
                     # Parse comma-separated lists

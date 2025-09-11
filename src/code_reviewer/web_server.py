@@ -21,9 +21,10 @@ logger = logging.getLogger(__name__)
 class ReviewWebServer:
     """Web server for PR review management."""
 
-    def __init__(self, database: ReviewDatabase, github_client: GitHubClient):
+    def __init__(self, database: ReviewDatabase, github_client: GitHubClient, sound_notifier=None):
         self.database = database
         self.github_client = github_client
+        self.sound_notifier = sound_notifier
         self.app = FastAPI(title="Code Review Dashboard")
         
         # Setup static files and templates
@@ -882,6 +883,10 @@ class ReviewWebServer:
                     
                     # Record the review in main reviews table
                     await self.database.record_review(pr_info, review_result)
+                    
+                    # Play approval sound
+                    if self.sound_notifier:
+                        await self.sound_notifier.play_approval_sound()
                     
                     logger.info(f"Successfully approved PR {approval_id}")
                     return JSONResponse(content={"status": "success"})

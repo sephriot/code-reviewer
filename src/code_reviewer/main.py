@@ -31,7 +31,7 @@ class CodeReviewer:
         )
         self.web_server = None
         if config.web_enabled:
-            self.web_server = ReviewWebServer(self.monitor.db, self.github_client)
+            self.web_server = ReviewWebServer(self.monitor.db, self.github_client, self.monitor.sound_notifier)
         
     def signal_handler(self, signum, frame):
         """Handle SIGTERM gracefully."""
@@ -111,6 +111,10 @@ class CodeReviewer:
               help='Enable/disable sound notifications (default: enabled)')
 @click.option('--sound-file', type=click.Path(exists=True),
               help='Custom sound file for notifications')
+@click.option('--approval-sound-enabled/--no-approval-sound', envvar='APPROVAL_SOUND_ENABLED', default=True,
+              help='Enable/disable sound notifications for PR approvals (default: enabled, env: APPROVAL_SOUND_ENABLED)')
+@click.option('--approval-sound-file', envvar='APPROVAL_SOUND_FILE', type=click.Path(exists=True),
+              help='Custom sound file for PR approval notifications (env: APPROVAL_SOUND_FILE)')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Log what actions would be taken without actually performing them')
 @click.option('--web-enabled/--no-web', envvar='WEB_ENABLED', default=False,
@@ -121,7 +125,8 @@ class CodeReviewer:
               help='Port for web UI server (default: 8000, env: WEB_PORT)')
 def main(config: Optional[str], prompt: Optional[str], github_token: Optional[str], 
          github_username: Optional[str], poll_interval: int, sound_enabled: bool,
-         sound_file: Optional[str], dry_run: bool, web_enabled: bool,
+         sound_file: Optional[str], approval_sound_enabled: bool,
+         approval_sound_file: Optional[str], dry_run: bool, web_enabled: bool,
          web_host: str, web_port: int):
     """Automated GitHub PR code review using Claude."""
     
@@ -136,6 +141,8 @@ def main(config: Optional[str], prompt: Optional[str], github_token: Optional[st
             poll_interval=poll_interval,
             sound_enabled=sound_enabled,
             sound_file=sound_file,
+            approval_sound_enabled=approval_sound_enabled,
+            approval_sound_file=approval_sound_file,
             dry_run=dry_run,
             web_enabled=web_enabled,
             web_host=web_host,

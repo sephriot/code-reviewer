@@ -13,9 +13,12 @@ logger = logging.getLogger(__name__)
 class SoundNotifier:
     """Cross-platform sound notification system."""
     
-    def __init__(self, enabled: bool = True, sound_file: Optional[Path] = None):
+    def __init__(self, enabled: bool = True, sound_file: Optional[Path] = None,
+                 approval_sound_enabled: bool = True, approval_sound_file: Optional[Path] = None):
         self.enabled = enabled
         self.sound_file = sound_file
+        self.approval_sound_enabled = approval_sound_enabled
+        self.approval_sound_file = approval_sound_file
         self.system = platform.system().lower()
         
     async def play_notification(self):
@@ -32,6 +35,61 @@ class SoundNotifier:
                 
         except Exception as e:
             logger.warning(f"Failed to play notification sound: {e}")
+
+    async def play_approval_sound(self):
+        """Play a sound when PR is approved."""
+        if not self.approval_sound_enabled:
+            logger.debug("Approval sound notifications are disabled")
+            return
+            
+        try:
+            if self.approval_sound_file and self.approval_sound_file.exists():
+                await self._play_custom_approval_sound()
+            elif self.enabled and self.sound_file and self.sound_file.exists():
+                # Fallback to general notification sound
+                await self._play_custom_sound()
+            else:
+                await self._play_system_sound()
+                
+        except Exception as e:
+            logger.warning(f"Failed to play approval sound: {e}")
+            
+    async def _play_custom_approval_sound(self):
+        """Play a custom approval sound file."""
+        try:
+            if self.system == "darwin":  # macOS
+                cmd = ["afplay", str(self.approval_sound_file)]
+            elif self.system == "linux":
+                # Try different audio players
+                for player in ["aplay", "paplay", "sox"]:
+                    if await self._command_exists(player):
+                        if player == "sox":
+                            cmd = ["play", str(self.approval_sound_file)]
+                        else:
+                            cmd = [player, str(self.approval_sound_file)]
+                        break
+                else:
+                    raise RuntimeError("No audio player found")
+            elif self.system == "windows":
+                # Use PowerShell to play sound on Windows
+                cmd = [
+                    "powershell", "-c", 
+                    f"(New-Object Media.SoundPlayer '{self.approval_sound_file}').PlaySync()"
+                ]
+            else:
+                raise RuntimeError(f"Unsupported system: {self.system}")
+                
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            await process.communicate()
+            
+        except Exception as e:
+            logger.warning(f"Failed to play custom approval sound: {e}")
+            # Fallback to system sound
+            await self._play_system_sound()
             
     async def _play_custom_sound(self):
         """Play a custom sound file."""
