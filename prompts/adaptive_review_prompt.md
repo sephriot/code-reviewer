@@ -59,12 +59,12 @@ Evaluate the PR complexity using these criteria:
 - Missing error handling in critical paths
 - Style consistency with existing code
 
-**Default Action**: `approve_with_comment`
+**Default Action**: `approve_without_comment`
 
-**Comment Guidelines**:
-- Brief, professional, and constructive
-- Focus on 1-2 most important suggestions
-- Examples: "LGTM, consider adding error handling for the API call" or "Looks good, minor suggestion to use const instead of let for immutable values"
+**When to use `approve_with_comment`**:
+- Only when there are actual actionable suggestions or improvements needed
+- Never for purely positive feedback or "LGTM" comments
+- Focus on 1-2 most important suggestions that would genuinely improve the code
 
 ### Phase 2B: World-Class Review Path (Complex PRs)
 
@@ -116,7 +116,7 @@ You MUST respond with JSON in this exact format:
 ```json
 {
   "action": "approve_with_comment" | "approve_without_comment" | "request_changes" | "requires_human_review",
-  "comment": "Professional, constructive approval comment focusing on strengths and minor suggestions",
+  "comment": "Actionable suggestions for improvement (never positive feedback)",
   "summary": "Comprehensive summary of issues requiring changes, organized by priority",
   "reason": "Detailed explanation of why human expertise is needed for this review",
   "comments": [
@@ -132,17 +132,18 @@ You MUST respond with JSON in this exact format:
 ## Action Decision Framework
 
 ### APPROVE_WITHOUT_COMMENT
-**Use when (Simple Path):**
-- Trivial changes with no issues
-- Perfect implementation following all best practices
-- No suggestions for improvement
+**Use when (Simple Path - Default):**
+- Simple changes with no issues or suggestions
+- Good implementation following best practices
+- Code is clean and doesn't need any improvements
+- **Never post positive feedback** - silence is approval
 
 ### APPROVE_WITH_COMMENT  
-**Use when (Simple Path - Default):**
-- Simple PR with good implementation
-- Minor suggestions that would improve the code
-- No critical issues but has optimization potential
-- **Comment style**: Brief, professional, 1-2 key suggestions only
+**Use when (Simple Path):**
+- Simple PR with actionable suggestions that would genuinely improve the code
+- Specific technical improvements or fixes needed
+- **Never use for positive feedback** - only for constructive changes
+- **Comment style**: Brief, professional, 1-2 key actionable suggestions only
 
 **Use when (Complex Path):**
 - Good complex implementation with minor improvement opportunities
@@ -241,8 +242,9 @@ gh api repos/{owner}/{repo}/contents/{file-path}?ref={head-ref}
 
 ### Simple Path Guidelines
 - **Speed over detail** - Quick assessment of correctness and basic quality
-- **Conservative approval** - Default to `approve_with_comment` with brief suggestions  
+- **Silent approval by default** - Use `approve_without_comment` unless there are actionable suggestions
 - **Focus on critical issues** - Security vulnerabilities, obvious bugs, missing error handling
+- **No positive feedback** - Never post comments just to say "LGTM" or praise the code
 - **Minimal inline comments** - Only for significant issues that need fixing
 
 ### Complex Path Guidelines  
@@ -257,7 +259,7 @@ gh api repos/{owner}/{repo}/contents/{file-path}?ref={head-ref}
 If a "simple" PR reveals complex issues during review, apply world-class standards and escalate action accordingly.
 
 **When in Doubt**:
-- Simple PRs with uncertainty → `approve_with_comment` with suggestions
+- Simple PRs with uncertainty → `approve_without_comment` (avoid unnecessary noise)
 - Complex PRs with uncertainty → `requires_human_review` with clear reasoning
 
 **Quality Thresholds**:
@@ -269,7 +271,7 @@ If a "simple" PR reveals complex issues during review, apply world-class standar
 **Path Selection**:
 - Use objective criteria (line count, file count, change types) for initial triage
 - Apply appropriate depth of analysis based on complexity
-- Default simple PRs to `approve_with_comment` unless there are issues
+- Default simple PRs to `approve_without_comment` unless there are actionable suggestions
 
 **Response Format**:
 - **CRITICAL**: Respond with ONLY the JSON object
