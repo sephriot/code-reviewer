@@ -98,6 +98,7 @@ class ReviewWebServer:
             <div class="tab" onclick="showTab('human-review')">Human Reviews</div>
             <div class="tab" onclick="showTab('approved')">Approved History</div>
             <div class="tab" onclick="showTab('rejected')">Rejected History</div>
+            <div class="tab" onclick="showTab('completed-reviews')">Completed Reviews</div>
         </div>
         
         <div id="pending" class="tab-content active">
@@ -125,6 +126,13 @@ class ReviewWebServer:
             <div class="section">
                 <h2>Rejected Approvals History</h2>
                 <div id="rejected-approvals"></div>
+            </div>
+        </div>
+
+        <div id="completed-reviews" class="tab-content">
+            <div class="section">
+                <h2>Last 50 Completed PR Reviews</h2>
+                <div id="completed-reviews-list"></div>
             </div>
         </div>
     </div>
@@ -164,6 +172,8 @@ class ReviewWebServer:
                 loadApprovedHistory();
             } else if (tabName === 'rejected') {
                 loadRejectedHistory();
+            } else if (tabName === 'completed-reviews') {
+                loadCompletedReviews();
             }
         }
 
@@ -772,6 +782,79 @@ class ReviewWebServer:
             }
         }
 
+        async function loadCompletedReviews() {
+            try {
+                const response = await fetch('/api/completed-reviews');
+                const reviews = await response.json();
+                const container = document.getElementById('completed-reviews-list');
+                
+                if (reviews.length === 0) {
+                    container.innerHTML = '<p>No completed reviews found.</p>';
+                    return;
+                }
+                
+                container.innerHTML = reviews.map(review => {
+                    const actionBadge = getActionBadge(review.review_action);
+                    
+                    return `
+                        <div class="pr-card">
+                            <div class="pr-title">${review.pr_title}
+                                ${actionBadge}
+                            </div>
+                            <div class="pr-meta">
+                                ${review.repository} #${review.pr_number} by ${review.pr_author}
+                                <br><small>Reviewed: ${new Date(review.reviewed_at).toLocaleString()}</small>
+                                <br><small>Head SHA: ${review.head_sha ? review.head_sha.substring(0, 8) : 'N/A'}</small>
+                                ${review.inline_comments_count > 0 ? `<br><small>Inline Comments: ${review.inline_comments_count}</small>` : ''}
+                            </div>
+                            
+                            ${review.review_comment ? `
+                                <div class="review-comment">
+                                    <strong>Review Comment:</strong><br>
+                                    ${review.review_comment}
+                                </div>
+                            ` : ''}
+                            
+                            ${review.review_summary ? `
+                                <div class="review-comment">
+                                    <strong>Review Summary:</strong><br>
+                                    ${review.review_summary}
+                                </div>
+                            ` : ''}
+                            
+                            ${review.review_reason ? `
+                                <div class="review-comment">
+                                    <strong>Review Reason:</strong><br>
+                                    ${review.review_reason}
+                                </div>
+                            ` : ''}
+                            
+                            <div class="buttons">
+                                <a href="https://github.com/${review.repository}/pull/${review.pr_number}" target="_blank" class="btn btn-view">View PR</a>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Failed to load completed reviews:', error);
+            }
+        }
+
+        function getActionBadge(action) {
+            switch (action) {
+                case 'approve_with_comment':
+                    return '<span class="status-badge status-approved">APPROVED WITH COMMENT</span>';
+                case 'approve_without_comment':
+                    return '<span class="status-badge status-approved">APPROVED</span>';
+                case 'request_changes':
+                    return '<span class="status-badge status-rejected">CHANGES REQUESTED</span>';
+                case 'requires_human_review':
+                    return '<span class="status-badge" style="background: #fff3cd; color: #856404;">HUMAN REVIEW</span>';
+                default:
+                    return `<span class="status-badge" style="background: #e2e3e5; color: #6c757d;">${action.replace('_', ' ').toUpperCase()}</span>`;
+            }
+        }
+
         // Load initial data
         loadPendingApprovals();
     </script>
@@ -937,6 +1020,30 @@ class ReviewWebServer:
                 return JSONResponse(content=approvals)
             except Exception as e:
                 logger.error(f"Failed to get rejected approvals: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/completed-reviews")
+        async def get_completed_reviews():
+            """Get completed PR reviews."""
+            try:
+                reviews = await self.database.get_completed_reviews()
+                return JSONResponse(content=[{
+                    "id": review.id,
+                    "repository": review.repository,
+                    "pr_number": review.pr_number,
+                    "pr_title": review.pr_title,
+                    "pr_author": review.pr_author,
+                    "review_action": review.review_action.value,
+                    "review_reason": review.review_reason,
+                    "review_comment": review.review_comment,
+                    "review_summary": review.review_summary,
+                    "inline_comments_count": review.inline_comments_count,
+                    "reviewed_at": review.reviewed_at,
+                    "head_sha": review.head_sha,
+                    "base_sha": review.base_sha
+                } for review in reviews])
+            except Exception as e:
+                logger.error(f"Failed to get completed reviews: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/api/stats")

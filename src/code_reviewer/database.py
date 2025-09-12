@@ -948,6 +948,25 @@ class ReviewDatabase:
             approvals.append(approval)
 
         return approvals
+
+    async def get_completed_reviews(self, limit: int = 50) -> List[ReviewRecord]:
+        """Get completed PR reviews ordered by reviewed_at descending."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_completed_reviews_sync, limit
+        )
+
+    def _get_completed_reviews_sync(self, limit: int = 50) -> List[ReviewRecord]:
+        """Synchronous implementation of get_completed_reviews."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM pr_reviews 
+            ORDER BY reviewed_at DESC 
+            LIMIT ?
+        """, (limit,))
+
+        return [ReviewRecord.from_db_row(dict(row)) for row in cursor.fetchall()]
         
     def close(self):
         """Close database connections."""
