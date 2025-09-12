@@ -154,6 +154,34 @@ class ReviewWebServer:
     <script>
         let currentApprovalId = null;
 
+        function refreshCurrentView() {
+            // Find the currently active tab and refresh its data
+            const activeTab = document.querySelector('.tab.active');
+            if (activeTab) {
+                const activeTabContent = document.querySelector('.tab-content.active');
+                if (activeTabContent) {
+                    const tabId = activeTabContent.id;
+                    switch (tabId) {
+                        case 'pending':
+                            loadPendingApprovals();
+                            break;
+                        case 'human-review':
+                            loadHumanReviews();
+                            break;
+                        case 'approved':
+                            loadApprovedHistory();
+                            break;
+                        case 'rejected':
+                            loadRejectedHistory();
+                            break;
+                        case 'completed-reviews':
+                            loadCompletedReviews();
+                            break;
+                    }
+                }
+            }
+        }
+
         function showTab(tabName) {
             // Hide all tabs
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -317,7 +345,7 @@ class ReviewWebServer:
                 
                 if (response.ok) {
                     closeModal();
-                    loadPendingApprovals();
+                    refreshCurrentView();
                     alert('PR approved and review posted!');
                 } else {
                     const errorText = await response.text();
@@ -344,7 +372,7 @@ class ReviewWebServer:
                 
                 if (response.ok) {
                     closeModal();
-                    loadPendingApprovals();
+                    refreshCurrentView();
                     alert('Approval rejected');
                 } else {
                     alert('Failed to reject approval');
@@ -366,7 +394,7 @@ class ReviewWebServer:
                 });
                 
                 if (response.ok) {
-                    loadPendingApprovals();
+                    refreshCurrentView();
                     alert('Approval rejected');
                 } else {
                     alert('Failed to reject approval');
@@ -536,8 +564,8 @@ class ReviewWebServer:
                 });
                 
                 if (response.ok) {
-                    // Refresh the entire pending approvals list to update counts and indices
-                    loadPendingApprovals();
+                    // Refresh the current view to update counts and indices
+                    refreshCurrentView();
                 } else {
                     alert('Failed to delete inline comment');
                 }
@@ -559,7 +587,7 @@ class ReviewWebServer:
                 });
                 
                 if (response.ok) {
-                    loadPendingApprovals();
+                    refreshCurrentView();
                     alert('PR approved and review posted!');
                 } else {
                     const errorText = await response.text();
