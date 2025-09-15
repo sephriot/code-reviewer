@@ -277,17 +277,14 @@ class ReviewDatabase:
         action = latest_review.review_action
         logger.info(f"PR #{pr_number} in {repository}: Already reviewed head SHA {current_head_sha[:8]} with action '{action.value}'")
         
-        # Don't review again if we've taken a decisive action on this exact commit
+        # Don't review again if we've taken any action on this exact commit
+        # (including human reviews - they should only be re-evaluated when SHA changes)
         if action in [ReviewAction.APPROVE_WITH_COMMENT, 
                      ReviewAction.APPROVE_WITHOUT_COMMENT,
-                     ReviewAction.REQUEST_CHANGES]:
-            logger.info(f"PR #{pr_number} in {repository}: Skipping - already processed this commit with decisive action")
+                     ReviewAction.REQUEST_CHANGES,
+                     ReviewAction.REQUIRES_HUMAN_REVIEW]:
+            logger.info(f"PR #{pr_number} in {repository}: Skipping - already processed this commit with action '{action.value}'")
             return False
-            
-        # Always re-review if it was marked for human review (human might have addressed it)
-        if action == ReviewAction.REQUIRES_HUMAN_REVIEW:
-            logger.info(f"PR #{pr_number} in {repository}: Will review - previous human review requirement may have been addressed")
-            return True
             
         return True
         
