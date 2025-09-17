@@ -261,31 +261,37 @@ class ReviewDatabase:
         repository = pr_info.repository_name
         pr_number = pr_info.number
         current_head_sha = pr_info.head_sha
-        
+
         if not current_head_sha:
             logger.warning(f"PR #{pr_number} in {repository}: No head SHA available, skipping review")
             return False
-        
-        # Get the latest review for this specific head SHA
+
+        # Check if we have a completed review for this specific head SHA
         latest_review = await self.get_review_for_commit(repository, pr_number, current_head_sha)
-        
-        if not latest_review:
-            logger.info(f"PR #{pr_number} in {repository}: No review found for head SHA {current_head_sha[:8]}, will review")
-            return True
-            
-        # If we've already reviewed this exact commit, check the action
-        action = latest_review.review_action
-        logger.info(f"PR #{pr_number} in {repository}: Already reviewed head SHA {current_head_sha[:8]} with action '{action.value}'")
-        
-        # Don't review again if we've taken any action on this exact commit
-        # (including human reviews - they should only be re-evaluated when SHA changes)
-        if action in [ReviewAction.APPROVE_WITH_COMMENT, 
-                     ReviewAction.APPROVE_WITHOUT_COMMENT,
-                     ReviewAction.REQUEST_CHANGES,
-                     ReviewAction.REQUIRES_HUMAN_REVIEW]:
-            logger.info(f"PR #{pr_number} in {repository}: Skipping - already processed this commit with action '{action.value}'")
+
+        if latest_review:
+            # If we've already completed a review for this exact commit, check the action
+            action = latest_review.review_action
+            logger.info(f"PR #{pr_number} in {repository}: Already reviewed head SHA {current_head_sha[:8]} with action '{action.value}'")
+
+            # Don't review again if we've taken any action on this exact commit
+            # (including human reviews - they should only be re-evaluated when SHA changes)
+            if action in [ReviewAction.APPROVE_WITH_COMMENT,
+                         ReviewAction.APPROVE_WITHOUT_COMMENT,
+                         ReviewAction.REQUEST_CHANGES,
+                         ReviewAction.REQUIRES_HUMAN_REVIEW]:
+                logger.info(f"PR #{pr_number} in {repository}: Skipping - already processed this commit with action '{action.value}'")
+                return False
+
+        # Check if we have a pending approval for this specific head SHA
+        pending_approval = await self.get_pending_approval_for_commit(repository, pr_number, current_head_sha)
+
+        if pending_approval:
+            logger.info(f"PR #{pr_number} in {repository}: Already has pending approval for head SHA {current_head_sha[:8]}, skipping review")
             return False
-            
+
+        # No review or pending approval found for this commit, should review
+        logger.info(f"PR #{pr_number} in {repository}: No review found for head SHA {current_head_sha[:8]}, will review")
         return True
         
     async def get_review_stats(self) -> Dict[str, Any]:
