@@ -5,8 +5,8 @@
 github_token: "your_github_personal_access_token"
 github_username: "your_github_username"
 
-# Claude settings
-claude_prompt_file: "prompts/review_prompt.txt"
+# Prompt settings
+prompt_file: "prompts/review_prompt.txt"
 
 # Application settings
 poll_interval: 60  # seconds

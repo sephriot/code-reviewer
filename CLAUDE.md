@@ -14,7 +14,7 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - **Comprehensive Logging**: Debug and info level logging for all operations with proper shutdown handling
 - **Repository Filtering**: Monitor specific repositories or all accessible repositories
 - **Enhanced Prompts**: Exemplary review prompt with breaking change detection and clear action guidelines
-- **Minimal Data Fetching**: GitHub client only fetches minimal PR info including commit SHAs; Claude Code handles all detailed data retrieval
+- **Minimal Data Fetching**: GitHub client only fetches minimal PR info including commit SHAs; the configured LLM CLI handles all detailed data retrieval
 - **Web UI Dashboard**: Optional FastAPI-based web interface for managing pending approvals and human reviews
 - **Pending Approval Workflow**: `approve_with_comments` actions require human confirmation via web UI before posting to GitHub
 
@@ -22,7 +22,7 @@ This project is an automated GitHub PR code review system. Here are project-spec
 
 1. **GitHubMonitor**: Orchestrates the monitoring loop, PR processing, and review decision logic
 2. **GitHubClient**: Handles GitHub API interactions (async) for PR discovery only - returns minimal PR info with commit SHAs
-3. **ClaudeIntegration**: Manages Claude Code execution with PR URLs, result parsing, and four action types
+3. **LLMIntegration**: Manages Claude or Codex CLI execution with PR URLs, result parsing, and four action types
 4. **Config**: Centralized configuration management with validation and path handling
 5. **ReviewDatabase**: SQLite-based PR review tracking with commit SHA-based duplicate prevention and pending approval management with conditional overwrite logic
 6. **SoundNotifier**: Cross-platform audio notification system for human review alerts
@@ -45,7 +45,7 @@ This project is an automated GitHub PR code review system. Here are project-spec
 ### Testing Approach
 - Unit tests for individual components
 - Integration tests for GitHub API interactions
-- Mock external dependencies (GitHub API, Claude Code CLI)
+- Mock external dependencies (GitHub API, Claude/Codex CLI)
 - Test configuration loading and validation
 - Test database operations with temporary SQLite files
 - Test sound notification system across platforms
@@ -54,14 +54,14 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - Never log GitHub tokens or sensitive data
 - Validate all inputs from GitHub API
 - Sanitize file paths when creating temporary files
-- Use secure temporary directories for Claude Code execution
+- Use secure temporary directories for LLM CLI execution
 - Protect database file with appropriate permissions
 - Validate commit SHAs and PR metadata before storage
 
 ## Common Tasks
 
 ### Adding New Review Actions
-1. Extend `ReviewAction` enum in `claude_integration.py`
+1. Extend `ReviewAction` enum in `llm_integration.py` if model-specific handling is needed
 2. Update `_act_on_review` method in `github_monitor.py`
 3. Add corresponding method in `GitHubClient`
 4. Update prompt template to support new action
@@ -74,10 +74,10 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - Validate response data before processing
 - Commit SHAs are essential for tracking review state
 
-### Modifying Claude Integration
-- Ensure Claude Code CLI is available in PATH  
-- Pass PR URLs directly to Claude Code for data fetching
-- Claude Code handles all PR information retrieval (files, diffs, metadata)
+### Modifying LLM Integration
+- Ensure the selected CLI (Claude or Codex) is available in PATH  
+- Pass PR URLs directly to the CLI for data fetching
+- The CLI handles all PR information retrieval (files, diffs, metadata)
 - Parse output robustly (JSON preferred, text fallback)
 - Validate review results before acting
 
@@ -162,7 +162,7 @@ This project is an automated GitHub PR code review system. Here are project-spec
 
 ### Common Issues
 - **Rate Limiting**: Increase poll interval, check token scopes
-- **Claude Code Errors**: Verify CLI installation and PATH
+- **LLM CLI Errors**: Verify CLI installation and PATH
 - **Permission Errors**: Check GitHub token permissions
 - **Parsing Errors**: Review prompt template format
 - **Database Issues**: Check write permissions for database directory
@@ -174,7 +174,7 @@ This project is an automated GitHub PR code review system. Here are project-spec
 - Enable DEBUG logging for detailed information
 - Use dry run mode to test configuration without GitHub actions
 - Check GitHub API response codes and messages
-- Verify Claude Code output format matches expectations
+- Verify model output format matches expectations
 - Test with a simple PR first
 - Check database content with SQLite tools for review history
 - Test sound notifications independently of PR processing
@@ -214,6 +214,8 @@ python3 tests/test_something.py
 ```
 
 The venv ensures all dependencies are available and prevents import/version conflicts.
+
+**Model Selection**: Set `REVIEW_MODEL` to `CLAUDE` or `CODEX` (or use the `--model` CLI flag) to choose the review CLI.
 
 ### Documentation Maintenance
 **IMPORTANT**: This CLAUDE.md file should be updated whenever significant changes are made to the project:

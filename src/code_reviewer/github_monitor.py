@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from .github_client import GitHubClient
-from .claude_integration import ClaudeIntegration, ClaudeOutputParseError
+from .llm_integration import LLMIntegration, LLMOutputParseError
 from .config import Config
 from .sound_notifier import SoundNotifier
 from .database import ReviewDatabase
@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class GitHubMonitor:
-    def __init__(self, github_client: GitHubClient, claude_integration: ClaudeIntegration, config: Config):
+    def __init__(self, github_client: GitHubClient, model_integration: LLMIntegration, config: Config):
         self.github_client = github_client
-        self.claude_integration = claude_integration
+        self.llm_integration = model_integration
         self.config = config
         self.running = True
         self.sound_notifier = SoundNotifier(
@@ -140,9 +140,9 @@ class GitHubMonitor:
         repo_name = pr_info.repository_name
         logger.info(f"Processing PR #{pr_info.number} in {repo_name}")
         try:
-            # Run Claude code review - Claude Code will fetch all PR details
-            logger.debug(f"Running Claude code review for PR #{pr_info.number}")
-            review_result = await self.claude_integration.review_pr(pr_info)
+            # Run model-driven code review - the CLI will fetch all PR details
+            logger.debug(f"Running {self.config.review_model.value} code review for PR #{pr_info.number}")
+            review_result = await self.llm_integration.review_pr(pr_info)
             
             # Log the review output
             await self._log_review_output(pr_info, review_result)
@@ -158,20 +158,20 @@ class GitHubMonitor:
             # Note: APPROVE_WITH_COMMENT and REQUEST_CHANGES reviews are recorded when the human approves via web UI
             
             
-        except ClaudeOutputParseError as e:
-            logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from Claude")
+        except LLMOutputParseError as e:
+            logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from {self.config.review_model.value}")
             logger.error(f"📋 PR: '{pr_info.title}' by {pr_info.author}")
             logger.error(f"❗ Reason: {str(e)}")
             logger.error(f"🔄 This PR will be retried when the commit changes")
             # Log a preview of the output (truncated for readability)
-            output_preview = e.claude_output[:1000] + "..." if len(e.claude_output) > 1000 else e.claude_output
-            logger.error(f"📤 Claude output preview: {output_preview}")
+            output_preview = e.raw_output[:1000] + "..." if len(e.raw_output) > 1000 else e.raw_output
+            logger.error(f"📤 {self.config.review_model.value} output preview: {output_preview}")
             
         except Exception as e:
             logger.error(f"Error processing PR #{pr_info.number}: {e}")
             
     async def _act_on_review(self, pr_info: PRInfo, review_result: ReviewResult):
-        """Act on Claude's review result."""
+        """Act on the model's review result."""
         action = review_result.action
         
         if self.config.dry_run:

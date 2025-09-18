@@ -13,9 +13,10 @@ import uvicorn
 
 from .config import Config
 from .github_monitor import GitHubMonitor
-from .claude_integration import ClaudeIntegration
+from .llm_integration import LLMIntegration
 from .github_client import GitHubClient
 from .web_server import ReviewWebServer
+from .models import ReviewModel
 
 
 class CodeReviewer:
@@ -23,10 +24,10 @@ class CodeReviewer:
         self.config = config
         self.running = True
         self.github_client = GitHubClient(config.github_token)
-        self.claude_integration = ClaudeIntegration(config.claude_prompt_file)
+        self.model_integration = LLMIntegration(config.prompt_file, config.review_model)
         self.monitor = GitHubMonitor(
-            self.github_client, 
-            self.claude_integration, 
+            self.github_client,
+            self.model_integration,
             config
         )
         self.web_server = None
@@ -46,8 +47,9 @@ class CodeReviewer:
         
         click.echo("Starting GitHub PR monitor...")
         click.echo(f"Monitoring user: {self.config.github_username}")
-        click.echo(f"Using prompt file: {self.config.claude_prompt_file}")
-        
+        click.echo(f"Using prompt file: {self.config.prompt_file}")
+        click.echo(f"Using review model: {self.config.review_model.value}")
+
         if self.config.web_enabled:
             click.echo(f"Web UI enabled at http://{self.config.web_host}:{self.config.web_port}")
         
@@ -100,7 +102,10 @@ class CodeReviewer:
 @click.option('--config', '-c', type=click.Path(exists=True), 
               help='Path to configuration file')
 @click.option('--prompt', '-p', type=click.Path(exists=True), 
-              help='Path to Claude prompt file')
+              help='Path to prompt template file')
+@click.option('--model', 'review_model', type=click.Choice(['CLAUDE', 'CODEX']),
+             envvar='REVIEW_MODEL', default='CLAUDE',
+             help='Language model CLI to use for reviews (env: REVIEW_MODEL)')
 @click.option('--github-token', envvar='GITHUB_TOKEN', 
               help='GitHub personal access token')
 @click.option('--github-username', envvar='GITHUB_USERNAME', 
@@ -123,7 +128,7 @@ class CodeReviewer:
               help='Host for web UI server (default: 127.0.0.1, env: WEB_HOST)')
 @click.option('--web-port', envvar='WEB_PORT', default=8000, type=int,
               help='Port for web UI server (default: 8000, env: WEB_PORT)')
-def main(config: Optional[str], prompt: Optional[str], github_token: Optional[str], 
+def main(config: Optional[str], prompt: Optional[str], review_model: str, github_token: Optional[str], 
          github_username: Optional[str], poll_interval: int, sound_enabled: bool,
          sound_file: Optional[str], approval_sound_enabled: bool,
          approval_sound_file: Optional[str], dry_run: bool, web_enabled: bool,
@@ -135,7 +140,8 @@ def main(config: Optional[str], prompt: Optional[str], github_token: Optional[st
     try:
         app_config = Config.load(
             config_file=config,
-            claude_prompt_file=prompt,
+            prompt_file=prompt,
+            review_model=review_model,
             github_token=github_token,
             github_username=github_username,
             poll_interval=poll_interval,

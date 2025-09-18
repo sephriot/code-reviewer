@@ -8,6 +8,8 @@ from typing import Optional
 
 import yaml
 
+from .models import ReviewModel
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,8 @@ class Config:
     
     github_token: str
     github_username: str
-    claude_prompt_file: Path
+    prompt_file: Path
+    review_model: ReviewModel = ReviewModel.CLAUDE
     poll_interval: int = 60
     log_level: str = "INFO"
     repositories: Optional[list] = None
@@ -51,7 +54,8 @@ class Config:
         env_mappings = {
             'GITHUB_TOKEN': 'github_token',
             'GITHUB_USERNAME': 'github_username',
-            'CLAUDE_PROMPT_FILE': 'claude_prompt_file',
+            'PROMPT_FILE': 'prompt_file',
+            'REVIEW_MODEL': 'review_model',
             'POLL_INTERVAL': 'poll_interval',
             'LOG_LEVEL': 'log_level',
             'REPOSITORIES': 'repositories',
@@ -87,35 +91,60 @@ class Config:
         for key, value in overrides.items():
             if value is not None:
                 config_data[key] = value
-        
+
+        # Normalize review model selection
+        config_data['review_model'] = cls._normalize_review_model(
+            config_data.get('review_model', ReviewModel.CLAUDE)
+        )
+
         # Validate required fields
         required_fields = ['github_token', 'github_username']
         for field in required_fields:
             if not config_data.get(field):
                 raise ValueError(f"Required configuration field missing: {field}")
         
-        # Handle claude_prompt_file
-        if 'claude_prompt_file' in config_data:
-            prompt_file = Path(config_data['claude_prompt_file'])
+        # Handle prompt_file
+        if 'prompt_file' in config_data:
+            prompt_file = Path(config_data['prompt_file'])
         else:
             # Default to prompts/review_prompt.txt
             prompt_file = Path('prompts/review_prompt.txt')
-            
+
         if not prompt_file.exists():
             # Create default prompt file
             prompt_file.parent.mkdir(parents=True, exist_ok=True)
             cls._create_default_prompt(prompt_file)
-        
-        config_data['claude_prompt_file'] = prompt_file
+
+        config_data['prompt_file'] = prompt_file
         
         # Handle path conversions
-        for path_field in ['sound_file', 'approval_sound_file', 'database_path']:
+        for path_field in ['prompt_file', 'sound_file', 'approval_sound_file', 'database_path']:
             if path_field in config_data and config_data[path_field] is not None:
                 if not isinstance(config_data[path_field], Path):
                     config_data[path_field] = Path(config_data[path_field])
         
         return cls(**config_data)
     
+    @staticmethod
+    def _normalize_review_model(value) -> ReviewModel:
+        """Convert string or enum input into ReviewModel."""
+        if value is None:
+            return ReviewModel.CLAUDE
+        if isinstance(value, ReviewModel):
+            return value
+        if isinstance(value, str):
+            candidate = value.strip().upper()
+            try:
+                return ReviewModel[candidate]
+            except KeyError:
+                try:
+                    return ReviewModel(candidate)
+                except ValueError as exc:
+                    valid = ', '.join(model.value for model in ReviewModel)
+                    raise ValueError(f"Unsupported review model '{value}'. Choose from: {valid}.") from exc
+        valid = ', '.join(model.value for model in ReviewModel)
+        raise ValueError(f"Unsupported review model '{value}'. Choose from: {valid}.")
+
     @staticmethod
     def _create_default_prompt(prompt_file: Path):
         """Create a default prompt file."""

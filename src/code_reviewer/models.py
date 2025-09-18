@@ -5,6 +5,12 @@ from typing import List, Optional
 from enum import Enum
 
 
+class ReviewModel(Enum):
+    """Supported language model CLIs for reviews."""
+    CLAUDE = "CLAUDE"
+    CODEX = "CODEX"
+
+
 class ReviewAction(Enum):
     """Possible actions for a PR review."""
     APPROVE_WITH_COMMENT = "approve_with_comment"

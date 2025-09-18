@@ -6,11 +6,13 @@ import logging
 import asyncio
 from pathlib import Path
 
+import pytest
+
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from code_reviewer.models import PRInfo, ReviewResult
-from code_reviewer.claude_integration import ClaudeIntegration, ClaudeOutputParseError
+from code_reviewer.models import PRInfo, ReviewResult, ReviewModel
+from code_reviewer.llm_integration import LLMIntegration, LLMOutputParseError
 
 def setup_test_logging():
     """Set up logging for testing."""
@@ -20,19 +22,20 @@ def setup_test_logging():
         handlers=[logging.StreamHandler()]
     )
 
+@pytest.mark.asyncio
 async def test_json_failure_handling():
     """Test that invalid JSON output causes review failure."""
     print("=== Testing JSON Failure Handling ===\n")
     
-    # Create a mock Claude integration for testing
-    class MockClaudeIntegration(ClaudeIntegration):
+    # Create a mock integration for testing
+    class MockLLMIntegration(LLMIntegration):
         def __init__(self):
-            # Don't call parent __init__ to avoid file dependencies
-            pass
+            self.model = ReviewModel.CLAUDE
+            self.prompt_file = Path(__file__)
         
-        async def _run_claude_code(self, pr_info: PRInfo) -> str:
+        async def _run_model_cli(self, pr_info: PRInfo) -> str:
             # Return non-JSON output to trigger parsing failure
-            return "This is not JSON output from Claude. It's just plain text."
+            return "This is not JSON output from the CLI. It's just plain text."
     
     # Test data
     pr_info = PRInfo(
@@ -44,62 +47,64 @@ async def test_json_failure_handling():
         author='testuser'
     )
     
-    claude_integration = MockClaudeIntegration()
+    llm_integration = MockLLMIntegration()
     
     print("1. Testing with non-JSON output:")
     try:
-        review_result = await claude_integration.review_pr(pr_info)
-        print("❌ FAILED: Expected ClaudeOutputParseError but got result:", review_result)
+        review_result = await llm_integration.review_pr(pr_info)
+        print("❌ FAILED: Expected LLMOutputParseError but got result:", review_result)
         return False
-    except ClaudeOutputParseError as e:
-        print("✅ SUCCESS: ClaudeOutputParseError raised as expected")
+    except LLMOutputParseError as e:
+        print("✅ SUCCESS: LLMOutputParseError raised as expected")
         print(f"   Error message: {str(e)}")
-        print(f"   Claude output length: {len(e.claude_output)}")
-        print(f"   Claude output preview: {e.claude_output[:100]}...")
+        print(f"   Model output length: {len(e.raw_output)}")
+        print(f"   Model output preview: {e.raw_output[:100]}...")
         print()
     except Exception as e:
         print(f"❌ FAILED: Unexpected exception type: {type(e).__name__}: {e}")
         return False
     
     # Test with malformed JSON
-    class MockClaudeIntegrationMalformedJSON(ClaudeIntegration):
+    class MockLLMIntegrationMalformedJSON(LLMIntegration):
         def __init__(self):
-            pass
+            self.model = ReviewModel.CLAUDE
+            self.prompt_file = Path(__file__)
         
-        async def _run_claude_code(self, pr_info: PRInfo) -> str:
+        async def _run_model_cli(self, pr_info: PRInfo) -> str:
             # Return malformed JSON
             return '{"action": "approve_without_comment", "malformed": true, missing_quote: "oops"}'
     
     print("2. Testing with malformed JSON:")
-    claude_integration_malformed = MockClaudeIntegrationMalformedJSON()
+    llm_integration_malformed = MockLLMIntegrationMalformedJSON()
     
     try:
-        review_result = await claude_integration_malformed.review_pr(pr_info)
-        print("❌ FAILED: Expected ClaudeOutputParseError but got result:", review_result)
+        review_result = await llm_integration_malformed.review_pr(pr_info)
+        print("❌ FAILED: Expected LLMOutputParseError but got result:", review_result)
         return False
-    except ClaudeOutputParseError as e:
-        print("✅ SUCCESS: ClaudeOutputParseError raised for malformed JSON")
+    except LLMOutputParseError as e:
+        print("✅ SUCCESS: LLMOutputParseError raised for malformed JSON")
         print(f"   Error message: {str(e)}")
-        print(f"   Claude output: {e.claude_output}")
+        print(f"   Model output: {e.raw_output}")
         print()
     except Exception as e:
         print(f"❌ FAILED: Unexpected exception type: {type(e).__name__}: {e}")
         return False
     
     # Test with valid JSON (should work)
-    class MockClaudeIntegrationValidJSON(ClaudeIntegration):
+    class MockLLMIntegrationValidJSON(LLMIntegration):
         def __init__(self):
-            pass
+            self.model = ReviewModel.CLAUDE
+            self.prompt_file = Path(__file__)
         
-        async def _run_claude_code(self, pr_info: PRInfo) -> str:
+        async def _run_model_cli(self, pr_info: PRInfo) -> str:
             # Return valid JSON
             return '{"action": "approve_without_comment"}'
     
     print("3. Testing with valid JSON (should succeed):")
-    claude_integration_valid = MockClaudeIntegrationValidJSON()
+    llm_integration_valid = MockLLMIntegrationValidJSON()
     
     try:
-        review_result = await claude_integration_valid.review_pr(pr_info)
+        review_result = await llm_integration_valid.review_pr(pr_info)
         print("✅ SUCCESS: Valid JSON parsed successfully")
         print(f"   Result action: {review_result.action.value}")
         print()
@@ -108,26 +113,28 @@ async def test_json_failure_handling():
         print(f"❌ FAILED: Valid JSON should not raise exception: {type(e).__name__}: {e}")
         return False
 
+@pytest.mark.asyncio
 async def test_github_monitor_error_handling():
-    """Test that GitHubMonitor handles ClaudeOutputParseError correctly."""
+    """Test that GitHubMonitor handles LLMOutputParseError correctly."""
     print("=== Testing GitHubMonitor Error Handling ===\n")
     
     # Create mock classes to test the error handling path
-    class MockClaudeIntegrationError(ClaudeIntegration):
+    class MockLLMIntegrationError(LLMIntegration):
         def __init__(self):
-            pass
+            self.model = ReviewModel.CLAUDE
+            self.prompt_file = Path(__file__)
         
         async def review_pr(self, pr_info: PRInfo) -> ReviewResult:
             # Simulate the parse error that would happen
-            raise ClaudeOutputParseError(
-                "Claude output does not contain valid JSON. Output length: 50",
+            raise LLMOutputParseError(
+                "Model output does not contain valid JSON. Output length: 50",
                 "This is invalid JSON output that will cause failure"
             )
     
     # Mock GitHubMonitor with minimal dependencies
     class MockGitHubMonitor:
         def __init__(self):
-            self.claude_integration = MockClaudeIntegrationError()
+            self.llm_integration = MockLLMIntegrationError()
         
         async def _process_pr(self, pr_info: PRInfo):
             """Simulate the process_pr method with error handling."""
@@ -136,8 +143,8 @@ async def test_github_monitor_error_handling():
             logger.info(f"Processing PR #{pr_info.number} in {repo_name}")
             
             try:
-                # This will raise ClaudeOutputParseError
-                await self.claude_integration.review_pr(pr_info)
+                # This will raise LLMOutputParseError
+                await self.llm_integration.review_pr(pr_info)
                 
                 # These should never execute due to the exception
                 print("❌ FAILED: Should not reach review output logging")
@@ -146,14 +153,14 @@ async def test_github_monitor_error_handling():
                 
                 return False
                 
-            except ClaudeOutputParseError as e:
-                logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from Claude")
+            except LLMOutputParseError as e:
+                logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from model CLI")
                 logger.error(f"📋 PR: '{pr_info.title}' by {pr_info.author}")
                 logger.error(f"❗ Reason: {str(e)}")
                 logger.error(f"🔄 This PR will be retried in the next monitoring loop")
                 # Log a preview of the output (truncated for readability)
-                output_preview = e.claude_output[:1000] + "..." if len(e.claude_output) > 1000 else e.claude_output
-                logger.error(f"📤 Claude output preview: {output_preview}")
+                output_preview = e.raw_output[:1000] + "..." if len(e.raw_output) > 1000 else e.raw_output
+                logger.error(f"📤 Model output preview: {output_preview}")
                 return False  # Return False to indicate review failed and should be retried
                 
             except Exception as e:
@@ -176,7 +183,7 @@ async def test_github_monitor_error_handling():
     result = await monitor._process_pr(pr_info)
     
     if not result:  # We expect False (review failed, should retry)
-        print("✅ SUCCESS: GitHubMonitor handled ClaudeOutputParseError correctly")
+        print("✅ SUCCESS: GitHubMonitor handled LLMOutputParseError correctly")
         print("✅ No PR actions were taken (approve/comment)")
         print("✅ No database record was stored")
         print("✅ PR marked for retry in next monitoring loop")
@@ -199,7 +206,7 @@ async def main():
         print("✅ Invalid JSON output now causes review failure")
         print("✅ No approval/comments are made on parsing failures")
         print("✅ No database records are stored on parsing failures")
-        print("✅ Proper error logging includes Claude output for debugging")
+        print("✅ Proper error logging includes raw model output for debugging")
         return True
     else:
         print("\n❌ Some tests failed!")

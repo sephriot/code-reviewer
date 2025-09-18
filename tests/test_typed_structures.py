@@ -7,9 +7,9 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from code_reviewer.models import PRInfo, ReviewResult, ReviewAction, InlineComment, ReviewRecord
+from code_reviewer.models import PRInfo, ReviewResult, ReviewAction, InlineComment, ReviewRecord, ReviewModel
 from code_reviewer.github_client import GitHubClient
-from code_reviewer.claude_integration import ClaudeIntegration
+from code_reviewer.llm_integration import LLMIntegration
 
 def test_pr_info():
     """Test PRInfo dataclass functionality."""
@@ -103,16 +103,16 @@ def test_github_client_types():
     
     print("✅ GitHubClient type annotations are correct")
 
-def test_claude_integration_types():
-    """Test ClaudeIntegration type annotations."""
-    print("Testing ClaudeIntegration type annotations...")
+def test_llm_integration_types():
+    """Test LLMIntegration type annotations."""
+    print("Testing LLMIntegration type annotations...")
     
     # Create a temporary prompt file for testing
     prompt_file = Path('test_prompt.txt')
     prompt_file.write_text('Test prompt')
     
     try:
-        integration = ClaudeIntegration(prompt_file)
+        integration = LLMIntegration(prompt_file, ReviewModel.CLAUDE)
         
         # Test that the method exists and has correct signature
         method = getattr(integration, 'review_pr')
@@ -129,7 +129,7 @@ def test_claude_integration_types():
         # Check return type
         assert sig.return_annotation == ReviewResult
         
-        print("✅ ClaudeIntegration type annotations are correct")
+        print("✅ LLMIntegration type annotations are correct")
         
     finally:
         if prompt_file.exists():

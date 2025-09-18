@@ -50,7 +50,8 @@ Create a `.env` file in the project root:
 ```env
 GITHUB_TOKEN=your_github_personal_access_token
 GITHUB_USERNAME=your_github_username
-CLAUDE_PROMPT_FILE=prompts/review_prompt.txt
+PROMPT_FILE=prompts/review_prompt.txt
+REVIEW_MODEL=CLAUDE  # options: CLAUDE or CODEX
 POLL_INTERVAL=60
 LOG_LEVEL=INFO
 
@@ -102,7 +103,8 @@ You can also use a YAML configuration file:
 # config/config.yaml
 github_token: "your_token_here"
 github_username: "your_username"
-claude_prompt_file: "prompts/custom_prompt.txt"
+prompt_file: "prompts/custom_prompt.txt"
+review_model: "CLAUDE"  # options: CLAUDE or CODEX
 poll_interval: 30
 log_level: "DEBUG"
 
@@ -152,7 +154,7 @@ code-reviewer --web-enabled --web-host 0.0.0.0 --web-port 8080
 ### Command Line Options
 
 - `--config, -c`: Path to configuration file
-- `--prompt, -p`: Path to Claude prompt file
+- `--prompt, -p`: Path to prompt template file
 - `--github-token`: GitHub personal access token
 - `--github-username`: GitHub username to monitor
 - `--poll-interval`: Polling interval in seconds (default: 60)
