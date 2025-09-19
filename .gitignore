@@ -142,3 +142,4 @@ config/local_config.yaml
 logs/
 data/
 prompts/review_prompt.txt
+codex_review_output.json
