@@ -31,7 +31,19 @@ git clone <repository-url>
 cd code-reviewer
 ```
 
-2. Install the package in development mode:
+2. Create and activate a virtual environment:
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+# On macOS/Linux:
+source venv/bin/activate
+# On Windows:
+# venv\Scripts\activate
+```
+
+3. Install the package in development mode:
 ```bash
 pip install -e .
 ```
@@ -132,6 +144,10 @@ repositories:
 ### Basic Usage
 
 ```bash
+# Activate virtual environment first
+source venv/bin/activate  # On macOS/Linux
+# venv\Scripts\activate  # On Windows
+
 # Using environment variables
 code-reviewer
 
@@ -207,6 +223,10 @@ Focus on:
 Test the system without making actual GitHub actions:
 
 ```bash
+# Activate virtual environment first
+source venv/bin/activate  # On macOS/Linux
+# venv\Scripts\activate  # On Windows
+
 # Enable dry run mode
 code-reviewer --dry-run
 
@@ -219,6 +239,10 @@ code-reviewer --dry-run --no-sound --poll-interval 30
 Configure audio alerts for PRs requiring human review:
 
 ```bash
+# Activate virtual environment first
+source venv/bin/activate  # On macOS/Linux
+# venv\Scripts\activate  # On Windows
+
 # Enable sound (default)
 code-reviewer --sound-enabled
 
@@ -270,6 +294,10 @@ Access the dashboard at `http://localhost:8000` (or your configured host/port).
 Limit monitoring to specific repositories:
 
 ```bash
+# Activate virtual environment first
+source venv/bin/activate  # On macOS/Linux
+# venv\Scripts\activate  # On Windows
+
 # Via environment variable (comma-separated)
 REPOSITORIES=owner/repo1,owner/repo2 code-reviewer
 
@@ -302,8 +330,8 @@ After=network.target
 Type=simple
 User=your-user
 WorkingDirectory=/path/to/code-reviewer
-Environment=PATH=/path/to/your/python/bin
-ExecStart=/path/to/your/python/bin/code-reviewer
+Environment=PATH=/path/to/code-reviewer/venv/bin
+ExecStart=/path/to/code-reviewer/venv/bin/code-reviewer
 Restart=always
 RestartSec=10
 
@@ -317,45 +345,16 @@ sudo systemctl enable code-reviewer
 sudo systemctl start code-reviewer
 ```
 
-### Using Docker
-
-#### Build and run manually:
-
-```bash
-# Build the image
-docker build -t code-reviewer .
-
-# Run with environment file
-docker run --env-file .env -v $(pwd)/data:/app/data code-reviewer
-
-# Run with individual environment variables
-docker run -e GITHUB_TOKEN=your_token -e GITHUB_USERNAME=your_username code-reviewer
-```
-
-#### Using Docker Compose (Recommended):
-
-```bash
-# Start the service
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop the service
-docker-compose down
-```
-
-The `docker-compose.yaml` includes:
-- Automatic restarts
-- Volume mounting for persistent data
-- Environment file support
-- Health checks
 
 ## Development
 
 ### Running Tests
 
 ```bash
+# Activate virtual environment first
+source venv/bin/activate  # On macOS/Linux
+# venv\Scripts\activate  # On Windows
+
 # Install development dependencies
 pip install -e .[dev]
 
@@ -369,6 +368,10 @@ pytest --cov=src/code_reviewer tests/
 ### Code Quality
 
 ```bash
+# Activate virtual environment first
+source venv/bin/activate  # On macOS/Linux
+# venv\Scripts\activate  # On Windows
+
 # Format code
 black src/ tests/
 
@@ -410,6 +413,10 @@ The application consists of several key components:
 Enable debug logging to troubleshoot issues:
 
 ```bash
+# Activate virtual environment first
+source venv/bin/activate  # On macOS/Linux
+# venv\Scripts\activate  # On Windows
+
 LOG_LEVEL=DEBUG code-reviewer
 ```
 

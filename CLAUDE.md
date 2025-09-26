@@ -151,8 +151,8 @@ This project is an automated GitHub PR code review system. Here are project-spec
 
 - Application designed to run as a long-running service
 - Supports graceful shutdown via signal handlers
-- Can be containerized with Docker or run as systemd service
-- Database file requires persistent storage in containerized environments
+- Can be run as systemd service or directly with virtual environment
+- Database file requires persistent storage
 - Monitor logs for GitHub API rate limit warnings
 - Dry run mode available for safe testing in production environments
 - **Web UI Deployment**: FastAPI runs alongside monitor in same process using asyncio.gather()
