@@ -46,11 +46,22 @@ class LLMIntegration:
         self.prompt_file = prompt_file
         self.model = model
 
-    async def review_pr(self, pr_info: PRInfo) -> ReviewResult:
+    async def review_pr(self, pr_info: PRInfo, *, timeout: Optional[int] = None) -> ReviewResult:
         """Review a PR using the selected language model CLI."""
         try:
-            result = await self._run_model_cli(pr_info)
+            run_coro = self._run_model_cli(pr_info)
+            if timeout and timeout > 0:
+                result = await asyncio.wait_for(run_coro, timeout=timeout)
+            else:
+                result = await run_coro
             return self._parse_review_result(result)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "%s review exceeded timeout after %s seconds",
+                self.model.value,
+                timeout,
+            )
+            raise
         except Exception as exc:  # pragma: no cover - pass through for upstream handling
             logger.error(f"Error during {self.model.value} review: {exc}")
             raise
@@ -105,8 +116,27 @@ class LLMIntegration:
             )
         )
 
-        await process.wait()
-        await asyncio.gather(stdout_task, stderr_task)
+        try:
+            await process.wait()
+            await asyncio.gather(stdout_task, stderr_task)
+        except asyncio.CancelledError:
+            logger.warning(
+                "%s CLI invocation cancelled; terminating subprocess",
+                self.model.value,
+            )
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                logger.debug("Force killing %s subprocess", self.model.value)
+                process.kill()
+                await process.wait()
+            stdout_task.cancel()
+            stderr_task.cancel()
+            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+            if codex_output_path and codex_output_path.exists():
+                codex_output_path.unlink(missing_ok=True)
+            raise
 
         if process.returncode != 0:
             stderr_text = "".join(stderr_buffer)

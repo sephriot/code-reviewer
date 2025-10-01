@@ -112,6 +112,8 @@ class CodeReviewer:
               help='GitHub username to monitor')
 @click.option('--poll-interval', default=60, type=int,
               help='Polling interval in seconds (default: 60)')
+@click.option('--review-timeout', envvar='REVIEW_TIMEOUT', default=None, type=int,
+              help='Maximum seconds to allow an automated review to run before timing out (env: REVIEW_TIMEOUT, 0 disables)')
 @click.option('--sound-enabled/--no-sound', default=True,
               help='Enable/disable sound notifications (default: enabled)')
 @click.option('--sound-file', type=click.Path(exists=True),
@@ -120,6 +122,10 @@ class CodeReviewer:
               help='Enable/disable sound notifications for PR approvals (default: enabled, env: APPROVAL_SOUND_ENABLED)')
 @click.option('--approval-sound-file', envvar='APPROVAL_SOUND_FILE', type=click.Path(exists=True),
               help='Custom sound file for PR approval notifications (env: APPROVAL_SOUND_FILE)')
+@click.option('--timeout-sound-enabled/--no-timeout-sound', envvar='TIMEOUT_SOUND_ENABLED', default=None,
+              help='Enable/disable sound notifications for review timeouts (env: TIMEOUT_SOUND_ENABLED)')
+@click.option('--timeout-sound-file', envvar='TIMEOUT_SOUND_FILE', type=click.Path(exists=True),
+              help='Custom sound file for review timeout notifications (env: TIMEOUT_SOUND_FILE)')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Log what actions would be taken without actually performing them')
 @click.option('--web-enabled/--no-web', envvar='WEB_ENABLED', default=False,
@@ -129,9 +135,10 @@ class CodeReviewer:
 @click.option('--web-port', envvar='WEB_PORT', default=8000, type=int,
               help='Port for web UI server (default: 8000, env: WEB_PORT)')
 def main(config: Optional[str], prompt: Optional[str], review_model: str, github_token: Optional[str], 
-         github_username: Optional[str], poll_interval: int, sound_enabled: bool,
+         github_username: Optional[str], poll_interval: int, review_timeout: Optional[int], sound_enabled: bool,
          sound_file: Optional[str], approval_sound_enabled: bool,
-         approval_sound_file: Optional[str], dry_run: bool, web_enabled: bool,
+         approval_sound_file: Optional[str], timeout_sound_enabled: Optional[bool],
+         timeout_sound_file: Optional[str], dry_run: bool, web_enabled: bool,
          web_host: str, web_port: int):
     """Automated GitHub PR code review using Claude."""
     
@@ -145,10 +152,13 @@ def main(config: Optional[str], prompt: Optional[str], review_model: str, github
             github_token=github_token,
             github_username=github_username,
             poll_interval=poll_interval,
+            review_timeout=review_timeout,
             sound_enabled=sound_enabled,
             sound_file=sound_file,
             approval_sound_enabled=approval_sound_enabled,
             approval_sound_file=approval_sound_file,
+            timeout_sound_enabled=timeout_sound_enabled,
+            timeout_sound_file=timeout_sound_file,
             dry_run=dry_run,
             web_enabled=web_enabled,
             web_host=web_host,

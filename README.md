@@ -65,11 +65,17 @@ GITHUB_USERNAME=your_github_username
 PROMPT_FILE=prompts/review_prompt.txt
 REVIEW_MODEL=CLAUDE  # options: CLAUDE or CODEX
 POLL_INTERVAL=60
+REVIEW_TIMEOUT=600
+# Set to 0 to disable the timeout
 LOG_LEVEL=INFO
 
 # Sound notifications
 SOUND_ENABLED=true
 # SOUND_FILE=sounds/notification.wav
+
+# Timeout notifications
+TIMEOUT_SOUND_ENABLED=true
+# TIMEOUT_SOUND_FILE=sounds/review_timeout.wav
 
 # Dry run mode
 DRY_RUN=false
@@ -118,11 +124,16 @@ github_username: "your_username"
 prompt_file: "prompts/custom_prompt.txt"
 review_model: "CLAUDE"  # options: CLAUDE or CODEX
 poll_interval: 30
+review_timeout: 600
 log_level: "DEBUG"
 
 # Sound notifications
 sound_enabled: true
 # sound_file: "sounds/notification.wav"
+
+# Review timeout notifications
+timeout_sound_enabled: true
+# timeout_sound_file: "sounds/review_timeout.wav"
 
 # Dry run and database
 dry_run: false
@@ -174,9 +185,12 @@ code-reviewer --web-enabled --web-host 0.0.0.0 --web-port 8080
 - `--github-token`: GitHub personal access token
 - `--github-username`: GitHub username to monitor
 - `--poll-interval`: Polling interval in seconds (default: 60)
+- `--review-timeout`: Maximum seconds allowed for an automated review before marking it for human attention (default: 600, use 0 to disable)
 - `--sound-enabled/--no-sound`: Enable/disable sound notifications
 - `--sound-file`: Custom sound file for notifications
 - `--web-enabled/--no-web`: Enable/disable web UI dashboard
+- `--timeout-sound-enabled/--no-timeout-sound`: Enable/disable timeout notification sounds
+- `--timeout-sound-file`: Custom sound file for timeout notifications
 - `--web-host`: Web server host address (default: 127.0.0.1)
 - `--web-port`: Web server port (default: 8000)
 - `--dry-run`: Log actions instead of performing them

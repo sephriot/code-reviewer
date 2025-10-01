@@ -1,5 +1,6 @@
 """Sound notification functionality."""
 
+import asyncio
 import logging
 import platform
 import subprocess
@@ -13,12 +14,21 @@ logger = logging.getLogger(__name__)
 class SoundNotifier:
     """Cross-platform sound notification system."""
     
-    def __init__(self, enabled: bool = True, sound_file: Optional[Path] = None,
-                 approval_sound_enabled: bool = True, approval_sound_file: Optional[Path] = None):
+    def __init__(
+        self,
+        enabled: bool = True,
+        sound_file: Optional[Path] = None,
+        approval_sound_enabled: bool = True,
+        approval_sound_file: Optional[Path] = None,
+        timeout_sound_enabled: bool = True,
+        timeout_sound_file: Optional[Path] = None,
+    ):
         self.enabled = enabled
         self.sound_file = sound_file
         self.approval_sound_enabled = approval_sound_enabled
         self.approval_sound_file = approval_sound_file
+        self.timeout_sound_enabled = timeout_sound_enabled
+        self.timeout_sound_file = timeout_sound_file
         self.system = platform.system().lower()
         
     async def play_notification(self):
@@ -44,7 +54,7 @@ class SoundNotifier:
             
         try:
             if self.approval_sound_file and self.approval_sound_file.exists():
-                await self._play_custom_approval_sound()
+                await self._play_sound_file(self.approval_sound_file)
             elif self.enabled and self.sound_file and self.sound_file.exists():
                 # Fallback to general notification sound
                 await self._play_custom_sound()
@@ -53,80 +63,70 @@ class SoundNotifier:
                 
         except Exception as e:
             logger.warning(f"Failed to play approval sound: {e}")
-            
-    async def _play_custom_approval_sound(self):
-        """Play a custom approval sound file."""
+    async def play_timeout_sound(self):
+        """Play a sound when an automated review times out."""
+        if not self.timeout_sound_enabled:
+            logger.debug("Timeout sound notifications are disabled")
+            return
+
         try:
-            if self.system == "darwin":  # macOS
-                cmd = ["afplay", str(self.approval_sound_file)]
-            elif self.system == "linux":
-                # Try different audio players
-                for player in ["aplay", "paplay", "sox"]:
-                    if await self._command_exists(player):
-                        if player == "sox":
-                            cmd = ["play", str(self.approval_sound_file)]
-                        else:
-                            cmd = [player, str(self.approval_sound_file)]
-                        break
-                else:
-                    raise RuntimeError("No audio player found")
-            elif self.system == "windows":
-                # Use PowerShell to play sound on Windows
-                cmd = [
-                    "powershell", "-c", 
-                    f"(New-Object Media.SoundPlayer '{self.approval_sound_file}').PlaySync()"
-                ]
+            if self.timeout_sound_file and self.timeout_sound_file.exists():
+                await self._play_sound_file(self.timeout_sound_file)
+            elif self.enabled and self.sound_file and self.sound_file.exists():
+                await self._play_custom_sound()
             else:
-                raise RuntimeError(f"Unsupported system: {self.system}")
-                
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            await process.communicate()
-            
+                await self._play_system_sound()
         except Exception as e:
-            logger.warning(f"Failed to play custom approval sound: {e}")
-            # Fallback to system sound
+            logger.warning(f"Failed to play timeout sound: {e}")
             await self._play_system_sound()
-            
+
     async def _play_custom_sound(self):
         """Play a custom sound file."""
+        if not self.enabled:
+            logger.debug("Sound notifications are disabled; skipping custom sound")
+            return
+
         try:
-            if self.system == "darwin":  # macOS
-                cmd = ["afplay", str(self.sound_file)]
-            elif self.system == "linux":
-                # Try different audio players
-                for player in ["aplay", "paplay", "sox"]:
-                    if await self._command_exists(player):
-                        if player == "sox":
-                            cmd = ["play", str(self.sound_file)]
-                        else:
-                            cmd = [player, str(self.sound_file)]
-                        break
-                else:
-                    raise RuntimeError("No audio player found")
-            elif self.system == "windows":
-                # Use PowerShell to play sound on Windows
-                cmd = [
-                    "powershell", "-c", 
-                    f"(New-Object Media.SoundPlayer '{self.sound_file}').PlaySync()"
-                ]
+            if self.sound_file and self.sound_file.exists():
+                await self._play_sound_file(self.sound_file)
             else:
-                raise RuntimeError(f"Unsupported system: {self.system}")
-                
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            await process.communicate()
-            
+                await self._play_system_sound()
         except Exception as e:
             logger.warning(f"Failed to play custom sound: {e}")
-            # Fallback to system sound
             await self._play_system_sound()
+
+    async def _play_sound_file(self, file_path: Path):
+        """Play a specific sound file."""
+        if not file_path:
+            raise ValueError("Sound file path is not set")
+
+        if self.system == "darwin":  # macOS
+            cmd = ["afplay", str(file_path)]
+        elif self.system == "linux":
+            for player in ["aplay", "paplay", "sox"]:
+                if await self._command_exists(player):
+                    if player == "sox":
+                        cmd = ["play", str(file_path)]
+                    else:
+                        cmd = [player, str(file_path)]
+                    break
+            else:
+                raise RuntimeError("No audio player found")
+        elif self.system == "windows":
+            cmd = [
+                "powershell",
+                "-c",
+                f"(New-Object Media.SoundPlayer '{file_path}').PlaySync()",
+            ]
+        else:
+            raise RuntimeError(f"Unsupported system: {self.system}")
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        await process.communicate()
             
     async def _play_system_sound(self):
         """Play a system notification sound."""
@@ -214,7 +214,3 @@ class SoundNotifier:
             
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             logger.warning(f"Failed to create default sound file: {e}")
-
-
-# Import asyncio after the class definition to avoid circular imports
-import asyncio

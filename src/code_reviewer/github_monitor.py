@@ -26,7 +26,9 @@ class GitHubMonitor:
             enabled=config.sound_enabled,
             sound_file=config.sound_file,
             approval_sound_enabled=config.approval_sound_enabled,
-            approval_sound_file=config.approval_sound_file
+            approval_sound_file=config.approval_sound_file,
+            timeout_sound_enabled=config.timeout_sound_enabled,
+            timeout_sound_file=config.timeout_sound_file,
         )
         self.db = ReviewDatabase(config.database_path)
         
@@ -42,6 +44,10 @@ class GitHubMonitor:
         # Play approval sound test
         logger.debug("Playing approval notification sound")
         await self.sound_notifier.play_approval_sound()
+
+        # Play timeout sound test
+        logger.debug("Playing timeout notification sound")
+        await self.sound_notifier.play_timeout_sound()
         
         if self.config.dry_run:
             logger.info("DRY RUN MODE: No actual GitHub actions will be performed, only logged")
@@ -142,7 +148,10 @@ class GitHubMonitor:
         try:
             # Run model-driven code review - the CLI will fetch all PR details
             logger.debug(f"Running {self.config.review_model.value} code review for PR #{pr_info.number}")
-            review_result = await self.llm_integration.review_pr(pr_info)
+            review_result = await self.llm_integration.review_pr(
+                pr_info,
+                timeout=self.config.review_timeout if self.config.review_timeout else None,
+            )
             
             # Log the review output
             await self._log_review_output(pr_info, review_result)
@@ -158,6 +167,26 @@ class GitHubMonitor:
             # Note: APPROVE_WITH_COMMENT and REQUEST_CHANGES reviews are recorded when the human approves via web UI
             
             
+        except asyncio.TimeoutError:
+            timeout_seconds = self.config.review_timeout
+            logger.error(
+                f"⚠️ Review timed out after {timeout_seconds} seconds for PR #{pr_info.number} in {repo_name}"
+            )
+            reason = f"Automated review timed out after {timeout_seconds} seconds"
+            if self.config.dry_run:
+                logger.info(
+                    f"[DRY RUN] Would mark PR #{pr_info.number} as REQUIRES HUMAN REVIEW due to timeout"
+                )
+                logger.info("[DRY RUN] Would play timeout sound notification")
+            else:
+                timeout_result = ReviewResult(
+                    action=ReviewAction.REQUIRES_HUMAN_REVIEW,
+                    reason=reason,
+                )
+                await self.db.record_review(pr_info, timeout_result)
+                await self.sound_notifier.play_timeout_sound()
+            return
+
         except LLMOutputParseError as e:
             logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from {self.config.review_model.value}")
             logger.error(f"📋 PR: '{pr_info.title}' by {pr_info.author}")

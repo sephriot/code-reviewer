@@ -23,6 +23,7 @@ class Config:
     prompt_file: Path
     review_model: ReviewModel = ReviewModel.CLAUDE
     poll_interval: int = 60
+    review_timeout: int = 600
     log_level: str = "INFO"
     repositories: Optional[list] = None
     pr_authors: Optional[list] = None
@@ -30,6 +31,8 @@ class Config:
     sound_file: Optional[Path] = None
     approval_sound_enabled: bool = True
     approval_sound_file: Optional[Path] = None
+    timeout_sound_enabled: bool = True
+    timeout_sound_file: Optional[Path] = None
     dry_run: bool = False
     database_path: Path = Path("data/reviews.db")
     web_enabled: bool = False
@@ -56,6 +59,7 @@ class Config:
             'GITHUB_USERNAME': 'github_username',
             'PROMPT_FILE': 'prompt_file',
             'REVIEW_MODEL': 'review_model',
+            'REVIEW_TIMEOUT': 'review_timeout',
             'POLL_INTERVAL': 'poll_interval',
             'LOG_LEVEL': 'log_level',
             'REPOSITORIES': 'repositories',
@@ -64,6 +68,8 @@ class Config:
             'SOUND_FILE': 'sound_file',
             'APPROVAL_SOUND_ENABLED': 'approval_sound_enabled',
             'APPROVAL_SOUND_FILE': 'approval_sound_file',
+            'TIMEOUT_SOUND_ENABLED': 'timeout_sound_enabled',
+            'TIMEOUT_SOUND_FILE': 'timeout_sound_file',
             'DRY_RUN': 'dry_run',
             'DATABASE_PATH': 'database_path',
             'WEB_ENABLED': 'web_enabled',
@@ -74,11 +80,11 @@ class Config:
         for env_var, config_key in env_mappings.items():
             value = os.getenv(env_var)
             if value:
-                if config_key in ['poll_interval', 'web_port']:
+                if config_key in ['poll_interval', 'web_port', 'review_timeout']:
                     config_data[config_key] = int(value)
-                elif config_key in ['sound_enabled', 'approval_sound_enabled', 'dry_run', 'web_enabled']:
+                elif config_key in ['sound_enabled', 'approval_sound_enabled', 'timeout_sound_enabled', 'dry_run', 'web_enabled']:
                     config_data[config_key] = value.lower() in ('true', '1', 'yes', 'on')
-                elif config_key in ['sound_file', 'approval_sound_file', 'database_path']:
+                elif config_key in ['sound_file', 'approval_sound_file', 'timeout_sound_file', 'database_path']:
                     config_data[config_key] = Path(value)
                 elif config_key in ['repositories', 'pr_authors']:
                     # Parse comma-separated lists
@@ -91,6 +97,17 @@ class Config:
         for key, value in overrides.items():
             if value is not None:
                 config_data[key] = value
+
+        if 'review_timeout' in config_data:
+            timeout_value = config_data['review_timeout']
+            try:
+                timeout_int = int(timeout_value)
+            except (TypeError, ValueError):
+                raise ValueError("review_timeout must be an integer number of seconds")
+            if timeout_int < 0:
+                raise ValueError("review_timeout must be non-negative")
+            # A value of 0 disables the timeout
+            config_data['review_timeout'] = timeout_int
 
         # Normalize review model selection
         config_data['review_model'] = cls._normalize_review_model(
@@ -118,7 +135,7 @@ class Config:
         config_data['prompt_file'] = prompt_file
         
         # Handle path conversions
-        for path_field in ['prompt_file', 'sound_file', 'approval_sound_file', 'database_path']:
+        for path_field in ['prompt_file', 'sound_file', 'approval_sound_file', 'timeout_sound_file', 'database_path']:
             if path_field in config_data and config_data[path_field] is not None:
                 if not isinstance(config_data[path_field], Path):
                     config_data[path_field] = Path(config_data[path_field])
