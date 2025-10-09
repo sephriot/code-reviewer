@@ -16,6 +16,10 @@ The code reviewer now includes an optional web UI that provides a dashboard for 
 - Edit comments before approval or reject with optional reason
 - Complete control over what gets posted to your GitHub PRs
 
+### 🧹 **Automatic Queue Cleanup**
+- Pending approvals are automatically marked as **Outdated** when the underlying PR is merged or closed
+- Keeps the dashboard focused on actionable work without manual cleanup
+
 ### 📊 **Centralized Management**
 - Single dashboard to manage all review activities
 - Real-time updates of pending approvals and human reviews
@@ -104,6 +108,11 @@ When the system processes PRs:
 - Rejection reasons when provided
 - Direct links to GitHub PRs
 
+#### **Outdated Tab**
+- Lists pending approvals that were cleared automatically because the PR closed or merged
+- Preserves original comments and inline feedback for reference
+- Direct links to the original PR for context
+
 ## API Endpoints
 
 The web server exposes REST API endpoints:
@@ -131,6 +140,9 @@ GET /api/approved-approvals
 
 # Get rejected approval history  
 GET /api/rejected-approvals
+
+# Get outdated approval history  
+GET /api/outdated-approvals
 ```
 
 **Note**: The pending approvals system now includes commit SHA tracking, allowing the system to intelligently handle PR updates by overwriting pending approvals while preserving human decisions (approved/rejected reviews).
@@ -156,7 +168,7 @@ CREATE TABLE pending_approvals (
     head_sha TEXT NOT NULL, -- Commit SHA for tracking
     base_sha TEXT NOT NULL, -- Base commit SHA
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected', 'outdated'
     UNIQUE(repository, pr_number, head_sha) -- Updated unique constraint
 );
 ```

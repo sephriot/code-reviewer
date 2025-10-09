@@ -9,7 +9,10 @@ from .github_client import GitHubClient
 from .llm_integration import LLMIntegration, LLMOutputParseError
 from .config import Config
 from .sound_notifier import SoundNotifier
-from .database import ReviewDatabase
+from .database import (
+    ReviewDatabase,
+    PENDING_APPROVAL_STATUS_OUTDATED,
+)
 from .models import PRInfo, ReviewResult, ReviewAction
 
 
@@ -108,6 +111,11 @@ class GitHubMonitor:
         """Check for new PRs where user is assigned as reviewer."""
         logger.debug("Checking for new PRs to review...")
         try:
+            try:
+                await self._expire_outdated_pending_approvals()
+            except Exception as cleanup_error:
+                logger.error(f"Error while expiring outdated approvals: {cleanup_error}")
+
             prs = await self.github_client.get_review_requests(
                 self.config.github_username, 
                 self.config.repositories,
@@ -198,6 +206,53 @@ class GitHubMonitor:
             
         except Exception as e:
             logger.error(f"Error processing PR #{pr_info.number}: {e}")
+
+    async def _expire_outdated_pending_approvals(self) -> None:
+        """Mark pending approvals as outdated if their PRs are merged or closed."""
+        pending_refs = await self.db.get_pending_approval_refs()
+
+        if not pending_refs:
+            return
+
+        logger.debug(f"Checking {len(pending_refs)} pending approval(s) for outdated status")
+
+        status_tasks = [
+            self.github_client.get_pr_status(ref['repository'], ref['pr_number'])
+            for ref in pending_refs
+        ]
+
+        results = await asyncio.gather(*status_tasks, return_exceptions=True)
+
+        for ref, result in zip(pending_refs, results):
+            if isinstance(result, Exception):
+                logger.error(
+                    f"Failed to fetch PR status for {ref['repository']}#{ref['pr_number']}: {result}"
+                )
+                continue
+
+            if not result:
+                logger.warning(
+                    f"Unable to determine PR status for {ref['repository']}#{ref['pr_number']}"
+                )
+                continue
+
+            state = result.get('state')
+            merged = bool(result.get('merged'))
+
+            if state != 'open' or merged:
+                reason = "merged" if merged else state or "unknown"
+                updated = await self.db.update_pending_approval_status(
+                    ref['id'], PENDING_APPROVAL_STATUS_OUTDATED
+                )
+                if updated:
+                    logger.info(
+                        f"Marked pending approval ID {ref['id']} for PR #{ref['pr_number']} in "
+                        f"{ref['repository']} as OUTDATED ({reason})"
+                    )
+                else:
+                    logger.debug(
+                        f"Pending approval ID {ref['id']} already processed when marking as OUTDATED"
+                    )
             
     async def _act_on_review(self, pr_info: PRInfo, review_result: ReviewResult):
         """Act on the model's review result."""

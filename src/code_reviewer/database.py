@@ -15,6 +15,19 @@ from .models import PRInfo, ReviewResult, ReviewRecord, ReviewAction
 logger = logging.getLogger(__name__)
 
 
+PENDING_APPROVAL_STATUS_PENDING = 'pending'
+PENDING_APPROVAL_STATUS_APPROVED = 'approved'
+PENDING_APPROVAL_STATUS_REJECTED = 'rejected'
+PENDING_APPROVAL_STATUS_OUTDATED = 'outdated'
+
+VALID_PENDING_APPROVAL_STATUSES = {
+    PENDING_APPROVAL_STATUS_PENDING,
+    PENDING_APPROVAL_STATUS_APPROVED,
+    PENDING_APPROVAL_STATUS_REJECTED,
+    PENDING_APPROVAL_STATUS_OUTDATED,
+}
+
+
 class ReviewDatabase:
     """SQLite database for tracking PR reviews."""
     
@@ -88,7 +101,7 @@ class ReviewDatabase:
                 head_sha TEXT NOT NULL,
                 base_sha TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+                status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected', 'outdated'
                 UNIQUE(repository, pr_number, head_sha)
             )
         """)
@@ -246,10 +259,10 @@ class ReviewDatabase:
         
         cursor.execute("""
             SELECT * FROM pending_approvals 
-            WHERE repository = ? AND pr_number = ? AND head_sha = ? AND status = 'pending'
+            WHERE repository = ? AND pr_number = ? AND head_sha = ? AND status = ?
             ORDER BY created_at DESC
             LIMIT 1
-        """, (repository, pr_number, head_sha))
+        """, (repository, pr_number, head_sha, PENDING_APPROVAL_STATUS_PENDING))
         
         row = cursor.fetchone()
         if row:
@@ -370,10 +383,10 @@ class ReviewDatabase:
         # Check if a pending approval already exists for this PR (any commit)
         cursor.execute("""
             SELECT * FROM pending_approvals 
-            WHERE repository = ? AND pr_number = ? AND status = 'pending'
+            WHERE repository = ? AND pr_number = ? AND status = ?
             ORDER BY created_at DESC
             LIMIT 1
-        """, (pr_info.repository_name, pr_info.number))
+        """, (pr_info.repository_name, pr_info.number, PENDING_APPROVAL_STATUS_PENDING))
         
         existing_pending = cursor.fetchone()
         
@@ -422,7 +435,7 @@ class ReviewDatabase:
                 review_result.inline_comments_count,
                 pr_info.head_sha,
                 pr_info.base_sha,
-                'pending'
+                PENDING_APPROVAL_STATUS_PENDING
             ))
 
             approval_id = cursor.lastrowid
@@ -482,16 +495,19 @@ class ReviewDatabase:
             logger.error(f"Error updating pending approval: {e}")
             raise
 
-    async def get_pending_approvals(self, status: str = 'pending') -> List[Dict[str, Any]]:
+    async def get_pending_approvals(self, status: str = PENDING_APPROVAL_STATUS_PENDING) -> List[Dict[str, Any]]:
         """Get pending approvals by status."""
         return await asyncio.get_event_loop().run_in_executor(
             None, self._get_pending_approvals_sync, status
         )
 
-    def _get_pending_approvals_sync(self, status: str = 'pending') -> List[Dict[str, Any]]:
+    def _get_pending_approvals_sync(self, status: str = PENDING_APPROVAL_STATUS_PENDING) -> List[Dict[str, Any]]:
         """Synchronous implementation of get_pending_approvals."""
         conn = self._get_connection()
         cursor = conn.cursor()
+
+        if status not in VALID_PENDING_APPROVAL_STATUSES:
+            raise ValueError(f"Invalid pending approval status requested: {status}")
 
         cursor.execute("""
             SELECT * FROM pending_approvals 
@@ -524,6 +540,26 @@ class ReviewDatabase:
 
         return approvals
 
+    async def get_pending_approval_refs(self) -> List[Dict[str, Any]]:
+        """Get lightweight metadata for pending approvals."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_pending_approval_refs_sync
+        )
+
+    def _get_pending_approval_refs_sync(self) -> List[Dict[str, Any]]:
+        """Synchronous implementation returning minimal pending approval data."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, repository, pr_number, pr_title, pr_author, pr_url, head_sha, status, created_at
+            FROM pending_approvals
+            WHERE status = ?
+            ORDER BY created_at DESC
+        """, (PENDING_APPROVAL_STATUS_PENDING,))
+
+        return [dict(row) for row in cursor.fetchall()]
+
     async def get_human_review_prs(self) -> List[ReviewRecord]:
         """Get PRs that were marked as requiring human review."""
         return await asyncio.get_event_loop().run_in_executor(
@@ -554,6 +590,9 @@ class ReviewDatabase:
         """Synchronous implementation of update_pending_approval_status."""
         conn = self._get_connection()
         cursor = conn.cursor()
+
+        if status not in VALID_PENDING_APPROVAL_STATUSES:
+            raise ValueError(f"Invalid pending approval status: {status}")
 
         try:
             update_fields = "status = ?"
@@ -855,10 +894,10 @@ class ReviewDatabase:
 
         cursor.execute("""
             SELECT * FROM pending_approvals 
-            WHERE status = 'approved'
+            WHERE status = ?
             ORDER BY created_at DESC
             LIMIT ?
-        """, (limit,))
+        """, (PENDING_APPROVAL_STATUS_APPROVED, limit))
 
         approvals = []
         for row in cursor.fetchall():
@@ -910,10 +949,10 @@ class ReviewDatabase:
 
         cursor.execute("""
             SELECT * FROM pending_approvals 
-            WHERE status = 'rejected'
+            WHERE status = ?
             ORDER BY created_at DESC
             LIMIT ?
-        """, (limit,))
+        """, (PENDING_APPROVAL_STATUS_REJECTED, limit))
 
         approvals = []
         for row in cursor.fetchall():

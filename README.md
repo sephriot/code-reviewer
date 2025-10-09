@@ -300,6 +300,7 @@ When web UI is enabled (`--web-enabled` or `WEB_ENABLED=true`):
   - Direct links to GitHub PRs
 - 🔄 **Real-time Updates**: JavaScript interface with automatic refresh
 - 📱 **Mobile Responsive**: Works on both desktop and mobile devices
+- 🧹 **Outdated Queue Cleanup**: Pending approvals auto-expire when a PR merges or closes, so the dashboard only shows actionable items
 
 Access the dashboard at `http://localhost:8000` (or your configured host/port).
 

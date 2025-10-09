@@ -10,7 +10,13 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .database import ReviewDatabase
+from .database import (
+    ReviewDatabase,
+    PENDING_APPROVAL_STATUS_APPROVED,
+    PENDING_APPROVAL_STATUS_OUTDATED,
+    PENDING_APPROVAL_STATUS_PENDING,
+    PENDING_APPROVAL_STATUS_REJECTED,
+)
 from .github_client import GitHubClient
 from .models import ReviewRecord, ReviewResult, ReviewAction, InlineComment, PRInfo
 
@@ -73,6 +79,7 @@ class ReviewWebServer:
         .status-badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
         .status-approved { background: #d4edda; color: #155724; }
         .status-rejected { background: #f8d7da; color: #721c24; }
+        .status-outdated { background: #e2e3e5; color: #495057; }
         .buttons { margin-top: 15px; }
         .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; }
         .btn-approve { background: #28a745; color: white; }
@@ -83,6 +90,7 @@ class ReviewWebServer:
         .tab.active { border-bottom-color: #007bff; color: #007bff; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
+        .outdated-note { background: #f1f3f5; padding: 10px; border-left: 3px solid #adb5bd; margin: 10px 0; border-radius: 4px; color: #495057; }
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
         .modal-content { background: white; margin: 5% auto; padding: 20px; width: 80%; max-width: 600px; border-radius: 8px; }
         .close { float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
@@ -98,6 +106,7 @@ class ReviewWebServer:
             <div class="tab" onclick="showTab('human-review')">Human Reviews</div>
             <div class="tab" onclick="showTab('approved')">Approved History</div>
             <div class="tab" onclick="showTab('rejected')">Rejected History</div>
+            <div class="tab" onclick="showTab('outdated')">Outdated</div>
             <div class="tab" onclick="showTab('completed-reviews')">Completed Reviews</div>
         </div>
         
@@ -126,6 +135,13 @@ class ReviewWebServer:
             <div class="section">
                 <h2>Rejected Approvals History</h2>
                 <div id="rejected-approvals"></div>
+            </div>
+        </div>
+
+        <div id="outdated" class="tab-content">
+            <div class="section">
+                <h2>Outdated Pending Approvals</h2>
+                <div id="outdated-approvals"></div>
             </div>
         </div>
 
@@ -200,6 +216,8 @@ class ReviewWebServer:
                 loadApprovedHistory();
             } else if (tabName === 'rejected') {
                 loadRejectedHistory();
+            } else if (tabName === 'outdated') {
+                loadOutdatedApprovals();
             } else if (tabName === 'completed-reviews') {
                 loadCompletedReviews();
             }
@@ -810,6 +828,59 @@ class ReviewWebServer:
             }
         }
 
+        async function loadOutdatedApprovals() {
+            try {
+                const response = await fetch('/api/outdated-approvals');
+                const approvals = await response.json();
+                const container = document.getElementById('outdated-approvals');
+
+                if (approvals.length === 0) {
+                    container.innerHTML = '<p>No outdated approvals.</p>';
+                    return;
+                }
+
+                container.innerHTML = approvals.map(approval => `
+                    <div class="pr-card">
+                        <div class="pr-title">${approval.pr_title}</div>
+                        <div class="pr-meta">
+                            ${approval.repository} #${approval.pr_number} by ${approval.pr_author}
+                            <br><small>Originally queued: ${new Date(approval.created_at).toLocaleString()}</small>
+                        </div>
+                        <div class="outdated-note">
+                            <span class="status-badge status-outdated">OUTDATED</span>
+                            This pending approval was cleared automatically because the pull request is no longer open.
+                        </div>
+                        ${approval.display_review_comment ? `
+                            <div class="review-comment">
+                                <strong>Original Comment:</strong>
+                                <div>${approval.display_review_comment}</div>
+                            </div>` : ''}
+                        ${approval.display_review_summary ? `
+                            <div class="review-comment">
+                                <strong>Original Summary:</strong>
+                                <div>${approval.display_review_summary}</div>
+                            </div>` : ''}
+                        ${approval.inline_comments.length > 0 ? `
+                            <div class="inline-comments">
+                                <strong>Inline Comments (${approval.inline_comments.length}):</strong>
+                                ${approval.inline_comments.map((comment) => `
+                                    <div class="inline-comment">
+                                        <strong>${comment.file}:${comment.line}</strong><br>
+                                        ${comment.message}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                        <div class="buttons">
+                            <a href="${approval.pr_url}" target="_blank" class="btn btn-view">View PR</a>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load outdated approvals:', error);
+            }
+        }
+
         async function loadCompletedReviews() {
             try {
                 const response = await fetch('/api/completed-reviews');
@@ -942,7 +1013,7 @@ class ReviewWebServer:
                 if not approval:
                     raise HTTPException(status_code=404, detail="Approval not found")
                 
-                if approval['status'] != 'pending':
+                if approval['status'] != PENDING_APPROVAL_STATUS_PENDING:
                     raise HTTPException(status_code=400, detail="Approval is not pending")
                 
                 # Create PR info and review result objects
@@ -989,7 +1060,7 @@ class ReviewWebServer:
                 if success:
                     # Update approval status
                     await self.database.update_pending_approval_status(
-                        approval_id, 'approved', user_comment
+                        approval_id, PENDING_APPROVAL_STATUS_APPROVED, user_comment
                     )
                     
                     # Record the review in main reviews table
@@ -1018,7 +1089,7 @@ class ReviewWebServer:
                 
                 # Update approval status
                 success = await self.database.update_pending_approval_status(
-                    approval_id, 'rejected', reason
+                    approval_id, PENDING_APPROVAL_STATUS_REJECTED, reason
                 )
                 
                 if success:
@@ -1038,6 +1109,18 @@ class ReviewWebServer:
                 return JSONResponse(content=approvals)
             except Exception as e:
                 logger.error(f"Failed to get approved approvals: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/outdated-approvals")
+        async def get_outdated_approvals():
+            """Get approvals that were auto-marked as outdated."""
+            try:
+                approvals = await self.database.get_pending_approvals(
+                    PENDING_APPROVAL_STATUS_OUTDATED
+                )
+                return JSONResponse(content=approvals)
+            except Exception as e:
+                logger.error(f"Failed to get outdated approvals: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/api/rejected-approvals")

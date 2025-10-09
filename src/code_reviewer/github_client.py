@@ -154,6 +154,37 @@ class GitHubClient:
             return None
             
             
+    async def get_pr_status(self, repository: Any, pr_number: int) -> Optional[dict]:
+        """Fetch current state/merge information for a PR."""
+        try:
+            if isinstance(repository, (list, tuple)):
+                owner, repo_name = repository
+            elif isinstance(repository, str) and '/' in repository:
+                owner, repo_name = repository.split('/', 1)
+            else:
+                raise ValueError(f"Invalid repository identifier: {repository}")
+
+            pr_data = await self._fetch_pr_details(owner, repo_name, pr_number)
+            if not pr_data:
+                return None
+
+            return {
+                'state': pr_data.get('state'),
+                'merged': pr_data.get('merged'),
+                'head_sha': pr_data.get('head', {}).get('sha'),
+                'base_sha': pr_data.get('base', {}).get('sha'),
+                'updated_at': pr_data.get('updated_at'),
+                'closed_at': pr_data.get('closed_at'),
+                'merged_at': pr_data.get('merged_at'),
+            }
+
+        except Exception as e:
+            logger.error(
+                f"Error fetching PR status for #{pr_number} in {repository}: {e}"
+            )
+            return None
+
+
     async def approve_pr(self, repository: List[str], pr_number: int, comment: Optional[str] = None, 
                        inline_comments: Optional[List[Dict[str, Any]]] = None):
         """Approve a PR with optional comment and inline comments."""
