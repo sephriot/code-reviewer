@@ -127,9 +127,9 @@ class CodeReviewer:
 @click.option('--timeout-sound-file', envvar='TIMEOUT_SOUND_FILE', type=click.Path(exists=True),
               help='Custom sound file for review timeout notifications (env: TIMEOUT_SOUND_FILE)')
 @click.option('--outdated-sound-enabled/--no-outdated-sound', envvar='OUTDATED_SOUND_ENABLED', default=None,
-              help='Enable/disable sound notifications when pending approvals become outdated (env: OUTDATED_SOUND_ENABLED)')
+              help='Enable/disable sound notifications when pending approvals become merged or closed (env: MERGED_OR_CLOSED_SOUND_ENABLED or OUTDATED_SOUND_ENABLED)')
 @click.option('--outdated-sound-file', envvar='OUTDATED_SOUND_FILE', type=click.Path(exists=True),
-              help='Custom sound file for outdated pending approval notifications (env: OUTDATED_SOUND_FILE)')
+              help='Custom sound file for merged/closed pending approval notifications (env: MERGED_OR_CLOSED_SOUND_FILE or OUTDATED_SOUND_FILE)')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Log what actions would be taken without actually performing them')
 @click.option('--web-enabled/--no-web', envvar='WEB_ENABLED', default=False,
@@ -164,8 +164,8 @@ def main(config: Optional[str], prompt: Optional[str], review_model: str, github
             approval_sound_file=approval_sound_file,
             timeout_sound_enabled=timeout_sound_enabled,
             timeout_sound_file=timeout_sound_file,
-            outdated_sound_enabled=outdated_sound_enabled,
-            outdated_sound_file=outdated_sound_file,
+            merged_or_closed_sound_enabled=outdated_sound_enabled,
+            merged_or_closed_sound_file=outdated_sound_file,
             dry_run=dry_run,
             web_enabled=web_enabled,
             web_host=web_host,

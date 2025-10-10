@@ -12,8 +12,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from code_reviewer.database import (  # noqa: E402
     ReviewDatabase,
-    PENDING_APPROVAL_STATUS_OUTDATED,
+    PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED,
     PENDING_APPROVAL_STATUS_PENDING,
+    PENDING_APPROVAL_STATUS_EXPIRED,
 )
 from code_reviewer.models import PRInfo, ReviewResult, ReviewAction  # noqa: E402
 
@@ -43,8 +44,8 @@ def _create_review_result() -> ReviewResult:
     )
 
 
-def test_pending_approval_marked_outdated(tmp_path: Path) -> None:
-    """Pending approvals should move to OUTDATED when status is updated."""
+def test_pending_approval_marked_merged_or_closed(tmp_path: Path) -> None:
+    """Pending approvals should move to MERGED_OR_CLOSED when status is updated."""
     db_path = tmp_path / "test_reviews.sqlite"
     database = ReviewDatabase(db_path)
 
@@ -69,19 +70,19 @@ def test_pending_approval_marked_outdated(tmp_path: Path) -> None:
 
         asyncio.run(
             database.update_pending_approval_status(
-                approval_id, PENDING_APPROVAL_STATUS_OUTDATED
+                approval_id, PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED
             )
         )
 
-        # No pending approvals should remain once marked outdated
+        # No pending approvals should remain once marked merged/closed
         pending_after = asyncio.run(database.get_pending_approval_refs())
         assert pending_after == []
 
         outdated = asyncio.run(
-            database.get_pending_approvals(PENDING_APPROVAL_STATUS_OUTDATED)
+            database.get_pending_approvals(PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED)
         )
         assert len(outdated) == 1
-        assert outdated[0]["status"] == PENDING_APPROVAL_STATUS_OUTDATED
+        assert outdated[0]["status"] == PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED
         assert outdated[0]["id"] == approval_id
 
         # Ensure status change did not mutate original comment fields
@@ -108,9 +109,9 @@ def test_pending_refs_only_return_live_entries(tmp_path: Path) -> None:
 
         # Manually mark to ensure mix of statuses
         asyncio.run(
-            database.update_pending_approval_status(
-                approval_pending, PENDING_APPROVAL_STATUS_OUTDATED
-            )
+                database.update_pending_approval_status(
+                    approval_pending, PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED
+                )
         )
 
         # Insert a fresh pending approval (different head SHA)
@@ -125,6 +126,38 @@ def test_pending_refs_only_return_live_entries(tmp_path: Path) -> None:
         assert len(refs) == 1
         assert refs[0]["status"] == PENDING_APPROVAL_STATUS_PENDING
         assert refs[0]["head_sha"].endswith("03")
+
+    finally:
+        database.close()
+
+
+def test_expire_pending_approvals_for_new_commit(tmp_path: Path) -> None:
+    """Pending approvals should transition to EXPIRED when a new commit arrives."""
+    db_path = tmp_path / "test_reviews.sqlite"
+    database = ReviewDatabase(db_path)
+
+    try:
+        # Original pending approval for commit deadbeef01
+        original_pr = _create_sample_pr_info("01")
+        approval_id = asyncio.run(
+            database.create_pending_approval(
+                original_pr,
+                _create_review_result(),
+            )
+        )
+
+        # Simulate new commit
+        new_pr = _create_sample_pr_info("02")
+        expired_ids = asyncio.run(database.expire_pending_approvals_for_pr(new_pr))
+
+        assert approval_id in expired_ids
+
+        expired_entries = asyncio.run(
+            database.get_pending_approvals(PENDING_APPROVAL_STATUS_EXPIRED)
+        )
+        assert len(expired_entries) == 1
+        assert expired_entries[0]["id"] == approval_id
+        assert expired_entries[0]["status"] == PENDING_APPROVAL_STATUS_EXPIRED
 
     finally:
         database.close()

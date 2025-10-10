@@ -11,7 +11,7 @@ from .config import Config
 from .sound_notifier import SoundNotifier
 from .database import (
     ReviewDatabase,
-    PENDING_APPROVAL_STATUS_OUTDATED,
+    PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED,
 )
 from .models import PRInfo, ReviewResult, ReviewAction
 
@@ -32,8 +32,8 @@ class GitHubMonitor:
             approval_sound_file=config.approval_sound_file,
             timeout_sound_enabled=config.timeout_sound_enabled,
             timeout_sound_file=config.timeout_sound_file,
-            outdated_sound_enabled=config.outdated_sound_enabled,
-            outdated_sound_file=config.outdated_sound_file,
+            merged_or_closed_sound_enabled=config.merged_or_closed_sound_enabled,
+            merged_or_closed_sound_file=config.merged_or_closed_sound_file,
         )
         self.db = ReviewDatabase(config.database_path)
         
@@ -54,9 +54,9 @@ class GitHubMonitor:
         logger.debug("Playing timeout notification sound")
         await self.sound_notifier.play_timeout_sound()
 
-        # Play outdated sound test
-        logger.debug("Playing outdated notification sound")
-        await self.sound_notifier.play_outdated_sound()
+        # Play merged/closed sound test
+        logger.debug("Playing merged/closed notification sound")
+        await self.sound_notifier.play_merged_or_closed_sound()
         
         if self.config.dry_run:
             logger.info("DRY RUN MODE: No actual GitHub actions will be performed, only logged")
@@ -118,9 +118,9 @@ class GitHubMonitor:
         logger.debug("Checking for new PRs to review...")
         try:
             try:
-                await self._expire_outdated_pending_approvals()
+                await self._expire_merged_or_closed_pending_approvals()
             except Exception as cleanup_error:
-                logger.error(f"Error while expiring outdated approvals: {cleanup_error}")
+                logger.error(f"Error while expiring merged/closed approvals: {cleanup_error}")
 
             prs = await self.github_client.get_review_requests(
                 self.config.github_username, 
@@ -160,11 +160,29 @@ class GitHubMonitor:
         repo_name = pr_info.repository_name
         logger.info(f"Processing PR #{pr_info.number} in {repo_name}")
         try:
+            previous_pending_context = None
+            previous_pending = await self.db.get_latest_pending_approval_for_pr(
+                pr_info.repository_name,
+                pr_info.number,
+            )
+
+            if previous_pending and previous_pending.get('head_sha') != pr_info.head_sha:
+                previous_pending_context = previous_pending
+                expired_ids = await self.db.expire_pending_approvals_for_pr(pr_info)
+                if expired_ids:
+                    logger.info(
+                        "Expired pending approval IDs %s for PR #%s before reviewing new commit %s",
+                        expired_ids,
+                        pr_info.number,
+                        pr_info.head_sha[:8] if pr_info.head_sha else 'unknown',
+                    )
+
             # Run model-driven code review - the CLI will fetch all PR details
             logger.debug(f"Running {self.config.review_model.value} code review for PR #{pr_info.number}")
             review_result = await self.llm_integration.review_pr(
                 pr_info,
                 timeout=self.config.review_timeout if self.config.review_timeout else None,
+                previous_pending=previous_pending_context,
             )
             
             # Log the review output
@@ -213,14 +231,14 @@ class GitHubMonitor:
         except Exception as e:
             logger.error(f"Error processing PR #{pr_info.number}: {e}")
 
-    async def _expire_outdated_pending_approvals(self) -> None:
-        """Mark pending approvals as outdated if their PRs are merged or closed."""
+    async def _expire_merged_or_closed_pending_approvals(self) -> None:
+        """Mark pending approvals as merged_or_closed if their PRs are merged or closed."""
         pending_refs = await self.db.get_pending_approval_refs()
 
         if not pending_refs:
             return
 
-        logger.debug(f"Checking {len(pending_refs)} pending approval(s) for outdated status")
+        logger.debug(f"Checking {len(pending_refs)} pending approval(s) for merged/closed status")
 
         status_tasks = [
             self.github_client.get_pr_status(ref['repository'], ref['pr_number'])
@@ -248,17 +266,17 @@ class GitHubMonitor:
             if state != 'open' or merged:
                 reason = "merged" if merged else state or "unknown"
                 updated = await self.db.update_pending_approval_status(
-                    ref['id'], PENDING_APPROVAL_STATUS_OUTDATED
+                    ref['id'], PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED
                 )
                 if updated:
                     logger.info(
                         f"Marked pending approval ID {ref['id']} for PR #{ref['pr_number']} in "
-                        f"{ref['repository']} as OUTDATED ({reason})"
+                        f"{ref['repository']} as MERGED_OR_CLOSED ({reason})"
                     )
-                    await self.sound_notifier.play_outdated_sound()
+                    await self.sound_notifier.play_merged_or_closed_sound()
                 else:
                     logger.debug(
-                        f"Pending approval ID {ref['id']} already processed when marking as OUTDATED"
+                        f"Pending approval ID {ref['id']} already processed when marking as MERGED_OR_CLOSED"
                     )
             
     async def _act_on_review(self, pr_info: PRInfo, review_result: ReviewResult):

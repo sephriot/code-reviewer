@@ -141,11 +141,16 @@ GET /api/approved-approvals
 # Get rejected approval history  
 GET /api/rejected-approvals
 
-# Get outdated approval history  
-GET /api/outdated-approvals
+# Get merged-or-closed approval history  
+GET /api/merged-or-closed-approvals  
+Returns pending approvals that were automatically cleared after the PR was merged or closed on GitHub.
+
+# Get expired approval history  
+GET /api/expired-approvals  
+Returns pending approvals that were superseded when a new commit triggered a fresh automated review.
 ```
 
-**Note**: The pending approvals system now includes commit SHA tracking, allowing the system to intelligently handle PR updates by overwriting pending approvals while preserving human decisions (approved/rejected reviews).
+**Note**: Pending approvals are now commit-aware—when a new commit arrives, older pending entries are marked as `expired` instead of being overwritten, preserving the context of earlier recommendations alongside merged/closed records and human decisions.
 
 ## Database Schema
 
@@ -168,7 +173,7 @@ CREATE TABLE pending_approvals (
     head_sha TEXT NOT NULL, -- Commit SHA for tracking
     base_sha TEXT NOT NULL, -- Base commit SHA
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected', 'outdated'
+    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected', 'merged_or_closed', 'expired'
     UNIQUE(repository, pr_number, head_sha) -- Updated unique constraint
 );
 ```

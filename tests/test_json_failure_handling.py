@@ -33,7 +33,7 @@ async def test_json_failure_handling():
             self.model = ReviewModel.CLAUDE
             self.prompt_file = Path(__file__)
         
-        async def _run_model_cli(self, pr_info: PRInfo) -> str:
+        async def _run_model_cli(self, pr_info: PRInfo, previous_pending=None) -> str:
             # Return non-JSON output to trigger parsing failure
             return "This is not JSON output from the CLI. It's just plain text."
     
@@ -70,7 +70,7 @@ async def test_json_failure_handling():
             self.model = ReviewModel.CLAUDE
             self.prompt_file = Path(__file__)
         
-        async def _run_model_cli(self, pr_info: PRInfo) -> str:
+        async def _run_model_cli(self, pr_info: PRInfo, previous_pending=None) -> str:
             # Return malformed JSON
             return '{"action": "approve_without_comment", "malformed": true, missing_quote: "oops"}'
     
@@ -96,7 +96,7 @@ async def test_json_failure_handling():
             self.model = ReviewModel.CLAUDE
             self.prompt_file = Path(__file__)
         
-        async def _run_model_cli(self, pr_info: PRInfo) -> str:
+        async def _run_model_cli(self, pr_info: PRInfo, previous_pending=None) -> str:
             # Return valid JSON
             return '{"action": "approve_without_comment"}'
     

@@ -18,13 +18,15 @@ logger = logging.getLogger(__name__)
 PENDING_APPROVAL_STATUS_PENDING = 'pending'
 PENDING_APPROVAL_STATUS_APPROVED = 'approved'
 PENDING_APPROVAL_STATUS_REJECTED = 'rejected'
-PENDING_APPROVAL_STATUS_OUTDATED = 'outdated'
+PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED = 'merged_or_closed'
+PENDING_APPROVAL_STATUS_EXPIRED = 'expired'
 
 VALID_PENDING_APPROVAL_STATUSES = {
     PENDING_APPROVAL_STATUS_PENDING,
     PENDING_APPROVAL_STATUS_APPROVED,
     PENDING_APPROVAL_STATUS_REJECTED,
-    PENDING_APPROVAL_STATUS_OUTDATED,
+    PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED,
+    PENDING_APPROVAL_STATUS_EXPIRED,
 }
 
 
@@ -101,7 +103,7 @@ class ReviewDatabase:
                 head_sha TEXT NOT NULL,
                 base_sha TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected', 'outdated'
+                status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected', 'merged_or_closed', 'expired'
                 UNIQUE(repository, pr_number, head_sha)
             )
         """)
@@ -148,7 +150,16 @@ class ReviewDatabase:
             cursor.execute("ALTER TABLE pending_approvals ADD COLUMN base_sha TEXT")
         except sqlite3.OperationalError:
             pass  # Column already exists
-        
+
+        # Rename legacy statuses for clarity
+        try:
+            cursor.execute(
+                "UPDATE pending_approvals SET status = ? WHERE status = 'outdated'",
+                (PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED,)
+            )
+        except sqlite3.OperationalError:
+            pass
+
         conn.commit()
         logger.info(f"Database initialized at: {self.db_path}")
         
@@ -380,21 +391,15 @@ class ReviewDatabase:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # Check if a pending approval already exists for this PR (any commit)
-        cursor.execute("""
-            SELECT * FROM pending_approvals 
-            WHERE repository = ? AND pr_number = ? AND status = ?
-            ORDER BY created_at DESC
-            LIMIT 1
-        """, (pr_info.repository_name, pr_info.number, PENDING_APPROVAL_STATUS_PENDING))
-        
-        existing_pending = cursor.fetchone()
-        
-        if existing_pending:
-            existing_pending_dict = dict(existing_pending)
-            logger.info(f"Found existing pending approval for PR #{pr_info.number} (ID: {existing_pending_dict['id']}) - will overwrite with new commit {pr_info.head_sha[:8]}")
-            return self._update_pending_approval_sync(existing_pending_dict['id'], pr_info, review_result)
-        
+        # Ensure any prior pending approvals for older commits are marked as expired
+        expired_ids = self._expire_pending_approvals_for_pr_sync(pr_info)
+        if expired_ids:
+            logger.debug(
+                "Expired prior pending approval IDs %s before creating new entry for PR #%s",
+                expired_ids,
+                pr_info.number,
+            )
+
         # Check if this exact commit already has a pending approval (duplicate prevention)
         existing_commit = self._get_pending_approval_for_commit_sync(
             pr_info.repository_name, pr_info.number, pr_info.head_sha
@@ -446,55 +451,6 @@ class ReviewDatabase:
             logger.error(f"Error creating pending approval: {e}")
             raise
             
-    def _update_pending_approval_sync(self, approval_id: int, pr_info: PRInfo, review_result: ReviewResult) -> int:
-        """Update an existing pending approval with new commit information."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        # Serialize inline comments to JSON
-        inline_comments_json = json.dumps([
-            {
-                'file': comment.file,
-                'line': comment.line,
-                'message': comment.message
-            }
-            for comment in review_result.comments
-        ])
-
-        try:
-            cursor.execute("""
-                UPDATE pending_approvals 
-                SET pr_title = ?, pr_author = ?, pr_url = ?, review_action = ?,
-                    review_comment = ?, review_summary = ?, review_reason = ?, 
-                    inline_comments = ?, inline_comments_count = ?, 
-                    head_sha = ?, base_sha = ?,
-                    -- Reset edited fields since this is new content
-                    edited_review_comment = NULL, edited_review_summary = NULL, 
-                    edited_inline_comments = NULL,
-                    created_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (
-                pr_info.title,
-                pr_info.author,
-                pr_info.url,
-                review_result.action.value,
-                review_result.comment or '',
-                review_result.summary or '',
-                review_result.reason or '',
-                inline_comments_json,
-                review_result.inline_comments_count,
-                pr_info.head_sha,
-                pr_info.base_sha,
-                approval_id
-            ))
-
-            logger.info(f"Updated pending approval ID {approval_id} with new commit {pr_info.head_sha[:8]} for PR #{pr_info.number}")
-            return approval_id
-            
-        except sqlite3.Error as e:
-            logger.error(f"Error updating pending approval: {e}")
-            raise
-
     async def get_pending_approvals(self, status: str = PENDING_APPROVAL_STATUS_PENDING) -> List[Dict[str, Any]]:
         """Get pending approvals by status."""
         return await asyncio.get_event_loop().run_in_executor(
@@ -540,6 +496,60 @@ class ReviewDatabase:
 
         return approvals
 
+    async def expire_pending_approvals_for_pr(self, pr_info: PRInfo) -> List[int]:
+        """Mark existing pending approvals for a PR as expired when a new commit arrives."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._expire_pending_approvals_for_pr_sync, pr_info
+        )
+
+    def _expire_pending_approvals_for_pr_sync(self, pr_info: PRInfo) -> List[int]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT id, head_sha FROM pending_approvals
+            WHERE repository = ? AND pr_number = ? AND status = ?
+            """,
+            (pr_info.repository_name, pr_info.number, PENDING_APPROVAL_STATUS_PENDING),
+        )
+
+        rows = cursor.fetchall()
+        if not rows:
+            return []
+
+        current_head = pr_info.head_sha
+        ids_to_expire = [row['id'] for row in rows if row['head_sha'] != current_head]
+        duplicate_ids = [row['id'] for row in rows if row['head_sha'] == current_head]
+
+        if duplicate_ids:
+            logger.debug(
+                "Pending approvals already exist for PR #%s in %s at head %s; keeping IDs %s",
+                pr_info.number,
+                pr_info.repository_name,
+                current_head[:8] if current_head else 'unknown',
+                duplicate_ids,
+            )
+
+        if not ids_to_expire:
+            return []
+
+        placeholders = ','.join('?' for _ in ids_to_expire)
+        cursor.execute(
+            f"UPDATE pending_approvals SET status = ? WHERE id IN ({placeholders})",
+            [PENDING_APPROVAL_STATUS_EXPIRED, *ids_to_expire],
+        )
+
+        logger.info(
+            "Expired pending approvals %s for PR #%s in %s due to new head %s",
+            ids_to_expire,
+            pr_info.number,
+            pr_info.repository_name,
+            current_head[:8] if current_head else 'unknown',
+        )
+
+        return ids_to_expire
+
     async def get_pending_approval_refs(self) -> List[Dict[str, Any]]:
         """Get lightweight metadata for pending approvals."""
         return await asyncio.get_event_loop().run_in_executor(
@@ -559,6 +569,49 @@ class ReviewDatabase:
         """, (PENDING_APPROVAL_STATUS_PENDING,))
 
         return [dict(row) for row in cursor.fetchall()]
+
+    async def get_latest_pending_approval_for_pr(self, repository: str, pr_number: int) -> Optional[Dict[str, Any]]:
+        """Fetch the most recent pending approval for a PR."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_latest_pending_approval_for_pr_sync, repository, pr_number
+        )
+
+    def _get_latest_pending_approval_for_pr_sync(self, repository: str, pr_number: int) -> Optional[Dict[str, Any]]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT * FROM pending_approvals
+            WHERE repository = ? AND pr_number = ? AND status = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (repository, pr_number, PENDING_APPROVAL_STATUS_PENDING),
+        )
+
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        approval = dict(row)
+        inline_json = approval.get('edited_inline_comments') or approval.get('inline_comments')
+        if inline_json:
+            approval['inline_comments'] = json.loads(inline_json)
+        else:
+            approval['inline_comments'] = []
+
+        if approval.get('edited_review_comment') is not None:
+            approval['display_review_comment'] = approval['edited_review_comment']
+        else:
+            approval['display_review_comment'] = approval.get('review_comment')
+
+        if approval.get('edited_review_summary') is not None:
+            approval['display_review_summary'] = approval['edited_review_summary']
+        else:
+            approval['display_review_summary'] = approval.get('review_summary')
+
+        return approval
 
     async def get_human_review_prs(self) -> List[ReviewRecord]:
         """Get PRs that were marked as requiring human review."""

@@ -8,7 +8,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import List, Optional, TextIO
+from typing import Any, Dict, List, Optional, TextIO
 
 from .models import PRInfo, ReviewResult, ReviewAction, ReviewModel
 
@@ -46,10 +46,16 @@ class LLMIntegration:
         self.prompt_file = prompt_file
         self.model = model
 
-    async def review_pr(self, pr_info: PRInfo, *, timeout: Optional[int] = None) -> ReviewResult:
+    async def review_pr(
+        self,
+        pr_info: PRInfo,
+        *,
+        timeout: Optional[int] = None,
+        previous_pending: Optional[Dict[str, Any]] = None,
+    ) -> ReviewResult:
         """Review a PR using the selected language model CLI."""
         try:
-            run_coro = self._run_model_cli(pr_info)
+            run_coro = self._run_model_cli(pr_info, previous_pending)
             if timeout and timeout > 0:
                 result = await asyncio.wait_for(run_coro, timeout=timeout)
             else:
@@ -66,7 +72,7 @@ class LLMIntegration:
             logger.error(f"Error during {self.model.value} review: {exc}")
             raise
 
-    async def _run_model_cli(self, pr_info: PRInfo) -> str:
+    async def _run_model_cli(self, pr_info: PRInfo, previous_pending: Optional[Dict[str, Any]]) -> str:
         """Execute the configured CLI and return raw output."""
         prompt_template = self.prompt_file.read_text(encoding="utf-8")
 
@@ -74,12 +80,21 @@ class LLMIntegration:
         repo_name = pr_info.repository_name
         pr_number = pr_info.number
 
+        previous_context = self._format_previous_pending(previous_pending) if previous_pending else ""
+
+        context_block = (
+            f"\n\nPrevious pending review details for earlier commit {previous_pending.get('head_sha', '')[:8]}:\n{previous_context}\n"
+            if previous_context
+            else ""
+        )
+
         full_prompt = (
             f"Please review this GitHub pull request: {pr_url}\n\n"
             f"Repository: {repo_name}\n"
             f"PR Number: #{pr_number}\n\n"
-            f"{prompt_template}\n\n"
-            f"Please analyze the pull request at {pr_url} and provide your review following the instructions above."
+            f"{prompt_template}\n"
+            f"{context_block}"
+            f"\nPlease analyze the pull request at {pr_url} and provide your review following the instructions above."
         )
 
         codex_output_path = None
@@ -185,6 +200,50 @@ class LLMIntegration:
         if output_path.exists():
             output_path.unlink()
         return output_path
+
+    def _format_previous_pending(self, previous_pending: Dict[str, Any]) -> str:
+        """Convert a pending approval record into prompt-friendly text."""
+        if not previous_pending:
+            return ""
+
+        lines: List[str] = []
+
+        head_sha = previous_pending.get('head_sha') or ''
+        head_display = head_sha[:8] if head_sha else 'unknown'
+        created_at = previous_pending.get('created_at')
+        header = f"- Commit: {head_display}"
+        if created_at:
+            header += f" (recorded at {created_at})"
+        lines.append(header)
+
+        action = previous_pending.get('review_action')
+        if action:
+            lines.append(f"- Suggested action: {action}")
+
+        comment = (previous_pending.get('display_review_comment') or '').strip()
+        if comment:
+            lines.append("Overall comment:\n" + comment)
+
+        summary = (previous_pending.get('display_review_summary') or '').strip()
+        if summary:
+            lines.append("Summary of requested changes:\n" + summary)
+
+        reason = (previous_pending.get('review_reason') or '').strip()
+        if reason:
+            lines.append("Reason for human attention:\n" + reason)
+
+        inline_comments = previous_pending.get('inline_comments') or []
+        if inline_comments:
+            formatted = []
+            for idx, inline in enumerate(inline_comments, 1):
+                file_path = inline.get('file', 'unknown file')
+                line_no = inline.get('line')
+                location = f"{file_path}:{line_no}" if line_no is not None else file_path
+                message = (inline.get('message') or '').strip()
+                formatted.append(f"{idx}. {location} — {message}")
+            lines.append("Inline feedback items:\n" + "\n".join(formatted))
+
+        return "\n".join(lines).strip()
 
     async def _stream_subprocess_output(
         self,

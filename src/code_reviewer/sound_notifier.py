@@ -22,7 +22,10 @@ class SoundNotifier:
         approval_sound_file: Optional[Path] = None,
         timeout_sound_enabled: bool = True,
         timeout_sound_file: Optional[Path] = None,
-        outdated_sound_enabled: bool = True,
+        merged_or_closed_sound_enabled: bool = True,
+        merged_or_closed_sound_file: Optional[Path] = None,
+        *,
+        outdated_sound_enabled: Optional[bool] = None,
         outdated_sound_file: Optional[Path] = None,
     ):
         self.enabled = enabled
@@ -31,8 +34,13 @@ class SoundNotifier:
         self.approval_sound_file = approval_sound_file
         self.timeout_sound_enabled = timeout_sound_enabled
         self.timeout_sound_file = timeout_sound_file
-        self.outdated_sound_enabled = outdated_sound_enabled
-        self.outdated_sound_file = outdated_sound_file
+        if outdated_sound_enabled is not None:
+            merged_or_closed_sound_enabled = outdated_sound_enabled
+        if outdated_sound_file is not None:
+            merged_or_closed_sound_file = Path(outdated_sound_file)
+
+        self.merged_or_closed_sound_enabled = merged_or_closed_sound_enabled
+        self.merged_or_closed_sound_file = merged_or_closed_sound_file
         self.system = platform.system().lower()
         
     async def play_notification(self):
@@ -84,22 +92,27 @@ class SoundNotifier:
             logger.warning(f"Failed to play timeout sound: {e}")
             await self._play_system_sound()
 
-    async def play_outdated_sound(self):
-        """Play a sound when pending approvals become outdated."""
-        if not self.outdated_sound_enabled:
-            logger.debug("Outdated sound notifications are disabled")
+    async def play_merged_or_closed_sound(self):
+        """Play a sound when pending approvals become merged_or_closed."""
+        if not self.merged_or_closed_sound_enabled:
+            logger.debug("Merged/closed sound notifications are disabled")
             return
 
         try:
-            if self.outdated_sound_file and self.outdated_sound_file.exists():
-                await self._play_sound_file(self.outdated_sound_file)
+            if self.merged_or_closed_sound_file and self.merged_or_closed_sound_file.exists():
+                await self._play_sound_file(self.merged_or_closed_sound_file)
             elif self.enabled and self.sound_file and self.sound_file.exists():
                 await self._play_custom_sound()
             else:
                 await self._play_system_sound()
         except Exception as e:
-            logger.warning(f"Failed to play outdated sound: {e}")
+            logger.warning(f"Failed to play merged/closed sound: {e}")
             await self._play_system_sound()
+
+    async def play_outdated_sound(self):
+        """Backward compatible alias for play_merged_or_closed_sound."""
+        logger.debug("play_outdated_sound is deprecated; forwarding to play_merged_or_closed_sound")
+        await self.play_merged_or_closed_sound()
 
     async def _play_custom_sound(self):
         """Play a custom sound file."""

@@ -61,7 +61,7 @@ All Python execution should use the project virtual environment (`./venv/bin/pyt
   - Thread-safe connections via thread-local storage, auto-migrating schema for edited pending approvals and commit-tracking columns.
   - `should_review_pr` prevents duplicate reviews by checking stored `pr_reviews` and `pending_approvals` against the current head SHA.
   - Provides CRUD helpers for pending approval editing, status transitions, and history queries used by the web UI.
-  - Exposes lightweight selectors for pending approval metadata and enforces status transitions (`pending`, `approved`, `rejected`, `outdated`).
+  - Exposes lightweight selectors for pending approval metadata and enforces status transitions (`pending`, `approved`, `rejected`, `merged_or_closed`, `expired`).
   - Exposes analytics such as action counts and per-repository history used in dashboards.
 
 ### Human Review Agent – `ReviewWebServer`
@@ -72,7 +72,7 @@ All Python execution should use the project virtual environment (`./venv/bin/pyt
   - Human review tab capturing `REQUIRES_HUMAN_REVIEW` results with direct GitHub links.
   - Approved/Rejected history tabs showing side-by-side comparisons of original vs edited content.
   - Outdated tab surfaces pending approvals that were auto-expired after PR merge/closure.
-  - REST endpoints (`/api/pending-approvals`, `/api/outdated-approvals`, `/api/approvals/{id}/approve`, etc.) enabling automation or alternate clients.
+  - REST endpoints (`/api/pending-approvals`, `/api/merged-or-closed-approvals`, `/api/expired-approvals`, `/api/approvals/{id}/approve`, etc.) enabling automation or alternate clients.
 
 ### Notification Agent – `SoundNotifier`
 - **Location**: `src/code_reviewer/sound_notifier.py`.
