@@ -47,6 +47,19 @@ class ReviewWebServer:
         self.app.mount("/static", StaticFiles(directory=str(self.static_dir)), name="static")
         
         self._setup_routes()
+
+    @staticmethod
+    def _append_text_block(original: Optional[str], addition: str) -> str:
+        """Append a formatted block of text with spacing."""
+        addition_text = (addition or '').strip()
+        if not addition_text:
+            return (original or '').strip()
+
+        original_text = (original or '').strip()
+        if not original_text:
+            return addition_text
+
+        return f"{original_text}\n\n{addition_text}"
     
     def _create_default_templates(self):
         """Create default HTML templates."""
@@ -1060,7 +1073,9 @@ class ReviewWebServer:
                 if success:
                     # Update approval status
                     await self.database.update_pending_approval_status(
-                        approval_id, PENDING_APPROVAL_STATUS_APPROVED, user_comment
+                        approval_id,
+                        PENDING_APPROVAL_STATUS_APPROVED,
+                        review_result.comment
                     )
                     
                     # Record the review in main reviews table
@@ -1284,56 +1299,61 @@ class ReviewWebServer:
     async def _post_github_review(self, pr_info: PRInfo, review_result: ReviewResult) -> bool:
         """Post a review to GitHub."""
         try:
+            inline_comments_payload = None
+            dropped_comments: List[InlineComment] = []
+
+            if review_result.comments:
+                payload, dropped = await self.github_client.prepare_inline_comments(
+                    pr_info.repository,
+                    pr_info.number,
+                    review_result.comments,
+                )
+                inline_comments_payload = payload or None
+                review_result.comments = [
+                    InlineComment(file=item['path'], line=item['line'], message=item['body'])
+                    for item in payload
+                ]
+                dropped_comments = dropped
+                logger.info(
+                    "Prepared %s inline comments, dropped %s for %s/%s#%s",
+                    len(payload),
+                    len(dropped_comments),
+                    pr_info.repository[0],
+                    pr_info.repository[1],
+                    pr_info.number,
+                )
+            else:
+                review_result.comments = []
+
+            if dropped_comments:
+                fallback_text = self.github_client.format_dropped_inline_comments(dropped_comments)
+                if fallback_text:
+                    if review_result.action == ReviewAction.REQUEST_CHANGES:
+                        review_result.summary = self._append_text_block(review_result.summary, fallback_text)
+                    else:
+                        review_result.comment = self._append_text_block(review_result.comment, fallback_text)
+
             if review_result.action == ReviewAction.APPROVE_WITH_COMMENT:
-                # Convert inline comments to GitHub format
-                github_comments = [
-                    {
-                        'path': comment.file,
-                        'line': comment.line,
-                        'body': comment.message
-                    }
-                    for comment in review_result.comments
-                ] if review_result.comments else None
-                
                 success = await self.github_client.approve_pr(
                     pr_info.repository,
                     pr_info.number,
                     review_result.comment,
-                    github_comments
+                    inline_comments_payload,
                 )
             elif review_result.action == ReviewAction.APPROVE_WITHOUT_COMMENT:
-                # Convert inline comments to GitHub format even for approve without comment
-                github_comments = [
-                    {
-                        'path': comment.file,
-                        'line': comment.line,
-                        'body': comment.message
-                    }
-                    for comment in review_result.comments
-                ] if review_result.comments else None
-                
+                body = review_result.comment if review_result.comment else None
                 success = await self.github_client.approve_pr(
                     pr_info.repository,
                     pr_info.number,
-                    None,
-                    github_comments
+                    body,
+                    inline_comments_payload,
                 )
             elif review_result.action == ReviewAction.REQUEST_CHANGES:
-                # Convert inline comments to GitHub format
-                github_comments = [
-                    {
-                        'path': comment.file,
-                        'line': comment.line,
-                        'body': comment.message
-                    }
-                    for comment in review_result.comments
-                ]
-                
                 success = await self.github_client.request_changes(
                     pr_info.repository,
                     pr_info.number,
-                    github_comments,
-                    review_result.summary or "Changes requested"
+                    inline_comments_payload or [],
+                    review_result.summary or "Changes requested",
                 )
             else:
                 logger.warning(f"Unsupported review action for GitHub posting: {review_result.action}")

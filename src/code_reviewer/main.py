@@ -126,6 +126,10 @@ class CodeReviewer:
               help='Enable/disable sound notifications for review timeouts (env: TIMEOUT_SOUND_ENABLED)')
 @click.option('--timeout-sound-file', envvar='TIMEOUT_SOUND_FILE', type=click.Path(exists=True),
               help='Custom sound file for review timeout notifications (env: TIMEOUT_SOUND_FILE)')
+@click.option('--outdated-sound-enabled/--no-outdated-sound', envvar='OUTDATED_SOUND_ENABLED', default=None,
+              help='Enable/disable sound notifications when pending approvals become outdated (env: OUTDATED_SOUND_ENABLED)')
+@click.option('--outdated-sound-file', envvar='OUTDATED_SOUND_FILE', type=click.Path(exists=True),
+              help='Custom sound file for outdated pending approval notifications (env: OUTDATED_SOUND_FILE)')
 @click.option('--dry-run', is_flag=True, default=False,
               help='Log what actions would be taken without actually performing them')
 @click.option('--web-enabled/--no-web', envvar='WEB_ENABLED', default=False,
@@ -138,7 +142,8 @@ def main(config: Optional[str], prompt: Optional[str], review_model: str, github
          github_username: Optional[str], poll_interval: int, review_timeout: Optional[int], sound_enabled: bool,
          sound_file: Optional[str], approval_sound_enabled: bool,
          approval_sound_file: Optional[str], timeout_sound_enabled: Optional[bool],
-         timeout_sound_file: Optional[str], dry_run: bool, web_enabled: bool,
+         timeout_sound_file: Optional[str], outdated_sound_enabled: Optional[bool],
+         outdated_sound_file: Optional[str], dry_run: bool, web_enabled: bool,
          web_host: str, web_port: int):
     """Automated GitHub PR code review using Claude."""
     
@@ -159,6 +164,8 @@ def main(config: Optional[str], prompt: Optional[str], review_model: str, github
             approval_sound_file=approval_sound_file,
             timeout_sound_enabled=timeout_sound_enabled,
             timeout_sound_file=timeout_sound_file,
+            outdated_sound_enabled=outdated_sound_enabled,
+            outdated_sound_file=outdated_sound_file,
             dry_run=dry_run,
             web_enabled=web_enabled,
             web_host=web_host,

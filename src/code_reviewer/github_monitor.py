@@ -32,6 +32,8 @@ class GitHubMonitor:
             approval_sound_file=config.approval_sound_file,
             timeout_sound_enabled=config.timeout_sound_enabled,
             timeout_sound_file=config.timeout_sound_file,
+            outdated_sound_enabled=config.outdated_sound_enabled,
+            outdated_sound_file=config.outdated_sound_file,
         )
         self.db = ReviewDatabase(config.database_path)
         
@@ -51,6 +53,10 @@ class GitHubMonitor:
         # Play timeout sound test
         logger.debug("Playing timeout notification sound")
         await self.sound_notifier.play_timeout_sound()
+
+        # Play outdated sound test
+        logger.debug("Playing outdated notification sound")
+        await self.sound_notifier.play_outdated_sound()
         
         if self.config.dry_run:
             logger.info("DRY RUN MODE: No actual GitHub actions will be performed, only logged")
@@ -249,6 +255,7 @@ class GitHubMonitor:
                         f"Marked pending approval ID {ref['id']} for PR #{ref['pr_number']} in "
                         f"{ref['repository']} as OUTDATED ({reason})"
                     )
+                    await self.sound_notifier.play_outdated_sound()
                 else:
                     logger.debug(
                         f"Pending approval ID {ref['id']} already processed when marking as OUTDATED"

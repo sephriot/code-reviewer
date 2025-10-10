@@ -33,6 +33,8 @@ class Config:
     approval_sound_file: Optional[Path] = None
     timeout_sound_enabled: bool = True
     timeout_sound_file: Optional[Path] = None
+    outdated_sound_enabled: bool = True
+    outdated_sound_file: Optional[Path] = None
     dry_run: bool = False
     database_path: Path = Path("data/reviews.db")
     web_enabled: bool = False
@@ -70,6 +72,8 @@ class Config:
             'APPROVAL_SOUND_FILE': 'approval_sound_file',
             'TIMEOUT_SOUND_ENABLED': 'timeout_sound_enabled',
             'TIMEOUT_SOUND_FILE': 'timeout_sound_file',
+            'OUTDATED_SOUND_ENABLED': 'outdated_sound_enabled',
+            'OUTDATED_SOUND_FILE': 'outdated_sound_file',
             'DRY_RUN': 'dry_run',
             'DATABASE_PATH': 'database_path',
             'WEB_ENABLED': 'web_enabled',
@@ -82,9 +86,9 @@ class Config:
             if value:
                 if config_key in ['poll_interval', 'web_port', 'review_timeout']:
                     config_data[config_key] = int(value)
-                elif config_key in ['sound_enabled', 'approval_sound_enabled', 'timeout_sound_enabled', 'dry_run', 'web_enabled']:
+                elif config_key in ['sound_enabled', 'approval_sound_enabled', 'timeout_sound_enabled', 'outdated_sound_enabled', 'dry_run', 'web_enabled']:
                     config_data[config_key] = value.lower() in ('true', '1', 'yes', 'on')
-                elif config_key in ['sound_file', 'approval_sound_file', 'timeout_sound_file', 'database_path']:
+                elif config_key in ['sound_file', 'approval_sound_file', 'timeout_sound_file', 'outdated_sound_file', 'database_path']:
                     config_data[config_key] = Path(value)
                 elif config_key in ['repositories', 'pr_authors']:
                     # Parse comma-separated lists
@@ -135,7 +139,7 @@ class Config:
         config_data['prompt_file'] = prompt_file
         
         # Handle path conversions
-        for path_field in ['prompt_file', 'sound_file', 'approval_sound_file', 'timeout_sound_file', 'database_path']:
+        for path_field in ['prompt_file', 'sound_file', 'approval_sound_file', 'timeout_sound_file', 'outdated_sound_file', 'database_path']:
             if path_field in config_data and config_data[path_field] is not None:
                 if not isinstance(config_data[path_field], Path):
                     config_data[path_field] = Path(config_data[path_field])
