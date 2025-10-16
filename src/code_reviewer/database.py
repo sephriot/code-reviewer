@@ -160,9 +160,162 @@ class ReviewDatabase:
         except sqlite3.OperationalError:
             pass
 
+        # Migrate UNIQUE constraint to include head_sha (if needed)
+        self._migrate_pending_approvals_unique_constraint(cursor)
+
         conn.commit()
         logger.info(f"Database initialized at: {self.db_path}")
-        
+
+    def _migrate_pending_approvals_unique_constraint(self, cursor: sqlite3.Cursor):
+        """Migrate pending_approvals table to include head_sha in UNIQUE constraint.
+
+        This migration is safe because:
+        1. Old constraint: UNIQUE(repository, pr_number) - max 1 row per PR
+        2. New constraint: UNIQUE(repository, pr_number, head_sha) - max 1 row per PR per commit
+        3. Since old constraint was MORE restrictive, all existing data is already valid for new constraint
+        4. We copy ALL data to preserve everything
+        """
+        try:
+            # Check if the table exists
+            cursor.execute("""
+                SELECT sql FROM sqlite_master
+                WHERE type='table' AND name='pending_approvals'
+            """)
+            row = cursor.fetchone()
+
+            if not row:
+                # Table doesn't exist yet, will be created with correct constraint
+                logger.debug("pending_approvals table doesn't exist yet, will be created with correct schema")
+                return
+
+            schema_sql = row[0] if row else ""
+
+            # Check if the UNIQUE constraint already includes head_sha
+            if "UNIQUE(repository, pr_number, head_sha)" in schema_sql:
+                logger.debug("pending_approvals UNIQUE constraint already includes head_sha - no migration needed")
+                return
+
+            # Count existing rows before migration
+            cursor.execute("SELECT COUNT(*) as count FROM pending_approvals")
+            row_count_before = cursor.fetchone()[0]
+            logger.info(f"Starting pending_approvals migration - {row_count_before} rows to migrate")
+
+            # Create new table with correct schema
+            cursor.execute("""
+                CREATE TABLE pending_approvals_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repository TEXT NOT NULL,
+                    pr_number INTEGER NOT NULL,
+                    pr_title TEXT,
+                    pr_author TEXT,
+                    pr_url TEXT NOT NULL,
+                    review_action TEXT NOT NULL,
+                    review_comment TEXT,
+                    review_summary TEXT,
+                    review_reason TEXT,
+                    inline_comments TEXT,
+                    inline_comments_count INTEGER DEFAULT 0,
+                    edited_review_comment TEXT,
+                    edited_review_summary TEXT,
+                    edited_inline_comments TEXT,
+                    head_sha TEXT NOT NULL,
+                    base_sha TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'pending',
+                    UNIQUE(repository, pr_number, head_sha)
+                )
+            """)
+
+            # Check for rows with NULL or empty head_sha
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM pending_approvals
+                WHERE head_sha IS NULL OR head_sha = ''
+            """)
+            invalid_sha_count = cursor.fetchone()[0]
+
+            if invalid_sha_count > 0:
+                logger.warning(
+                    f"Found {invalid_sha_count} pending approval(s) with missing head_sha - "
+                    f"these will be marked as expired since they're invalid"
+                )
+
+            # Copy data from old table, handling NULL/empty head_sha
+            # Rows with invalid head_sha are marked as 'expired' and given placeholder SHA
+            cursor.execute("""
+                INSERT INTO pending_approvals_new
+                SELECT
+                    id,
+                    repository,
+                    pr_number,
+                    pr_title,
+                    pr_author,
+                    pr_url,
+                    review_action,
+                    review_comment,
+                    review_summary,
+                    review_reason,
+                    inline_comments,
+                    inline_comments_count,
+                    edited_review_comment,
+                    edited_review_summary,
+                    edited_inline_comments,
+                    COALESCE(NULLIF(head_sha, ''), 'migration-placeholder-' || id) as head_sha,
+                    base_sha,
+                    created_at,
+                    CASE
+                        WHEN head_sha IS NULL OR head_sha = '' THEN 'expired'
+                        ELSE status
+                    END as status
+                FROM pending_approvals
+                ORDER BY id
+            """)
+
+            # Verify no data loss
+            cursor.execute("SELECT COUNT(*) as count FROM pending_approvals_new")
+            row_count_after = cursor.fetchone()[0]
+
+            if row_count_before != row_count_after:
+                raise sqlite3.Error(
+                    f"Data loss detected during migration! Before: {row_count_before}, After: {row_count_after}"
+                )
+
+            if invalid_sha_count > 0:
+                logger.info(
+                    f"Migrated {invalid_sha_count} row(s) with invalid head_sha "
+                    f"(marked as expired with placeholder SHA)"
+                )
+
+            logger.info(f"Successfully copied all {row_count_after} rows to new table")
+
+            # Drop old table
+            cursor.execute("DROP TABLE pending_approvals")
+
+            # Rename new table
+            cursor.execute("ALTER TABLE pending_approvals_new RENAME TO pending_approvals")
+
+            # Recreate index
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pending_status
+                ON pending_approvals(status)
+            """)
+
+            logger.info("✅ Successfully migrated pending_approvals table with ZERO data loss")
+
+        except sqlite3.Error as e:
+            logger.error(f"❌ Error during pending_approvals migration: {e}")
+            # Try to rollback by restoring old table if new table was created
+            try:
+                cursor.execute("""
+                    SELECT name FROM sqlite_master
+                    WHERE type='table' AND name='pending_approvals_new'
+                """)
+                if cursor.fetchone():
+                    cursor.execute("DROP TABLE pending_approvals_new")
+                    logger.info("Rolled back migration - dropped temporary table")
+            except:
+                pass
+            raise  # Re-raise to prevent app from starting with broken schema
+
     async def record_review(self, pr_info: PRInfo, review_result: ReviewResult) -> int:
         """Record a completed PR review."""
         return await asyncio.get_event_loop().run_in_executor(
