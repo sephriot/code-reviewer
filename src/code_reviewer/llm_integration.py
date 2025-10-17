@@ -265,10 +265,35 @@ class LLMIntegration:
             output_stream.write(text)
             output_stream.flush()
 
+    @staticmethod
+    def _strip_markdown_fences(text: str) -> str:
+        """Remove markdown code fences from text if present.
+
+        Handles patterns like:
+        ```json
+        {...}
+        ```
+        or
+        ```
+        {...}
+        ```
+        """
+        # Pattern to match markdown code fences with optional language specifier
+        fence_pattern = r'^```(?:json)?\s*\n(.*?)\n```\s*$'
+        match = re.search(fence_pattern, text.strip(), re.DOTALL | re.MULTILINE)
+
+        if match:
+            return match.group(1)
+
+        return text
+
     def _parse_review_result(self, raw_output: str) -> ReviewResult:
         """Parse model output into a structured review result."""
+        # Strip markdown code fences if present
+        cleaned_output = self._strip_markdown_fences(raw_output)
+
         json_pattern = r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}"
-        json_matches = re.findall(json_pattern, raw_output, re.DOTALL)
+        json_matches = re.findall(json_pattern, cleaned_output, re.DOTALL)
 
         for candidate in json_matches:
             candidate = candidate.strip()
@@ -281,7 +306,7 @@ class LLMIntegration:
                 logger.debug("Failed to parse JSON candidate", exc_info=True)
                 continue
 
-        for line in raw_output.strip().split("\n"):
+        for line in cleaned_output.strip().split("\n"):
             line = line.strip()
             if line.startswith("{") and line.endswith("}"):
                 try:
