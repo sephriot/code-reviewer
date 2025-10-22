@@ -277,10 +277,13 @@ class LLMIntegration:
         ```
         {...}
         ```
+
+        Also handles cases where there's text before/after the fence.
         """
         # Pattern to match markdown code fences with optional language specifier
-        fence_pattern = r'^```(?:json)?\s*\n(.*?)\n```\s*$'
-        match = re.search(fence_pattern, text.strip(), re.DOTALL | re.MULTILINE)
+        # This pattern doesn't require the fence to be at start/end of string
+        fence_pattern = r'```(?:json)?\s*\n(.*?)\n```'
+        match = re.search(fence_pattern, text, re.DOTALL)
 
         if match:
             return match.group(1)
@@ -292,27 +295,36 @@ class LLMIntegration:
         # Strip markdown code fences if present
         cleaned_output = self._strip_markdown_fences(raw_output)
 
-        json_pattern = r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}"
-        json_matches = re.findall(json_pattern, cleaned_output, re.DOTALL)
+        # Strategy 1: Try to parse the entire cleaned output as JSON
+        try:
+            result_dict = json.loads(cleaned_output.strip())
+            self._validate_review_result(result_dict)
+            logger.info(f"Successfully parsed JSON from cleaned output")
+            return ReviewResult.from_dict(result_dict)
+        except json.JSONDecodeError:
+            logger.debug("Failed to parse entire cleaned output as JSON")
 
-        for candidate in json_matches:
-            candidate = candidate.strip()
+        # Strategy 2: Extract complete JSON objects by matching braces
+        json_candidates = self._extract_json_objects(cleaned_output)
+
+        for candidate in json_candidates:
             try:
                 result_dict = json.loads(candidate)
                 self._validate_review_result(result_dict)
-                logger.info(f"Successfully parsed JSON: {result_dict}")
+                logger.info(f"Successfully parsed JSON from extracted object")
                 return ReviewResult.from_dict(result_dict)
             except json.JSONDecodeError:
                 logger.debug("Failed to parse JSON candidate", exc_info=True)
                 continue
 
+        # Strategy 3: Try line-by-line for simple single-line JSON
         for line in cleaned_output.strip().split("\n"):
             line = line.strip()
             if line.startswith("{") and line.endswith("}"):
                 try:
                     result_dict = json.loads(line)
                     self._validate_review_result(result_dict)
-                    logger.info(f"Successfully parsed line JSON: {result_dict}")
+                    logger.info(f"Successfully parsed line JSON")
                     return ReviewResult.from_dict(result_dict)
                 except json.JSONDecodeError:
                     logger.debug("Failed to parse line JSON", exc_info=True)
@@ -324,6 +336,59 @@ class LLMIntegration:
         logger.error(error_msg)
         logger.error(f"Model output: {raw_output}")
         raise LLMOutputParseError(error_msg, raw_output)
+
+    @staticmethod
+    def _extract_json_objects(text: str) -> List[str]:
+        """Extract complete JSON objects from text by matching braces.
+
+        This handles deeply nested JSON by counting opening/closing braces.
+        """
+        candidates = []
+        i = 0
+        while i < len(text):
+            if text[i] == '{':
+                # Found potential start of JSON object
+                brace_count = 0
+                start = i
+                j = i
+                in_string = False
+                escape_next = False
+
+                while j < len(text):
+                    char = text[j]
+
+                    if escape_next:
+                        escape_next = False
+                        j += 1
+                        continue
+
+                    if char == '\\':
+                        escape_next = True
+                        j += 1
+                        continue
+
+                    if char == '"':
+                        in_string = not in_string
+                    elif not in_string:
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                # Found complete JSON object
+                                candidates.append(text[start:j+1])
+                                i = j + 1
+                                break
+
+                    j += 1
+
+                if brace_count != 0:
+                    # Incomplete JSON object, move to next character
+                    i += 1
+            else:
+                i += 1
+
+        return candidates
 
     @staticmethod
     def _validate_review_result(result: dict) -> None:
