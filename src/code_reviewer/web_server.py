@@ -1,5 +1,6 @@
 """Web UI server for managing PR reviews and approvals."""
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -28,10 +29,11 @@ logger = logging.getLogger(__name__)
 class ReviewWebServer:
     """Web server for PR review management."""
 
-    def __init__(self, database: ReviewDatabase, github_client: GitHubClient, sound_notifier=None):
+    def __init__(self, database: ReviewDatabase, github_client: GitHubClient, sound_notifier=None, llm_integration=None):
         self.database = database
         self.github_client = github_client
         self.sound_notifier = sound_notifier
+        self.llm_integration = llm_integration
         self.app = FastAPI(title="Code Review Dashboard")
         
         # Setup static files and templates
@@ -100,6 +102,11 @@ class ReviewWebServer:
         .btn-approve { background: #28a745; color: white; }
         .btn-reject { background: #dc3545; color: white; }
         .btn-view { background: #17a2b8; color: white; }
+        .btn-retry { background: #6c757d; color: white; }
+        .btn-retry:hover { background: #5a6268; }
+        .toast { position: fixed; bottom: 20px; right: 20px; background: #333; color: white; padding: 15px 25px; border-radius: 8px; z-index: 9999; display: none; animation: fadeIn 0.3s; }
+        .toast.show { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         .tabs { border-bottom: 1px solid #ddd; margin-bottom: 20px; }
         .tab { display: inline-block; padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; }
         .tab.active { border-bottom-color: #007bff; color: #007bff; }
@@ -176,6 +183,9 @@ class ReviewWebServer:
             </div>
         </div>
     </div>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast"></div>
 
     <!-- Modal for approval confirmation -->
     <div id="approval-modal" class="modal">
@@ -321,6 +331,7 @@ class ReviewWebServer:
                                 Approve & Post Review
                             </button>
                             <button class="btn btn-reject" onclick="rejectPR(${approval.id})">Reject</button>
+                            <button class="btn btn-retry" onclick="reviewAgain(${approval.id})">Review Again</button>
                             <a href="${approval.pr_url}" target="_blank" class="btn btn-view">View PR</a>
                         </div>
                     </div>
@@ -627,7 +638,7 @@ class ReviewWebServer:
 
         async function approveDirectly(id) {
             if (!confirm('Approve and post this review to GitHub?')) return;
-            
+
             // Don't pass comment from DOM - let server use database edited versions
             try {
                 const response = await fetch(`/api/approvals/${id}/approve`, {
@@ -635,7 +646,7 @@ class ReviewWebServer:
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({})
                 });
-                
+
                 if (response.ok) {
                     refreshCurrentView();
                     alert('PR approved and review posted!');
@@ -646,6 +657,37 @@ class ReviewWebServer:
             } catch (error) {
                 console.error('Failed to approve PR:', error);
                 alert('Failed to approve PR: ' + error.message);
+            }
+        }
+
+        function showToast(message, duration = 3000) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, duration);
+        }
+
+        async function reviewAgain(id) {
+            if (!confirm('Discard this review and trigger a fresh one?')) return;
+
+            try {
+                const response = await fetch(`/api/approvals/${id}/review-again`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showToast(result.message || 'Review triggered. Refresh to see results.');
+                    refreshCurrentView();
+                } else {
+                    const errorText = await response.text();
+                    alert('Failed to trigger re-review: ' + errorText);
+                }
+            } catch (error) {
+                console.error('Failed to trigger re-review:', error);
+                alert('Failed to trigger re-review: ' + error.message);
             }
         }
 
@@ -1174,21 +1216,111 @@ class ReviewWebServer:
             try:
                 body = await request.json()
                 reason = body.get('reason', '')
-                
+
                 # Update approval status
                 success = await self.database.update_pending_approval_status(
                     approval_id, PENDING_APPROVAL_STATUS_REJECTED, reason
                 )
-                
+
                 if success:
                     return JSONResponse(content={"status": "success"})
                 else:
                     raise HTTPException(status_code=404, detail="Approval not found")
-                    
+
             except Exception as e:
                 logger.error(f"Failed to reject PR {approval_id}: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
+        @self.app.post("/api/approvals/{approval_id}/review-again")
+        async def review_again(approval_id: int):
+            """Expire pending approval and trigger fresh review."""
+            try:
+                if not self.llm_integration:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="LLM integration not available"
+                    )
+
+                # Get the pending approval
+                approval = await self.database.get_pending_approval(approval_id)
+                if not approval:
+                    raise HTTPException(status_code=404, detail="Approval not found")
+
+                if approval['status'] != PENDING_APPROVAL_STATUS_PENDING:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Only pending approvals can be re-reviewed"
+                    )
+
+                # Mark as expired (keeps audit trail)
+                await self.database.update_pending_approval_status(
+                    approval_id,
+                    PENDING_APPROVAL_STATUS_EXPIRED,
+                    "Re-review requested by user"
+                )
+
+                # Delete the review record to allow re-review
+                await self.database.delete_review_for_re_review(
+                    approval['repository'],
+                    approval['pr_number'],
+                    approval['head_sha']
+                )
+
+                # Build PRInfo for re-review
+                pr_info = PRInfo(
+                    id=approval['pr_number'],
+                    number=approval['pr_number'],
+                    repository=approval['repository'].split('/'),
+                    url=approval['pr_url'],
+                    title=approval['pr_title'],
+                    author=approval['pr_author'],
+                    head_sha=approval['head_sha'],
+                    base_sha=approval['base_sha'],
+                )
+
+                # Trigger fresh review in background
+                async def run_review():
+                    try:
+                        logger.info(
+                            f"Starting re-review for {pr_info.repository_name}#{pr_info.number}"
+                        )
+                        review_result = await self.llm_integration.review_pr(pr_info)
+                        logger.info(
+                            f"Re-review complete for {pr_info.repository_name}#{pr_info.number}: "
+                            f"{review_result.action.value}"
+                        )
+                        # Create new pending approval if needed
+                        if review_result.action in (
+                            ReviewAction.APPROVE_WITH_COMMENT,
+                            ReviewAction.APPROVE_WITHOUT_COMMENT,
+                        ):
+                            await self.database.create_pending_approval(pr_info, review_result)
+                            if self.sound_notifier:
+                                await self.sound_notifier.play_notification()
+                        elif review_result.action == ReviewAction.REQUIRES_HUMAN_REVIEW:
+                            await self.database.record_review(pr_info, review_result)
+                            if self.sound_notifier:
+                                await self.sound_notifier.play_notification()
+                        else:
+                            # REQUEST_CHANGES or other actions
+                            await self.database.record_review(pr_info, review_result)
+                    except Exception as e:
+                        logger.error(f"Re-review failed for {pr_info.repository_name}#{pr_info.number}: {e}")
+
+                asyncio.create_task(run_review())
+
+                logger.info(f"Triggered re-review for approval {approval_id}")
+                return JSONResponse(content={
+                    "status": "success",
+                    "message": "Review triggered. Refresh in a moment to see results."
+                })
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to trigger re-review for approval {approval_id}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
         @self.app.get("/api/approved-approvals")
         async def get_approved_approvals():
             """Get approved approvals history."""

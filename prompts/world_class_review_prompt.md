@@ -87,13 +87,69 @@ You MUST respond with JSON in this exact format:
   "reason": "Detailed explanation of why human expertise is needed for this review",
   "comments": [
     {
-      "file": "path/to/file.py", 
+      "file": "path/to/file.py",
       "line": 42,
       "message": "Specific, actionable feedback with suggested solutions and rationale"
     }
   ]
 }
 ```
+
+### Determining Line Numbers for Inline Comments
+
+When providing inline comments, the `line` field must be the **actual line number in the new version of the file** (right side of diff). This is critical for comments to appear at the correct location on GitHub.
+
+#### How to Read Unified Diff Format
+
+The `gh pr diff` output uses unified diff format with hunk headers:
+
+```diff
+@@ -35,10 +38,15 @@ func SomeFunction() {
+ context line (exists in both old and new file)
++added line (exists only in new file)
+-removed line (does NOT exist in new file)
+ another context line
+```
+
+**Hunk Header Explained**: `@@ -35,10 +38,15 @@`
+- `-35,10`: Old file starts at line 35, shows 10 lines
+- `+38,15`: **New file starts at line 38**, shows 15 lines ← Use this!
+
+#### Line Number Calculation
+
+1. Find the hunk header `@@ ... +N,count @@` and note the `+N` value (new file starting line)
+2. For each line in the hunk:
+   - Lines starting with `+` or ` ` (space): increment line counter, this line exists in new file
+   - Lines starting with `-`: **skip** (these don't exist in new file, don't count them)
+3. Use the tracked line number in your JSON response
+
+**Example for a new file**:
+```diff
+@@ -0,0 +1,50 @@      <- New file starts at line 1
++package main         <- Line 1
++                     <- Line 2
++import "fmt"         <- Line 3
++
++func main() {        <- Line 5
++    fmt.Println()    <- Line 6
++}
+```
+
+**Example for modified file with deletions**:
+```diff
+@@ -10,8 +10,7 @@ func Process() {
+ func Helper() {      <- Line 10 (context, space prefix)
+-    oldCode()        <- SKIP (deleted, doesn't exist in new file)
++    newCode()        <- Line 11 (added line)
+     return nil       <- Line 12 (context)
+ }
+```
+
+#### Critical Rules
+- **NEVER** use the raw position/offset in the diff output
+- **ALWAYS** track from the hunk header's `+N` value
+- **SKIP** lines starting with `-` when counting (they don't exist in new file)
+- **VERIFY** your line number matches the code you're commenting on
 
 ## Action Decision Framework
 

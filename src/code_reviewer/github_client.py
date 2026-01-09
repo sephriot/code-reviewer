@@ -196,13 +196,29 @@ class GitHubClient:
                     'body': body,
                 })
             else:
-                logger.warning(
-                    "Dropping inline comment for %s#%s at %s:%s - line not in diff",
-                    f"{owner}/{repo_name}",
-                    pr_number,
-                    path,
-                    line,
-                )
+                # Log diagnostic info about valid line range for debugging LLM line number issues
+                if valid_lines:
+                    min_line = min(valid_lines)
+                    max_line = max(valid_lines)
+                    logger.warning(
+                        "Dropping inline comment for %s#%s at %s:%s - line not in diff "
+                        "(valid range for this file: %d-%d, %d valid lines)",
+                        f"{owner}/{repo_name}",
+                        pr_number,
+                        path,
+                        line,
+                        min_line,
+                        max_line,
+                        len(valid_lines),
+                    )
+                else:
+                    logger.warning(
+                        "Dropping inline comment for %s#%s at %s:%s - file not found in diff",
+                        f"{owner}/{repo_name}",
+                        pr_number,
+                        path,
+                        line,
+                    )
                 dropped.append(comment)
 
         return valid_payload, dropped

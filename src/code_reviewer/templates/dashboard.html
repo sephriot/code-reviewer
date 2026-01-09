@@ -33,6 +33,11 @@
         .btn-approve { background: #28a745; color: white; }
         .btn-reject { background: #dc3545; color: white; }
         .btn-view { background: #17a2b8; color: white; }
+        .btn-retry { background: #6c757d; color: white; }
+        .btn-retry:hover { background: #5a6268; }
+        .toast { position: fixed; bottom: 20px; right: 20px; background: #333; color: white; padding: 15px 25px; border-radius: 8px; z-index: 9999; display: none; animation: fadeIn 0.3s; }
+        .toast.show { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         .tabs { border-bottom: 1px solid #ddd; margin-bottom: 20px; }
         .tab { display: inline-block; padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; }
         .tab.active { border-bottom-color: #007bff; color: #007bff; }
@@ -109,6 +114,9 @@
             </div>
         </div>
     </div>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast"></div>
 
     <!-- Modal for approval confirmation -->
     <div id="approval-modal" class="modal">
@@ -254,6 +262,7 @@
                                 Approve & Post Review
                             </button>
                             <button class="btn btn-reject" onclick="rejectPR(${approval.id})">Reject</button>
+                            <button class="btn btn-retry" onclick="reviewAgain(${approval.id})">Review Again</button>
                             <a href="${approval.pr_url}" target="_blank" class="btn btn-view">View PR</a>
                         </div>
                     </div>
@@ -560,7 +569,7 @@
 
         async function approveDirectly(id) {
             if (!confirm('Approve and post this review to GitHub?')) return;
-            
+
             // Don't pass comment from DOM - let server use database edited versions
             try {
                 const response = await fetch(`/api/approvals/${id}/approve`, {
@@ -568,7 +577,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({})
                 });
-                
+
                 if (response.ok) {
                     refreshCurrentView();
                     alert('PR approved and review posted!');
@@ -579,6 +588,37 @@
             } catch (error) {
                 console.error('Failed to approve PR:', error);
                 alert('Failed to approve PR: ' + error.message);
+            }
+        }
+
+        function showToast(message, duration = 3000) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, duration);
+        }
+
+        async function reviewAgain(id) {
+            if (!confirm('Discard this review and trigger a fresh one?')) return;
+
+            try {
+                const response = await fetch(`/api/approvals/${id}/review-again`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showToast(result.message || 'Review triggered. Refresh to see results.');
+                    refreshCurrentView();
+                } else {
+                    const errorText = await response.text();
+                    alert('Failed to trigger re-review: ' + errorText);
+                }
+            } catch (error) {
+                console.error('Failed to trigger re-review:', error);
+                alert('Failed to trigger re-review: ' + error.message);
             }
         }
 

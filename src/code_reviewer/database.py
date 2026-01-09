@@ -410,6 +410,34 @@ class ReviewDatabase:
             return ReviewRecord.from_db_row(dict(row))
         return None
 
+    async def delete_review_for_re_review(self, repository: str, pr_number: int, head_sha: str) -> bool:
+        """Delete review record to allow re-review of the same commit."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._delete_review_for_re_review_sync, repository, pr_number, head_sha
+        )
+
+    def _delete_review_for_re_review_sync(self, repository: str, pr_number: int, head_sha: str) -> bool:
+        """Synchronous implementation of delete_review_for_re_review."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                DELETE FROM pr_reviews
+                WHERE repository = ? AND pr_number = ? AND head_sha = ?
+            """, (repository, pr_number, head_sha))
+
+            deleted = cursor.rowcount > 0
+            if deleted:
+                logger.info(
+                    f"Deleted review record for {repository}#{pr_number} at {head_sha[:8]} for re-review"
+                )
+            return deleted
+
+        except sqlite3.Error as e:
+            logger.error(f"Error deleting review for re-review: {e}")
+            raise
+
     async def get_pending_approval_for_commit(self, repository: str, pr_number: int, head_sha: str) -> Optional[dict]:
         """Get existing pending approval for a specific commit of a PR."""
         return await asyncio.get_event_loop().run_in_executor(
@@ -557,10 +585,21 @@ class ReviewDatabase:
         existing_commit = self._get_pending_approval_for_commit_sync(
             pr_info.repository_name, pr_info.number, pr_info.head_sha
         )
-        
+
         if existing_commit:
             logger.info(f"Pending approval already exists for PR #{pr_info.number} commit {pr_info.head_sha[:8]}, returning existing ID: {existing_commit['id']}")
             return existing_commit['id']
+
+        # Delete any expired records for the same commit (allows re-review after expiration)
+        cursor.execute("""
+            DELETE FROM pending_approvals
+            WHERE repository = ? AND pr_number = ? AND head_sha = ? AND status = ?
+        """, (pr_info.repository_name, pr_info.number, pr_info.head_sha, PENDING_APPROVAL_STATUS_EXPIRED))
+        if cursor.rowcount > 0:
+            logger.info(
+                f"Deleted {cursor.rowcount} expired pending approval(s) for PR #{pr_info.number} "
+                f"commit {pr_info.head_sha[:8]} to allow re-review"
+            )
 
         # Serialize inline comments to JSON
         inline_comments_json = json.dumps([

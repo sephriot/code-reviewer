@@ -32,7 +32,12 @@ class CodeReviewer:
         )
         self.web_server = None
         if config.web_enabled:
-            self.web_server = ReviewWebServer(self.monitor.db, self.github_client, self.monitor.sound_notifier)
+            self.web_server = ReviewWebServer(
+                self.monitor.db,
+                self.github_client,
+                self.monitor.sound_notifier,
+                self.model_integration,
+            )
         
     def signal_handler(self, signum, frame):
         """Handle SIGTERM gracefully."""
