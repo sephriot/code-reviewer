@@ -133,6 +133,25 @@ You MUST respond with JSON in this exact format:
 
 When providing inline comments, the `line` field must be the **actual line number in the new version of the file** (right side of diff). This is critical for comments to appear at the correct location on GitHub.
 
+#### ⚠️ CRITICAL: Common Mistake to Avoid
+
+**DO NOT** use line numbers from `grep -n` on the diff output!
+
+If you run `gh pr diff | grep -n "somePattern"`, grep shows the line number **within the diff output text**, NOT the line number in the actual file. These are completely different numbers!
+
+**Wrong approach**: `gh pr diff <url> | grep -n "maps.Keys"` → Shows "46:+  keys := slices.Collect(maps.Keys(..." → Using 46 is WRONG!
+
+**Right approach**: Parse the hunk header, calculate the actual file line → The actual file line is 40.
+
+The diff output includes headers that add extra lines:
+- `diff --git ...` header
+- `index ...` line
+- `--- a/file` line
+- `+++ b/file` line
+- `@@ ... @@` hunk header
+
+These headers make grep's line numbers wrong by approximately 5-7+ lines per file.
+
 #### How to Read Unified Diff Format
 
 The `gh pr diff` output uses unified diff format with hunk headers:
@@ -149,41 +168,54 @@ The `gh pr diff` output uses unified diff format with hunk headers:
 - `-35,10`: Old file starts at line 35, shows 10 lines
 - `+38,15`: **New file starts at line 38**, shows 15 lines ← Use this!
 
-#### Line Number Calculation
+#### Correct Line Number Calculation
 
 1. Find the hunk header `@@ ... +N,count @@` and note the `+N` value (new file starting line)
-2. For each line in the hunk:
-   - Lines starting with `+` or ` ` (space): increment line counter, this line exists in new file
-   - Lines starting with `-`: **skip** (these don't exist in new file, don't count them)
-3. Use the tracked line number in your JSON response
+2. Set your line counter to N
+3. For each line in the hunk body (after the @@ header):
+   - Lines starting with `+` (added) or ` ` (space/context): this line exists in new file at current counter, then increment counter
+   - Lines starting with `-` (deleted): **skip entirely** (these don't exist in new file, don't count them)
+4. When you find the code you want to comment on, use the current counter value
 
 **Example for a new file**:
 ```diff
-@@ -0,0 +1,50 @@      <- New file starts at line 1
-+package main         <- Line 1
-+                     <- Line 2
-+import "fmt"         <- Line 3
-+
-+func main() {        <- Line 5
-+    fmt.Println()    <- Line 6
+@@ -0,0 +1,50 @@      <- New file starts at line 1, counter = 1
++package main         <- counter is 1, then increment → counter = 2
++                     <- counter is 2, then increment → counter = 3
++import "fmt"         <- counter is 3, then increment → counter = 4
++                     <- counter is 4, then increment → counter = 5
++func main() {        <- counter is 5, then increment → counter = 6
++    fmt.Println()    <- counter is 6 (if commenting here, use line=6)
 +}
 ```
 
+So if you want to comment on `func main() {`, use `"line": 5`, NOT whatever grep shows!
+
 **Example for modified file with deletions**:
 ```diff
-@@ -10,8 +10,7 @@ func Process() {
- func Helper() {      <- Line 10 (context, space prefix)
--    oldCode()        <- SKIP (deleted, doesn't exist in new file)
-+    newCode()        <- Line 11 (added line)
-     return nil       <- Line 12 (context)
+@@ -10,8 +10,7 @@ func Process() {    <- New file starts at line 10, counter = 10
+ func Helper() {      <- counter is 10 (context line), increment → counter = 11
+-    oldCode()        <- SKIP entirely (deleted line, don't count it)
++    newCode()        <- counter is 11, increment → counter = 12
+     return nil       <- counter is 12 (context)
  }
 ```
 
+#### ✅ Verification Method
+
+Before submitting your review, verify line numbers by fetching the actual file:
+```bash
+gh api repos/{owner}/{repo}/contents/{file-path}?ref={head-ref} --jq '.content' | base64 -d | head -n 50
+```
+
+Then count lines in the actual file content to confirm your line number is correct.
+
 #### Critical Rules
-- **NEVER** use the raw position/offset in the diff output
-- **ALWAYS** track from the hunk header's `+N` value
-- **SKIP** lines starting with `-` when counting (they don't exist in new file)
-- **VERIFY** your line number matches the code you're commenting on
+- **NEVER** use `grep -n` line numbers from diff output - they are ALWAYS WRONG
+- **NEVER** guess line numbers - calculate them precisely
+- **ALWAYS** parse the hunk header `@@ ... +N,count @@` to get the starting line N
+- **ALWAYS** count only lines with `+` or ` ` prefix (skip `-` lines entirely)
+- **ALWAYS** verify your line numbers against actual file content when in doubt
 
 ## Action Decision Framework
 
