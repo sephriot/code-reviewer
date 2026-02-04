@@ -278,7 +278,9 @@ class ReviewWebServer:
                 
                 container.innerHTML = approvals.map(approval => `
                     <div class="pr-card">
-                        <div class="pr-title">${approval.pr_title}</div>
+                        <div class="pr-title">${approval.pr_title}
+                            ${getActionBadge(approval.review_action)}
+                        </div>
                         <div class="pr-meta">
                             ${approval.repository} #${approval.pr_number} by ${approval.pr_author}
                             <br><small>Created: ${new Date(approval.created_at).toLocaleString()}</small>
