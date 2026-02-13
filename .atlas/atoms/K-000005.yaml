@@ -1,0 +1,50 @@
+id: K-000005
+title: 'Pending approval workflow: human-in-the-loop before GitHub posting'
+type: recipe
+confidence: high
+summary: approve_with_comment and request_changes actions are NOT posted directly to GitHub. Instead they create pending_approvals in SQLite with status='pending'. Human reviews them in the FastAPI web dashboard, can edit comments/inline feedback, then approve (posts to GitHub) or reject (no GitHub action). Only approve_without_comment is auto-posted. requires_human_review is logged and recorded but takes no GitHub action.
+details: |-
+  ## Flow
+
+  1. Monitor detects PR → LLM reviews → returns ReviewResult
+  2. If action is approve_with_comment or request_changes:
+     - `db.create_pending_approval(pr_info, review_result)` stores in pending_approvals table
+     - Sound notification played for human attention
+     - Review is NOT recorded in pr_reviews table yet
+  3. Human visits web UI dashboard:
+     - Sees pending approvals with original and editable comments
+     - Can modify review_comment, review_summary, and inline_comments
+     - Approves → web server posts to GitHub via GitHubClient, records in pr_reviews
+     - Rejects → status updated to 'rejected', no GitHub action
+
+  ## Pending Approval Lifecycle
+
+  - `pending` → human hasn't acted yet
+  - `approved` → human approved, posted to GitHub
+  - `rejected` → human rejected, no GitHub action
+  - `merged_or_closed` → PR was merged/closed while pending (auto-detected each poll cycle)
+  - `expired` → new commits pushed, superseded by new review
+
+  ## Editable Fields
+
+  pending_approvals has both original and edited versions:
+  - review_comment / edited_review_comment
+  - review_summary / edited_review_summary
+  - inline_comments / edited_inline_comments (JSON)
+
+  When posting to GitHub, edited versions are used if present, otherwise originals.
+tags:
+- pending-approval
+- web-ui
+- human-review
+- workflow
+- fastapi
+sources:
+- src/code_reviewer/github_monitor.py
+- src/code_reviewer/web_server.py
+- src/code_reviewer/database.py
+links:
+- K-000012
+- K-000013
+- K-000014
+updated_at: 2026-02-13

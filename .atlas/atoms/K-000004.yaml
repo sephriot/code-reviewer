@@ -1,0 +1,32 @@
+id: K-000004
+title: Inline comment validation against PR diff before posting to GitHub
+type: recipe
+confidence: high
+summary: LLM-generated inline comments must be validated against the actual PR diff before posting. GitHubClient.prepare_inline_comments() fetches file patches, extracts valid line numbers from unified diff hunks, and separates comments into valid (postable) and dropped (out-of-diff). Dropped comments are formatted as fallback text appended to the review body so feedback isn't lost.
+details: |-
+  ## Validation Pipeline
+
+  1. `prepare_inline_comments(repository, pr_number, inline_comments)` → (valid_payload, dropped)
+  2. `_collect_valid_comment_lines()` → Dict[filename, Set[line_numbers]]
+  3. `_fetch_pr_file_patches()` → paginated fetch of PR file diffs (100 per page)
+  4. `_extract_valid_diff_lines(patch)` → parses unified diff `@@` hunks, tracks new-file line numbers for `+` and ` ` (context) lines, ignores `-` (removed) lines
+  5. Each inline comment is checked: if file+line in valid set → add to payload with side='RIGHT'; otherwise → dropped
+  6. `format_dropped_inline_comments(dropped)` → markdown text describing un-postable comments
+
+  ## Why this matters
+
+  GitHub API rejects inline review comments that reference lines outside the diff. LLMs frequently hallucinate line numbers or reference unchanged code, so this validation prevents API errors while preserving the feedback in the review body.
+pitfalls:
+- LLMs frequently generate line numbers outside the diff range
+- GitHub API returns 422 if inline comment references invalid line
+- Must paginate file patches for large PRs (100 files per page)
+tags:
+- inline-comments
+- diff-validation
+- github-api
+- llm-hallucination
+sources:
+- src/code_reviewer/github_client.py
+links:
+- K-000008
+updated_at: 2026-02-13

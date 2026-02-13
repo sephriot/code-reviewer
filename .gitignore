@@ -143,3 +143,4 @@ logs/
 data/
 prompts/review_prompt.txt
 codex_review_output.json
+reviews.db

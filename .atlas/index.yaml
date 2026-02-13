@@ -1,0 +1,215 @@
+next_id: 16
+entries:
+- id: K-000001
+  title: 'Project architecture: async polling monitor with human-in-the-loop approval'
+  type: note
+  confidence: high
+  tags:
+  - architecture
+  - overview
+  - asyncio
+  - polling
+  - human-in-the-loop
+  sources:
+  - src/code_reviewer/main.py
+  - src/code_reviewer/github_monitor.py
+  - src/code_reviewer/github_client.py
+  - src/code_reviewer/llm_integration.py
+  - src/code_reviewer/database.py
+  - src/code_reviewer/web_server.py
+  - src/code_reviewer/sound_notifier.py
+  - src/code_reviewer/models.py
+  - src/code_reviewer/config.py
+  links:
+  - K-000002
+  - K-000003
+  - K-000005
+  - K-000006
+- id: K-000002
+  title: 'LLM CLI integration: subprocess-based with multi-strategy JSON parsing'
+  type: recipe
+  confidence: high
+  tags:
+  - llm
+  - claude
+  - codex
+  - subprocess
+  - json-parsing
+  - cli
+  sources:
+  - src/code_reviewer/llm_integration.py
+  links:
+  - K-000008
+  - K-000015
+- id: K-000003
+  title: Commit SHA-based duplicate prevention and re-review triggering
+  type: decision
+  confidence: high
+  tags:
+  - database
+  - deduplication
+  - commit-sha
+  - re-review
+  - sqlite
+  sources:
+  - src/code_reviewer/database.py
+  - src/code_reviewer/github_monitor.py
+  links:
+  - K-000009
+- id: K-000004
+  title: Inline comment validation against PR diff before posting to GitHub
+  type: recipe
+  confidence: high
+  tags:
+  - inline-comments
+  - diff-validation
+  - github-api
+  - llm-hallucination
+  sources:
+  - src/code_reviewer/github_client.py
+  links:
+  - K-000008
+- id: K-000005
+  title: 'Pending approval workflow: human-in-the-loop before GitHub posting'
+  type: recipe
+  confidence: high
+  tags:
+  - pending-approval
+  - web-ui
+  - human-review
+  - workflow
+  - fastapi
+  sources:
+  - src/code_reviewer/github_monitor.py
+  - src/code_reviewer/web_server.py
+  - src/code_reviewer/database.py
+  links:
+  - K-000012
+  - K-000013
+  - K-000014
+- id: K-000006
+  title: 'Configuration precedence: CLI overrides > env vars > YAML config file'
+  type: note
+  confidence: high
+  tags:
+  - config
+  - environment-variables
+  - yaml
+  - cli
+  sources:
+  - src/code_reviewer/config.py
+  - src/code_reviewer/main.py
+- id: K-000007
+  title: Graceful shutdown via signal handlers and 1-second sleep intervals
+  type: recipe
+  confidence: high
+  tags:
+  - shutdown
+  - signal-handling
+  - asyncio
+  - uvicorn
+  sources:
+  - src/code_reviewer/main.py
+  - src/code_reviewer/github_monitor.py
+- id: K-000008
+  title: LLM JSON output parsing requires multi-strategy fallback chain
+  type: gotcha
+  confidence: high
+  tags:
+  - json-parsing
+  - llm-output
+  - gotcha
+  - robustness
+  sources:
+  - src/code_reviewer/llm_integration.py
+- id: K-000009
+  title: 'SQLite schema migration pattern: CREATE new table, copy data, DROP old, RENAME'
+  type: recipe
+  confidence: high
+  tags:
+  - sqlite
+  - migration
+  - schema
+  - database
+  sources:
+  - src/code_reviewer/database.py
+- id: K-000010
+  title: GitHub search API for PR discovery, not Events or Notifications API
+  type: decision
+  confidence: high
+  tags:
+  - github-api
+  - search
+  - polling
+  - rate-limit
+  sources:
+  - src/code_reviewer/github_client.py
+  links:
+  - K-000004
+- id: K-000011
+  title: 'Sound notification system: cross-platform with per-event sound files'
+  type: note
+  confidence: high
+  tags:
+  - sound
+  - notifications
+  - cross-platform
+  - macos
+  - linux
+  sources:
+  - src/code_reviewer/sound_notifier.py
+- id: K-000012
+  title: Four review actions with different handling paths
+  type: note
+  confidence: high
+  tags:
+  - review-actions
+  - workflow
+  - enum
+  sources:
+  - src/code_reviewer/models.py
+  - src/code_reviewer/github_monitor.py
+  links:
+  - K-000005
+- id: K-000013
+  title: 'Web dashboard: FastAPI with Jinja2 templates, inline-created HTML'
+  type: note
+  confidence: high
+  tags:
+  - web-ui
+  - fastapi
+  - jinja2
+  - dashboard
+  - api
+  sources:
+  - src/code_reviewer/web_server.py
+- id: K-000014
+  title: Merged/closed PR detection for stale pending approvals
+  type: recipe
+  confidence: high
+  tags:
+  - pending-approval
+  - cleanup
+  - merged
+  - closed
+  - stale
+  sources:
+  - src/code_reviewer/github_monitor.py
+  - src/code_reviewer/database.py
+  links:
+  - K-000003
+- id: K-000015
+  title: Multiple prompt templates available for different review styles
+  type: note
+  confidence: high
+  tags:
+  - prompts
+  - templates
+  - llm
+  - configuration
+  sources:
+  - prompts/review_prompt.txt
+  - prompts/exemplary_review_prompt.md
+  - prompts/fast_review_prompt.md
+  - prompts/world_class_review_prompt.md
+  - prompts/adaptive_review_prompt.md

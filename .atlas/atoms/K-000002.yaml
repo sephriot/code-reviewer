@@ -1,0 +1,43 @@
+id: K-000002
+title: 'LLM CLI integration: subprocess-based with multi-strategy JSON parsing'
+type: recipe
+confidence: high
+summary: 'LLMIntegration spawns `claude --print` or `codex exec` as an async subprocess, pipes the full prompt via stdin, and streams stdout/stderr concurrently. The raw output is parsed via 3 strategies: (1) strip markdown fences and parse entire text as JSON, (2) extract JSON objects by brace-matching (handles deeply nested structures), (3) line-by-line single-line JSON. Claude supports --show-thinking mode using stream-json output format, where thinking blocks are logged and the final result text is extracted from the `result` event.'
+details: |-
+  ## CLI Commands
+
+  - Claude: `claude --print` (with optional `--output-format stream-json --verbose` for thinking mode)
+  - Codex: `codex exec --sandbox danger-full-access --skip-git-repo-check --output-last-message <output-path>`
+
+  ## Key Patterns
+
+  - Prompt is written to stdin, not passed as CLI arg (avoids arg length limits)
+  - Codex writes output to a temp file (unique UUID path), Claude writes to stdout
+  - Subprocess cancellation is handled: terminate first, kill after 5s timeout
+  - Previous pending review context is formatted and injected into the prompt when re-reviewing after new commits
+
+  ## JSON Parsing
+
+  The `_parse_review_result` method uses a 3-strategy fallback chain:
+  1. `_strip_markdown_fences` removes ```json fences, then try `json.loads` on full text
+  2. `_extract_json_objects` uses brace-counting with string-escape awareness to find complete JSON objects
+  3. Line-by-line scan for `{...}` single-line JSON
+
+  All parsed results are validated via `_validate_review_result` (requires `action` field with valid ReviewAction value).
+pitfalls:
+- LLM output may contain markdown fences, prose before/after JSON, or deeply nested structures
+- Codex output file must be cleaned up even on cancellation
+- Claude stream-json mode produces NDJSON events, not raw text
+tags:
+- llm
+- claude
+- codex
+- subprocess
+- json-parsing
+- cli
+sources:
+- src/code_reviewer/llm_integration.py
+links:
+- K-000008
+- K-000015
+updated_at: 2026-02-13

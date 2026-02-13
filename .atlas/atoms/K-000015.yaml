@@ -1,0 +1,17 @@
+id: K-000015
+title: Multiple prompt templates available for different review styles
+type: note
+confidence: high
+summary: 'The prompts/ directory contains multiple review prompt templates: review_prompt.txt (default), exemplary_review_prompt.md, fast_review_prompt.md, world_class_review_prompt.md, and adaptive_review_prompt.md. The active prompt is selected via PROMPT_FILE env var or --prompt CLI flag. Prompts instruct the LLM to return structured JSON with action, comment, summary, reason, and inline comments fields.'
+tags:
+- prompts
+- templates
+- llm
+- configuration
+sources:
+- prompts/review_prompt.txt
+- prompts/exemplary_review_prompt.md
+- prompts/fast_review_prompt.md
+- prompts/world_class_review_prompt.md
+- prompts/adaptive_review_prompt.md
+updated_at: 2026-02-13

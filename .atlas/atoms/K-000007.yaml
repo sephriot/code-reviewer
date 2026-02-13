@@ -1,0 +1,17 @@
+id: K-000007
+title: Graceful shutdown via signal handlers and 1-second sleep intervals
+type: recipe
+confidence: high
+summary: 'The monitor loop uses 1-second asyncio.sleep intervals instead of a single long sleep for the poll interval. This enables responsive shutdown: SIGTERM/SIGINT handlers set `self.running = False`, and each 1-second tick checks the flag. cleanup_sync() handles resource teardown (aiohttp session, database) outside the event loop. The web server (uvicorn) runs alongside the monitor via asyncio.gather().'
+pitfalls:
+- cleanup_sync is called from finally block after event loop, must not use await
+- aiohttp session is set to None rather than awaiting close() in sync context
+tags:
+- shutdown
+- signal-handling
+- asyncio
+- uvicorn
+sources:
+- src/code_reviewer/main.py
+- src/code_reviewer/github_monitor.py
+updated_at: 2026-02-13

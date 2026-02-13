@@ -1,0 +1,26 @@
+id: K-000008
+title: LLM JSON output parsing requires multi-strategy fallback chain
+type: gotcha
+confidence: high
+summary: 'LLM CLI output is unpredictable: it may include markdown code fences (```json...```), prose before/after the JSON, deeply nested structures, or multiple JSON objects. A single json.loads() call is insufficient. The codebase uses a 3-strategy chain: (1) strip fences + full parse, (2) brace-matching extraction for nested objects, (3) line-by-line. Multiple git commits were dedicated to fixing parsing edge cases (f6931e6, f3ff5de).'
+details: |-
+  ## Historical bug fixes
+
+  - `f3ff5de` — Fix JSON parsing when LLM output includes markdown code fences
+  - `f6931e6` — Fix JSON parsing for deeply nested structures and non-anchored code fences
+
+  ## The brace-matching extractor
+
+  `_extract_json_objects()` walks the text character by character, tracks brace depth and string escapes, and collects complete `{...}` objects. This handles cases where the LLM wraps JSON in explanatory text or outputs multiple JSON blocks.
+
+  ## Validation after parse
+
+  Every parsed dict must pass `_validate_review_result()` which checks for the required `action` field and validates it against the ReviewAction enum. This prevents accepting partial or unrelated JSON objects.
+tags:
+- json-parsing
+- llm-output
+- gotcha
+- robustness
+sources:
+- src/code_reviewer/llm_integration.py
+updated_at: 2026-02-13

@@ -1,0 +1,33 @@
+id: K-000013
+title: 'Web dashboard: FastAPI with Jinja2 templates, inline-created HTML'
+type: note
+confidence: high
+summary: 'The web dashboard is a single-page FastAPI app using Jinja2 templates. The HTML template is created programmatically in _create_default_templates() rather than stored as separate template files. The dashboard has tabs for: pending approvals, human reviews, completed reviews, and approval/rejection history. API endpoints support approve/reject/re-review actions. The "Review Again" button triggers a re-review by calling the LLM integration directly from the web server.'
+details: |-
+  ## Key endpoints
+
+  - `GET /` — Dashboard HTML page
+  - `GET /api/pending-approvals` — List pending approvals
+  - `POST /api/approve/{id}` — Approve and post to GitHub
+  - `POST /api/reject/{id}` — Reject (no GitHub action)
+  - `POST /api/re-review/{id}` — Trigger fresh LLM review
+  - `GET /api/human-reviews` — List requires_human_review records
+  - `GET /api/completed-reviews` — List completed reviews
+  - `GET /api/history` — Approval/rejection history
+
+  ## Template approach
+
+  The ~2000-line HTML template is generated as a Python string in web_server.py and written to the templates directory. This keeps everything in a single module but makes the template hard to edit separately.
+pitfalls:
+- Template is generated as inline Python string (~2000 lines), not a separate HTML file
+- No authentication — runs on localhost only
+- Re-review endpoint calls LLM synchronously from web request context
+tags:
+- web-ui
+- fastapi
+- jinja2
+- dashboard
+- api
+sources:
+- src/code_reviewer/web_server.py
+updated_at: 2026-02-13

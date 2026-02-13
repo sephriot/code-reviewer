@@ -1,0 +1,14 @@
+id: K-000011
+title: 'Sound notification system: cross-platform with per-event sound files'
+type: note
+confidence: high
+summary: 'SoundNotifier supports separate sound files for different events: general notification, PR approval, review timeout, and merged/closed PR. Each has an independent enabled flag and optional custom sound file. Platform detection uses platform.system(). macOS uses afplay, Linux tries aplay/paplay/sox, Windows uses PowerShell. Fallback chain: custom sound file → general sound file → system beep → terminal bell character. All play methods are async (subprocess-based).'
+tags:
+- sound
+- notifications
+- cross-platform
+- macos
+- linux
+sources:
+- src/code_reviewer/sound_notifier.py
+updated_at: 2026-02-13

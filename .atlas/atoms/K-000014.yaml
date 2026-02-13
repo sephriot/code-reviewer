@@ -1,0 +1,17 @@
+id: K-000014
+title: Merged/closed PR detection for stale pending approvals
+type: recipe
+confidence: high
+summary: Each poll cycle, before checking for new PRs, the monitor calls _expire_merged_or_closed_pending_approvals(). This fetches all pending approval refs from the DB, checks each PR's current state via GitHub API (parallel gather), and marks any non-open or merged PRs as 'merged_or_closed'. This prevents stale pending approvals from accumulating when PRs are merged/closed outside the review flow.
+tags:
+- pending-approval
+- cleanup
+- merged
+- closed
+- stale
+sources:
+- src/code_reviewer/github_monitor.py
+- src/code_reviewer/database.py
+links:
+- K-000003
+updated_at: 2026-02-13

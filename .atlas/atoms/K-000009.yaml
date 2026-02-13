@@ -1,0 +1,33 @@
+id: K-000009
+title: 'SQLite schema migration pattern: CREATE new table, copy data, DROP old, RENAME'
+type: recipe
+confidence: high
+summary: 'SQLite doesn''t support ALTER TABLE to modify constraints. The codebase uses a safe migration pattern: create new table with desired schema, INSERT...SELECT to copy all data (with transformations), verify row counts match, DROP old table, ALTER TABLE RENAME new table. Applied when migrating pending_approvals UNIQUE constraint from (repo, pr_number) to (repo, pr_number, head_sha). Rows with missing head_sha are given placeholder values and marked as expired.'
+details: |-
+  ## Migration code: _migrate_pending_approvals_unique_constraint()
+
+  1. Check current schema via sqlite_master
+  2. If constraint already correct → skip
+  3. Count rows before migration
+  4. CREATE TABLE pending_approvals_new with correct schema
+  5. INSERT INTO new SELECT FROM old — uses COALESCE for NULL head_sha, CASE for status
+  6. Verify row counts match (raises on mismatch)
+  7. DROP TABLE old
+  8. ALTER TABLE new RENAME TO old
+  9. Recreate indexes
+
+  ## Column additions use try/except pattern
+
+  New columns are added via ALTER TABLE ADD COLUMN wrapped in try/except sqlite3.OperationalError (pass if column exists). This is idempotent and safe for repeat runs.
+pitfalls:
+- SQLite ALTER TABLE cannot modify existing columns or constraints
+- Must verify row count before and after to prevent silent data loss
+- NULL head_sha values need placeholder to satisfy NOT NULL constraint
+tags:
+- sqlite
+- migration
+- schema
+- database
+sources:
+- src/code_reviewer/database.py
+updated_at: 2026-02-13

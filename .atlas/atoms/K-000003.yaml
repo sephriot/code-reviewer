@@ -1,0 +1,39 @@
+id: K-000003
+title: Commit SHA-based duplicate prevention and re-review triggering
+type: decision
+confidence: high
+summary: Reviews are tracked by (repository, pr_number, head_sha) UNIQUE constraint. A PR is re-reviewed only when its head_sha changes (new commits pushed). This prevents duplicate reviews while automatically triggering re-reviews on PR updates. When new commits arrive on a PR with a pending approval, the old pending approval is expired and its context is passed to the LLM as previous review context for continuity.
+details: |-
+  ## How it works
+
+  1. `should_review_pr()` checks both `pr_reviews` and `pending_approvals` tables for the current head_sha
+  2. If found in either table → skip (already reviewed this commit)
+  3. If not found → trigger review
+
+  ## Re-review flow for pending approvals
+
+  When a PR has new commits and an existing pending approval:
+  1. `get_latest_pending_approval_for_pr()` fetches the most recent pending
+  2. If head_sha differs → previous pending context is captured
+  3. `expire_pending_approvals_for_pr()` marks old pending as 'expired'
+  4. LLM receives previous review context in the prompt for continuity
+  5. New review creates fresh pending approval for new head_sha
+
+  ## Database schema
+
+  - `pr_reviews`: UNIQUE(repository, pr_number, head_sha) — completed reviews
+  - `pending_approvals`: UNIQUE(repository, pr_number, head_sha) — queued reviews
+
+  Both tables store head_sha and base_sha for full commit tracking.
+tags:
+- database
+- deduplication
+- commit-sha
+- re-review
+- sqlite
+sources:
+- src/code_reviewer/database.py
+- src/code_reviewer/github_monitor.py
+links:
+- K-000009
+updated_at: 2026-02-13

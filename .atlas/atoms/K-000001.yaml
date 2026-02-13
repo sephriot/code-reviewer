@@ -1,0 +1,47 @@
+id: K-000001
+title: 'Project architecture: async polling monitor with human-in-the-loop approval'
+type: note
+confidence: high
+summary: 'Code-reviewer is a Python asyncio service that polls GitHub for PRs assigned for review, delegates code review to an LLM CLI (Claude or Codex), and acts on the result. Four review outcomes: approve_without_comment (auto-posted), approve_with_comment (queued for human confirmation), request_changes (queued for human confirmation), requires_human_review (logged only). A FastAPI web dashboard lets the human approve/reject queued reviews before they''re posted to GitHub.'
+details: |-
+  ## Component Overview
+
+  1. **main.py / CodeReviewer** — Entry point. Wires Config, GitHubClient, LLMIntegration, GitHubMonitor, and ReviewWebServer. Runs monitor + web server via asyncio.gather(). Signal handlers (SIGTERM/SIGINT) for graceful shutdown.
+
+  2. **github_monitor.py / GitHubMonitor** — Orchestrates the polling loop. Each cycle: expire merged/closed pending approvals, fetch PRs via GitHubClient, check DB if review needed (commit SHA comparison), invoke LLM, act on result (post to GitHub or queue).
+
+  3. **github_client.py / GitHubClient** — Async aiohttp client for GitHub REST API. Fetches review requests via search API, fetches PR details for commit SHAs, posts reviews/approvals. Also validates inline comments against PR diff before posting.
+
+  4. **llm_integration.py / LLMIntegration** — Spawns Claude or Codex CLI as subprocess, pipes PR prompt via stdin, streams/parses stdout. Multi-strategy JSON parsing (full text → brace-matching extraction → line-by-line).
+
+  5. **database.py / ReviewDatabase** — SQLite with two tables: pr_reviews (completed reviews, UNIQUE on repo+pr+head_sha) and pending_approvals (queued reviews with editable fields, same UNIQUE constraint). Thread-local connections.
+
+  6. **web_server.py / ReviewWebServer** — FastAPI dashboard with tabs: pending approvals, human reviews, completed reviews, approval/rejection history. Supports editing comments before posting.
+
+  7. **sound_notifier.py / SoundNotifier** — Cross-platform audio alerts (macOS/Linux/Windows) for various events.
+
+  8. **models.py** — Dataclasses: PRInfo, ReviewResult, InlineComment, ReviewRecord, ReviewAction enum, ReviewModel enum.
+
+  9. **config.py / Config** — Dataclass with load() supporting YAML config files, env vars, and CLI overrides (precedence: CLI > env > file).
+tags:
+- architecture
+- overview
+- asyncio
+- polling
+- human-in-the-loop
+sources:
+- src/code_reviewer/main.py
+- src/code_reviewer/github_monitor.py
+- src/code_reviewer/github_client.py
+- src/code_reviewer/llm_integration.py
+- src/code_reviewer/database.py
+- src/code_reviewer/web_server.py
+- src/code_reviewer/sound_notifier.py
+- src/code_reviewer/models.py
+- src/code_reviewer/config.py
+links:
+- K-000002
+- K-000003
+- K-000005
+- K-000006
+updated_at: 2026-02-13

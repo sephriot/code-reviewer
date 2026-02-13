@@ -1,0 +1,15 @@
+id: K-000012
+title: Four review actions with different handling paths
+type: note
+confidence: high
+summary: 'ReviewAction enum defines four outcomes, each with distinct handling: (1) approve_without_comment → auto-posted to GitHub, recorded in pr_reviews immediately. (2) approve_with_comment → queued in pending_approvals, human confirms via web UI. (3) request_changes → queued in pending_approvals, human confirms via web UI. (4) requires_human_review → recorded in pr_reviews with reason, no GitHub action. Actions 2 and 3 are only recorded in pr_reviews after human approval in the web UI.'
+tags:
+- review-actions
+- workflow
+- enum
+sources:
+- src/code_reviewer/models.py
+- src/code_reviewer/github_monitor.py
+links:
+- K-000005
+updated_at: 2026-02-13

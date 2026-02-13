@@ -1,0 +1,14 @@
+id: K-000006
+title: 'Configuration precedence: CLI overrides > env vars > YAML config file'
+type: note
+confidence: high
+summary: 'Config.load() merges three sources in order: YAML config file (lowest), environment variables (middle), CLI overrides (highest). Env vars use uppercase names (GITHUB_TOKEN, REVIEW_MODEL, etc.). Boolean env vars accept ''true''/''1''/''yes''/''on''. Lists (REPOSITORIES, PR_AUTHORS) are comma-separated. Required fields: github_token, github_username. Default review model is CLAUDE. prompt_file defaults to prompts/review_prompt.txt and is auto-created if missing.'
+tags:
+- config
+- environment-variables
+- yaml
+- cli
+sources:
+- src/code_reviewer/config.py
+- src/code_reviewer/main.py
+updated_at: 2026-02-13

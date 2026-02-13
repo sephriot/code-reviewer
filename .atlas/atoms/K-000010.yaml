@@ -1,0 +1,33 @@
+id: K-000010
+title: GitHub search API for PR discovery, not Events or Notifications API
+type: decision
+confidence: high
+summary: PR discovery uses GitHub Search API (`GET /search/issues?q=type:pr state:open review-requested:{username}`) rather than Events or Notifications APIs. Filtering by repository and author is done application-side, not in the search query. Each search result requires a follow-up `GET /repos/{owner}/{repo}/pulls/{number}` call to fetch head/base commit SHAs. The aiohttp session is lazily initialized and reused across requests.
+details: |-
+  ## Why search API
+
+  - Simple query syntax for finding PRs assigned for review
+  - Returns all open PRs across repos in a single call
+  - No webhook infrastructure needed
+
+  ## Application-side filtering
+
+  The search query is kept minimal (`type:pr state:open review-requested:{username}`). Repository and author filters are applied in Python after results return. This avoids GitHub search query complexity limits and provides clearer logging.
+
+  ## Rate limit considerations
+
+  Each poll cycle makes: 1 search call + N detail calls (one per PR) + M status calls (one per pending approval). The poll interval (default 60s) helps stay under rate limits.
+pitfalls:
+- Search API has lower rate limits than REST API (30 req/min authenticated)
+- Each PR needs a follow-up API call for commit SHAs
+- Application-side filtering means all matching PRs are fetched even if only monitoring one repo
+tags:
+- github-api
+- search
+- polling
+- rate-limit
+sources:
+- src/code_reviewer/github_client.py
+links:
+- K-000004
+updated_at: 2026-02-13

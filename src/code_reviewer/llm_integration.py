@@ -297,7 +297,8 @@ class LLMIntegration:
                     if block_type == "thinking":
                         thinking_text = block.get("thinking", "")
                         if thinking_text:
-                            logger.info("[THINKING] %s", thinking_text)
+                            for thinking_line in thinking_text.splitlines():
+                                logger.info("[THINKING] %s", thinking_line)
                     elif block_type == "text":
                         text_content = block.get("text", "")
                         if text_content:
