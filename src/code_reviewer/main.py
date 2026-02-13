@@ -24,7 +24,7 @@ class CodeReviewer:
         self.config = config
         self.running = True
         self.github_client = GitHubClient(config.github_token)
-        self.model_integration = LLMIntegration(config.prompt_file, config.review_model, show_thinking=config.show_thinking)
+        self.model_integration = LLMIntegration(config.prompt_file, config.review_model, show_thinking=config.show_thinking, atlas_enabled=config.atlas_enabled)
         self.monitor = GitHubMonitor(
             self.github_client,
             self.model_integration,
@@ -54,6 +54,7 @@ class CodeReviewer:
         click.echo(f"Monitoring user: {self.config.github_username}")
         click.echo(f"Using prompt file: {self.config.prompt_file}")
         click.echo(f"Using review model: {self.config.review_model.value}")
+        click.echo(f"Atlas knowledge injection: {'enabled' if self.config.atlas_enabled else 'disabled'}")
 
         if self.config.web_enabled:
             click.echo(f"Web UI enabled at http://{self.config.web_host}:{self.config.web_port}")
@@ -145,13 +146,15 @@ class CodeReviewer:
               help='Port for web UI server (default: 8000, env: WEB_PORT)')
 @click.option('--show-thinking/--no-show-thinking', envvar='SHOW_THINKING', default=False,
               help='Show Claude thinking process in logs (default: disabled, env: SHOW_THINKING)')
+@click.option('--atlas-enabled/--no-atlas', envvar='ATLAS_ENABLED', default=False,
+              help='Enable Atlas knowledge injection for reviews (default: disabled, env: ATLAS_ENABLED)')
 def main(config: Optional[str], prompt: Optional[str], review_model: str, github_token: Optional[str],
          github_username: Optional[str], poll_interval: int, review_timeout: Optional[int], sound_enabled: bool,
          sound_file: Optional[str], approval_sound_enabled: bool,
          approval_sound_file: Optional[str], timeout_sound_enabled: Optional[bool],
          timeout_sound_file: Optional[str], outdated_sound_enabled: Optional[bool],
          outdated_sound_file: Optional[str], dry_run: bool, web_enabled: bool,
-         web_host: str, web_port: int, show_thinking: bool):
+         web_host: str, web_port: int, show_thinking: bool, atlas_enabled: bool):
     """Automated GitHub PR code review using Claude."""
     
     load_dotenv()
@@ -177,7 +180,8 @@ def main(config: Optional[str], prompt: Optional[str], review_model: str, github
             web_enabled=web_enabled,
             web_host=web_host,
             web_port=web_port,
-            show_thinking=show_thinking
+            show_thinking=show_thinking,
+            atlas_enabled=atlas_enabled
         )
         
         # Set up logging

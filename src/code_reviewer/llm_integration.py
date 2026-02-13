@@ -42,10 +42,11 @@ class LLMIntegration:
         ],
     }
 
-    def __init__(self, prompt_file: Path, model: ReviewModel, *, show_thinking: bool = False):
+    def __init__(self, prompt_file: Path, model: ReviewModel, *, show_thinking: bool = False, atlas_enabled: bool = False):
         self.prompt_file = prompt_file
         self.model = model
         self.show_thinking = show_thinking
+        self.atlas_enabled = atlas_enabled
 
     async def review_pr(
         self,
@@ -102,7 +103,7 @@ class LLMIntegration:
         if self.model is ReviewModel.CODEX:
             codex_output_path = self._prepare_codex_output_path()
 
-        cmd = self._build_command(codex_output_path)
+        cmd = self._build_command(codex_output_path, pr_info)
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -190,7 +191,7 @@ class LLMIntegration:
 
         return raw_output
 
-    def _build_command(self, codex_output_path: Optional[Path] = None) -> List[str]:
+    def _build_command(self, codex_output_path: Optional[Path] = None, pr_info: Optional[PRInfo] = None) -> List[str]:
         """Resolve the CLI command for the configured model."""
         try:
             command = list(self._CLI_COMMANDS[self.model])
@@ -200,11 +201,27 @@ class LLMIntegration:
         if self.model is ReviewModel.CLAUDE and self.show_thinking:
             command.extend(["--output-format", "stream-json", "--verbose"])
 
+        if self.model is ReviewModel.CLAUDE and self.atlas_enabled and pr_info is not None:
+            atlas_prompt = self._build_atlas_system_prompt(pr_info)
+            command.extend(["--append-system-prompt", atlas_prompt])
+
         if self.model is ReviewModel.CODEX:
             output_target = codex_output_path or Path(self._CODEX_OUTPUT_FILE)
             command.append(str(output_target))
 
         return command
+
+    def _build_atlas_system_prompt(self, pr_info: PRInfo) -> str:
+        """Build a system prompt instructing the review agent to use Atlas knowledge."""
+        owner = pr_info.repository[0]
+        repo = pr_info.repository[1]
+        return (
+            "You have access to Atlas knowledge base via MCP tools. Before starting the code review:\n"
+            f'1. Call activate_project with org="{owner}" and project="{repo}"\n'
+            "2. Search for relevant gotchas, patterns, and architectural decisions\n"
+            "3. Use findings to inform your review - especially project conventions and known pitfalls\n"
+            "Do not mention Atlas in your review output JSON."
+        )
 
     def _prepare_codex_output_path(self) -> Path:
         """Create a unique path for Codex output to avoid stale data."""

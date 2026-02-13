@@ -41,6 +41,7 @@ class Config:
     web_host: str = "127.0.0.1"
     web_port: int = 8000
     show_thinking: bool = False
+    atlas_enabled: bool = False
     
     @classmethod
     def load(cls, config_file: Optional[str] = None, **overrides) -> 'Config':
@@ -81,6 +82,7 @@ class Config:
             'WEB_HOST': 'web_host',
             'WEB_PORT': 'web_port',
             'SHOW_THINKING': 'show_thinking',
+            'ATLAS_ENABLED': 'atlas_enabled',
         }
         
         for env_var, config_key in env_mappings.items():
@@ -88,7 +90,7 @@ class Config:
             if value:
                 if config_key in ['poll_interval', 'web_port', 'review_timeout']:
                     config_data[config_key] = int(value)
-                elif config_key in ['sound_enabled', 'approval_sound_enabled', 'timeout_sound_enabled', 'merged_or_closed_sound_enabled', 'dry_run', 'web_enabled', 'show_thinking']:
+                elif config_key in ['sound_enabled', 'approval_sound_enabled', 'timeout_sound_enabled', 'merged_or_closed_sound_enabled', 'dry_run', 'web_enabled', 'show_thinking', 'atlas_enabled']:
                     config_data[config_key] = value.lower() in ('true', '1', 'yes', 'on')
                 elif config_key in ['sound_file', 'approval_sound_file', 'timeout_sound_file', 'merged_or_closed_sound_file', 'database_path']:
                     config_data[config_key] = Path(value)
