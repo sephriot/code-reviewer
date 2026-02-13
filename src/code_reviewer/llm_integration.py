@@ -42,9 +42,10 @@ class LLMIntegration:
         ],
     }
 
-    def __init__(self, prompt_file: Path, model: ReviewModel):
+    def __init__(self, prompt_file: Path, model: ReviewModel, *, show_thinking: bool = False):
         self.prompt_file = prompt_file
         self.model = model
+        self.show_thinking = show_thinking
 
     async def review_pr(
         self,
@@ -120,11 +121,21 @@ class LLMIntegration:
         if hasattr(process.stdin, "wait_closed"):
             await process.stdin.wait_closed()
 
-        stdout_task = asyncio.create_task(
-            self._stream_subprocess_output(
-                process.stdout, stdout_buffer, output_stream=sys.stdout
+        use_stream_json = self.model is ReviewModel.CLAUDE and self.show_thinking
+        stream_json_result: Optional[str] = None
+
+        if use_stream_json:
+            stdout_task = asyncio.create_task(
+                self._stream_json_output(
+                    process.stdout, stdout_buffer,
+                )
             )
-        )
+        else:
+            stdout_task = asyncio.create_task(
+                self._stream_subprocess_output(
+                    process.stdout, stdout_buffer, output_stream=sys.stdout
+                )
+            )
         stderr_task = asyncio.create_task(
             self._stream_subprocess_output(
                 process.stderr, stderr_buffer, output_stream=sys.stderr
@@ -133,7 +144,9 @@ class LLMIntegration:
 
         try:
             await process.wait()
-            await asyncio.gather(stdout_task, stderr_task)
+            results = await asyncio.gather(stdout_task, stderr_task)
+            if use_stream_json:
+                stream_json_result = results[0]
         except asyncio.CancelledError:
             logger.warning(
                 "%s CLI invocation cancelled; terminating subprocess",
@@ -170,6 +183,8 @@ class LLMIntegration:
                 raw_output = codex_output_path.read_text(encoding="utf-8")
             finally:
                 codex_output_path.unlink(missing_ok=True)
+        elif use_stream_json and stream_json_result is not None:
+            raw_output = stream_json_result
         else:
             raw_output = "".join(stdout_buffer)
 
@@ -181,6 +196,9 @@ class LLMIntegration:
             command = list(self._CLI_COMMANDS[self.model])
         except KeyError:  # pragma: no cover - defensive
             raise ValueError(f"Unsupported review model: {self.model}")
+
+        if self.model is ReviewModel.CLAUDE and self.show_thinking:
+            command.extend(["--output-format", "stream-json", "--verbose"])
 
         if self.model is ReviewModel.CODEX:
             output_target = codex_output_path or Path(self._CODEX_OUTPUT_FILE)
@@ -244,6 +262,52 @@ class LLMIntegration:
             lines.append("Inline feedback items:\n" + "\n".join(formatted))
 
         return "\n".join(lines).strip()
+
+    async def _stream_json_output(
+        self,
+        stream: Optional[asyncio.StreamReader],
+        buffer: List[str],
+    ) -> str:
+        """Parse stream-json events, log thinking blocks, and return the final result text."""
+        if stream is None:
+            return ""
+
+        result_text = ""
+
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            text = line.decode(errors="replace").strip()
+            if not text:
+                continue
+            buffer.append(text + "\n")
+
+            try:
+                event = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+
+            event_type = event.get("type")
+
+            if event_type == "assistant":
+                message = event.get("message", {})
+                for block in message.get("content", []):
+                    block_type = block.get("type")
+                    if block_type == "thinking":
+                        thinking_text = block.get("thinking", "")
+                        if thinking_text:
+                            logger.info("[THINKING] %s", thinking_text)
+                    elif block_type == "text":
+                        text_content = block.get("text", "")
+                        if text_content:
+                            sys.stdout.write(text_content)
+                            sys.stdout.flush()
+
+            elif event_type == "result":
+                result_text = event.get("result", "")
+
+        return result_text
 
     async def _stream_subprocess_output(
         self,

@@ -24,7 +24,7 @@ class CodeReviewer:
         self.config = config
         self.running = True
         self.github_client = GitHubClient(config.github_token)
-        self.model_integration = LLMIntegration(config.prompt_file, config.review_model)
+        self.model_integration = LLMIntegration(config.prompt_file, config.review_model, show_thinking=config.show_thinking)
         self.monitor = GitHubMonitor(
             self.github_client,
             self.model_integration,
@@ -143,13 +143,15 @@ class CodeReviewer:
               help='Host for web UI server (default: 127.0.0.1, env: WEB_HOST)')
 @click.option('--web-port', envvar='WEB_PORT', default=8000, type=int,
               help='Port for web UI server (default: 8000, env: WEB_PORT)')
-def main(config: Optional[str], prompt: Optional[str], review_model: str, github_token: Optional[str], 
+@click.option('--show-thinking/--no-show-thinking', envvar='SHOW_THINKING', default=False,
+              help='Show Claude thinking process in logs (default: disabled, env: SHOW_THINKING)')
+def main(config: Optional[str], prompt: Optional[str], review_model: str, github_token: Optional[str],
          github_username: Optional[str], poll_interval: int, review_timeout: Optional[int], sound_enabled: bool,
          sound_file: Optional[str], approval_sound_enabled: bool,
          approval_sound_file: Optional[str], timeout_sound_enabled: Optional[bool],
          timeout_sound_file: Optional[str], outdated_sound_enabled: Optional[bool],
          outdated_sound_file: Optional[str], dry_run: bool, web_enabled: bool,
-         web_host: str, web_port: int):
+         web_host: str, web_port: int, show_thinking: bool):
     """Automated GitHub PR code review using Claude."""
     
     load_dotenv()
@@ -174,7 +176,8 @@ def main(config: Optional[str], prompt: Optional[str], review_model: str, github
             dry_run=dry_run,
             web_enabled=web_enabled,
             web_host=web_host,
-            web_port=web_port
+            web_port=web_port,
+            show_thinking=show_thinking
         )
         
         # Set up logging
