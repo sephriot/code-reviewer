@@ -364,6 +364,7 @@ class ReviewWebServer:
                         ${review.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${review.review_reason}</div>` : ''}
                         <div class="buttons">
                             <a href="https://github.com/${review.repository}/pull/${review.pr_number}" target="_blank" class="btn btn-view">View PR</a>
+                            <button class="btn btn-retry" onclick="reviewHumanReviewAgain(${review.id})">Review Again</button>
                         </div>
                     </div>
                 `).join('');
@@ -676,6 +677,28 @@ class ReviewWebServer:
 
             try {
                 const response = await fetch(`/api/approvals/${id}/review-again`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showToast(result.message || 'Review triggered. Refresh to see results.');
+                    refreshCurrentView();
+                } else {
+                    const errorText = await response.text();
+                    alert('Failed to trigger re-review: ' + errorText);
+                }
+            } catch (error) {
+                console.error('Failed to trigger re-review:', error);
+                alert('Failed to trigger re-review: ' + error.message);
+            }
+        }
+
+        async function reviewHumanReviewAgain(id) {
+            if (!confirm('Discard this human review record and trigger a fresh LLM review?')) return;
+
+            try {
+                const response = await fetch(`/api/reviews/${id}/review-again`, {
                     method: 'POST'
                 });
 
@@ -1124,7 +1147,9 @@ class ReviewWebServer:
                     "pr_title": review.pr_title,
                     "pr_author": review.pr_author,
                     "review_reason": review.review_reason,
-                    "reviewed_at": review.reviewed_at
+                    "reviewed_at": review.reviewed_at,
+                    "head_sha": review.head_sha,
+                    "base_sha": review.base_sha,
                 } for review in reviews])
             except Exception as e:
                 logger.error(f"Failed to get human reviews: {e}")
@@ -1308,6 +1333,11 @@ class ReviewWebServer:
                             await self.database.record_review(pr_info, review_result)
                     except Exception as e:
                         logger.error(f"Re-review failed for {pr_info.repository_name}#{pr_info.number}: {e}")
+                        failure_result = ReviewResult(
+                            action=ReviewAction.REQUIRES_HUMAN_REVIEW,
+                            reason=f"Re-review failed: {e}",
+                        )
+                        await self.database.record_review(pr_info, failure_result)
 
                 asyncio.create_task(run_review())
 
@@ -1321,6 +1351,89 @@ class ReviewWebServer:
                 raise
             except Exception as e:
                 logger.error(f"Failed to trigger re-review for approval {approval_id}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/api/reviews/{review_id}/review-again")
+        async def review_human_review_again(review_id: int):
+            """Delete a human-review record and trigger a fresh LLM review."""
+            try:
+                if not self.llm_integration:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="LLM integration not available",
+                    )
+
+                review = await self.database.get_review_by_id(review_id)
+                if not review:
+                    raise HTTPException(status_code=404, detail="Review not found")
+
+                if review.review_action != ReviewAction.REQUIRES_HUMAN_REVIEW:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Only human-review records can be re-reviewed via this endpoint",
+                    )
+
+                # Delete the review record so the PR can be reviewed again
+                await self.database.delete_review_for_re_review(
+                    review.repository, review.pr_number, review.head_sha,
+                )
+
+                pr_info = PRInfo(
+                    id=review.pr_number,
+                    number=review.pr_number,
+                    repository=review.repository.split('/'),
+                    url=f"https://github.com/{review.repository}/pull/{review.pr_number}",
+                    title=review.pr_title,
+                    author=review.pr_author,
+                    head_sha=review.head_sha,
+                    base_sha=review.base_sha,
+                )
+
+                async def run_review():
+                    try:
+                        logger.info(
+                            f"Starting re-review for {pr_info.repository_name}#{pr_info.number}"
+                        )
+                        review_result = await self.llm_integration.review_pr(pr_info)
+                        logger.info(
+                            f"Re-review complete for {pr_info.repository_name}#{pr_info.number}: "
+                            f"{review_result.action.value}"
+                        )
+                        if review_result.action in (
+                            ReviewAction.APPROVE_WITH_COMMENT,
+                            ReviewAction.REQUEST_CHANGES,
+                        ):
+                            await self.database.create_pending_approval(pr_info, review_result)
+                            if self.sound_notifier:
+                                await self.sound_notifier.play_notification()
+                        elif review_result.action == ReviewAction.REQUIRES_HUMAN_REVIEW:
+                            await self.database.record_review(pr_info, review_result)
+                            if self.sound_notifier:
+                                await self.sound_notifier.play_notification()
+                        else:
+                            await self.database.record_review(pr_info, review_result)
+                    except Exception as e:
+                        logger.error(
+                            f"Re-review failed for {pr_info.repository_name}#{pr_info.number}: {e}"
+                        )
+                        failure_result = ReviewResult(
+                            action=ReviewAction.REQUIRES_HUMAN_REVIEW,
+                            reason=f"Re-review failed: {e}",
+                        )
+                        await self.database.record_review(pr_info, failure_result)
+
+                asyncio.create_task(run_review())
+
+                logger.info(f"Triggered re-review for human review {review_id}")
+                return JSONResponse(content={
+                    "status": "success",
+                    "message": "Review triggered. Refresh in a moment to see results.",
+                })
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to trigger re-review for review {review_id}: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/api/approved-approvals")

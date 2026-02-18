@@ -110,6 +110,7 @@ class LLMIntegration:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=10 * 1024 * 1024,  # 10 MB – prevents ValueError on large stream-json lines
         )
 
         stdout_buffer: List[str] = []

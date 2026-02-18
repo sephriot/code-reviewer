@@ -387,6 +387,24 @@ class ReviewDatabase:
             return ReviewRecord.from_db_row(dict(row))
         return None
 
+    async def get_review_by_id(self, review_id: int) -> Optional[ReviewRecord]:
+        """Get a review record by its primary key."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_review_by_id_sync, review_id
+        )
+
+    def _get_review_by_id_sync(self, review_id: int) -> Optional[ReviewRecord]:
+        """Synchronous implementation of get_review_by_id."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM pr_reviews WHERE id = ?", (review_id,))
+
+        row = cursor.fetchone()
+        if row:
+            return ReviewRecord.from_db_row(dict(row))
+        return None
+
     async def get_review_for_commit(self, repository: str, pr_number: int, head_sha: str) -> Optional[ReviewRecord]:
         """Get the review for a specific commit of a PR."""
         return await asyncio.get_event_loop().run_in_executor(

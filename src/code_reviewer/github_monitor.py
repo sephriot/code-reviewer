@@ -223,13 +223,36 @@ class GitHubMonitor:
             logger.error(f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from {self.config.review_model.value}")
             logger.error(f"📋 PR: '{pr_info.title}' by {pr_info.author}")
             logger.error(f"❗ Reason: {str(e)}")
-            logger.error(f"🔄 This PR will be retried when the commit changes")
             # Log a preview of the output (truncated for readability)
             output_preview = e.raw_output[:1000] + "..." if len(e.raw_output) > 1000 else e.raw_output
             logger.error(f"📤 {self.config.review_model.value} output preview: {output_preview}")
-            
+            reason = f"Automated review failed: invalid JSON output from {self.config.review_model.value} — {e}"
+            if self.config.dry_run:
+                logger.info(
+                    f"[DRY RUN] Would mark PR #{pr_info.number} as REQUIRES HUMAN REVIEW due to parse error"
+                )
+            else:
+                failure_result = ReviewResult(
+                    action=ReviewAction.REQUIRES_HUMAN_REVIEW,
+                    reason=reason,
+                )
+                await self.db.record_review(pr_info, failure_result)
+                await self.sound_notifier.play_notification()
+
         except Exception as e:
             logger.error(f"Error processing PR #{pr_info.number}: {e}")
+            reason = f"Automated review failed with unexpected error: {e}"
+            if self.config.dry_run:
+                logger.info(
+                    f"[DRY RUN] Would mark PR #{pr_info.number} as REQUIRES HUMAN REVIEW due to error"
+                )
+            else:
+                failure_result = ReviewResult(
+                    action=ReviewAction.REQUIRES_HUMAN_REVIEW,
+                    reason=reason,
+                )
+                await self.db.record_review(pr_info, failure_result)
+                await self.sound_notifier.play_notification()
 
     async def _expire_merged_or_closed_pending_approvals(self) -> None:
         """Mark pending approvals as merged_or_closed if their PRs are merged or closed."""
