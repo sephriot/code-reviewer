@@ -295,6 +295,7 @@
                         ${review.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${review.review_reason}</div>` : ''}
                         <div class="buttons">
                             <a href="https://github.com/${review.repository}/pull/${review.pr_number}" target="_blank" class="btn btn-view">View PR</a>
+                            <button class="btn btn-retry" onclick="reviewHumanReviewAgain(${review.id})">Review Again</button>
                         </div>
                     </div>
                 `).join('');
@@ -607,6 +608,28 @@
 
             try {
                 const response = await fetch(`/api/approvals/${id}/review-again`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showToast(result.message || 'Review triggered. Refresh to see results.');
+                    refreshCurrentView();
+                } else {
+                    const errorText = await response.text();
+                    alert('Failed to trigger re-review: ' + errorText);
+                }
+            } catch (error) {
+                console.error('Failed to trigger re-review:', error);
+                alert('Failed to trigger re-review: ' + error.message);
+            }
+        }
+
+        async function reviewHumanReviewAgain(id) {
+            if (!confirm('Discard this human review record and trigger a fresh LLM review?')) return;
+
+            try {
+                const response = await fetch(`/api/reviews/${id}/review-again`, {
                     method: 'POST'
                 });
 
