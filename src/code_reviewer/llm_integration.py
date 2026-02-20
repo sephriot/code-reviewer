@@ -42,8 +42,9 @@ class LLMIntegration:
         ],
     }
 
-    def __init__(self, prompt_file: Path, model: ReviewModel, *, show_thinking: bool = False, atlas_enabled: bool = False):
+    def __init__(self, prompt_file: Path, model: ReviewModel, *, output_format_file: Optional[Path] = None, show_thinking: bool = False, atlas_enabled: bool = False):
         self.prompt_file = prompt_file
+        self.output_format_file = output_format_file
         self.model = model
         self.show_thinking = show_thinking
         self.atlas_enabled = atlas_enabled
@@ -77,6 +78,9 @@ class LLMIntegration:
     async def _run_model_cli(self, pr_info: PRInfo, previous_pending: Optional[Dict[str, Any]]) -> str:
         """Execute the configured CLI and return raw output."""
         prompt_template = self.prompt_file.read_text(encoding="utf-8")
+        if self.output_format_file:
+            output_format = self.output_format_file.read_text(encoding="utf-8")
+            prompt_template = f"{prompt_template}\n\n{output_format}"
 
         pr_url = pr_info.url
         repo_name = pr_info.repository_name

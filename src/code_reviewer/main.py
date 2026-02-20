@@ -24,7 +24,7 @@ class CodeReviewer:
         self.config = config
         self.running = True
         self.github_client = GitHubClient(config.github_token)
-        self.model_integration = LLMIntegration(config.prompt_file, config.review_model, show_thinking=config.show_thinking, atlas_enabled=config.atlas_enabled)
+        self.model_integration = LLMIntegration(config.prompt_file, config.review_model, output_format_file=config.output_format_file, show_thinking=config.show_thinking, atlas_enabled=config.atlas_enabled)
         self.monitor = GitHubMonitor(
             self.github_client,
             self.model_integration,
@@ -53,6 +53,8 @@ class CodeReviewer:
         click.echo("Starting GitHub PR monitor...")
         click.echo(f"Monitoring user: {self.config.github_username}")
         click.echo(f"Using prompt file: {self.config.prompt_file}")
+        if self.config.output_format_file:
+            click.echo(f"Using output format file: {self.config.output_format_file}")
         click.echo(f"Using review model: {self.config.review_model.value}")
         click.echo(f"Atlas knowledge injection: {'enabled' if self.config.atlas_enabled else 'disabled'}")
 
@@ -107,8 +109,10 @@ class CodeReviewer:
 @click.command()
 @click.option('--config', '-c', type=click.Path(exists=True), 
               help='Path to configuration file')
-@click.option('--prompt', '-p', type=click.Path(exists=True), 
+@click.option('--prompt', '-p', type=click.Path(exists=True),
               help='Path to prompt template file')
+@click.option('--output-format', '-o', 'output_format', type=click.Path(exists=True),
+              help='Path to output format prompt file (appended to the review prompt)')
 @click.option('--model', 'review_model', type=click.Choice(['CLAUDE', 'CODEX']),
              envvar='REVIEW_MODEL', default='CLAUDE',
              help='Language model CLI to use for reviews (env: REVIEW_MODEL)')
@@ -148,7 +152,7 @@ class CodeReviewer:
               help='Show Claude thinking process in logs (default: disabled, env: SHOW_THINKING)')
 @click.option('--atlas-enabled/--no-atlas', envvar='ATLAS_ENABLED', default=False,
               help='Enable Atlas knowledge injection for reviews (default: disabled, env: ATLAS_ENABLED)')
-def main(config: Optional[str], prompt: Optional[str], review_model: str, github_token: Optional[str],
+def main(config: Optional[str], prompt: Optional[str], output_format: Optional[str], review_model: str, github_token: Optional[str],
          github_username: Optional[str], poll_interval: int, review_timeout: Optional[int], sound_enabled: bool,
          sound_file: Optional[str], approval_sound_enabled: bool,
          approval_sound_file: Optional[str], timeout_sound_enabled: Optional[bool],
@@ -163,6 +167,7 @@ def main(config: Optional[str], prompt: Optional[str], review_model: str, github
         app_config = Config.load(
             config_file=config,
             prompt_file=prompt,
+            output_format_file=output_format,
             review_model=review_model,
             github_token=github_token,
             github_username=github_username,

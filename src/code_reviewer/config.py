@@ -21,6 +21,7 @@ class Config:
     github_token: str
     github_username: str
     prompt_file: Path
+    output_format_file: Optional[Path] = None
     review_model: ReviewModel = ReviewModel.CLAUDE
     poll_interval: int = 60
     review_timeout: int = 600
@@ -62,6 +63,7 @@ class Config:
             'GITHUB_TOKEN': 'github_token',
             'GITHUB_USERNAME': 'github_username',
             'PROMPT_FILE': 'prompt_file',
+            'OUTPUT_FORMAT_FILE': 'output_format_file',
             'REVIEW_MODEL': 'review_model',
             'REVIEW_TIMEOUT': 'review_timeout',
             'POLL_INTERVAL': 'poll_interval',
@@ -150,9 +152,16 @@ class Config:
             cls._create_default_prompt(prompt_file)
 
         config_data['prompt_file'] = prompt_file
-        
+
+        # Handle output_format_file
+        if 'output_format_file' in config_data and config_data['output_format_file']:
+            output_format_file = Path(config_data['output_format_file'])
+            if not output_format_file.exists():
+                raise FileNotFoundError(f"Output format file not found: {output_format_file}")
+            config_data['output_format_file'] = output_format_file
+
         # Handle path conversions
-        for path_field in ['prompt_file', 'sound_file', 'approval_sound_file', 'timeout_sound_file', 'merged_or_closed_sound_file', 'database_path']:
+        for path_field in ['prompt_file', 'output_format_file', 'sound_file', 'approval_sound_file', 'timeout_sound_file', 'merged_or_closed_sound_file', 'database_path']:
             if path_field in config_data and config_data[path_field] is not None:
                 if not isinstance(config_data[path_field], Path):
                     config_data[path_field] = Path(config_data[path_field])
