@@ -29,41 +29,49 @@ logger = logging.getLogger(__name__)
 class ReviewWebServer:
     """Web server for PR review management."""
 
-    def __init__(self, database: ReviewDatabase, github_client: GitHubClient, sound_notifier=None, llm_integration=None):
+    def __init__(
+        self,
+        database: ReviewDatabase,
+        github_client: GitHubClient,
+        sound_notifier=None,
+        llm_integration=None,
+    ):
         self.database = database
         self.github_client = github_client
         self.sound_notifier = sound_notifier
         self.llm_integration = llm_integration
         self.app = FastAPI(title="Code Review Dashboard")
-        
+
         # Setup static files and templates
         self.templates_dir = Path(__file__).parent / "templates"
         self.static_dir = Path(__file__).parent / "static"
         self.templates_dir.mkdir(exist_ok=True)
         self.static_dir.mkdir(exist_ok=True)
-        
+
         # Create default templates if they don't exist
         self._create_default_templates()
-        
+
         # Setup templates and static files
         self.templates = Jinja2Templates(directory=str(self.templates_dir))
-        self.app.mount("/static", StaticFiles(directory=str(self.static_dir)), name="static")
-        
+        self.app.mount(
+            "/static", StaticFiles(directory=str(self.static_dir)), name="static"
+        )
+
         self._setup_routes()
 
     @staticmethod
     def _append_text_block(original: Optional[str], addition: str) -> str:
         """Append a formatted block of text with spacing."""
-        addition_text = (addition or '').strip()
+        addition_text = (addition or "").strip()
         if not addition_text:
-            return (original or '').strip()
+            return (original or "").strip()
 
-        original_text = (original or '').strip()
+        original_text = (original or "").strip()
         if not original_text:
             return addition_text
 
         return f"{original_text}\n\n{addition_text}"
-    
+
     def _create_default_templates(self):
         """Create default HTML templates."""
         # Dashboard template
@@ -118,6 +126,26 @@ class ReviewWebServer:
         .modal-content { background: white; margin: 5% auto; padding: 20px; width: 80%; max-width: 600px; border-radius: 8px; }
         .close { float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
         textarea { width: 100%; height: 100px; margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        /* Analytics styles */
+        .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }
+        .stat-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 12px; text-align: center; }
+        .stat-card.green { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+        .stat-card.orange { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .stat-card.blue { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+        .stat-card .stat-value { font-size: 32px; font-weight: bold; margin-bottom: 5px; }
+        .stat-card .stat-label { font-size: 14px; opacity: 0.9; }
+        .chart-container { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .chart-title { font-size: 16px; font-weight: bold; margin-bottom: 15px; color: #333; }
+        .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 768px) { .charts-row { grid-template-columns: 1fr; } }
+        .analytics-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        .analytics-table th, .analytics-table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        .analytics-table th { background: #f8f9fa; font-weight: 600; }
+        .analytics-table tr:hover { background: #f8f9fa; }
+        .rate-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+        .rate-good { background: #d4edda; color: #155724; }
+        .rate-warning { background: #fff3cd; color: #856404; }
+        .rate-danger { background: #f8d7da; color: #721c24; }
     </style>
 </head>
 <body>
@@ -132,6 +160,7 @@ class ReviewWebServer:
             <div class="tab" onclick="showTab('merged-closed')">Merged/Closed</div>
             <div class="tab" onclick="showTab('expired')">Expired</div>
             <div class="tab" onclick="showTab('completed-reviews')">Completed Reviews</div>
+            <div class="tab" onclick="showTab('analytics')">📊 Analytics</div>
         </div>
         
         <div id="pending" class="tab-content active">
@@ -182,7 +211,76 @@ class ReviewWebServer:
                 <div id="completed-reviews-list"></div>
             </div>
         </div>
+
+        <div id="analytics" class="tab-content">
+            <div class="section">
+                <h2>📊 Review Analytics Dashboard</h2>
+                
+                <!-- Overview Stats Cards -->
+                <div class="analytics-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-total-reviews">-</div>
+                        <div class="stat-label">Total Reviews</div>
+                    </div>
+                    <div class="stat-card green">
+                        <div class="stat-value" id="stat-approval-rate">-</div>
+                        <div class="stat-label">Approval Rate</div>
+                    </div>
+                    <div class="stat-card orange">
+                        <div class="stat-value" id="stat-human-rate">-</div>
+                        <div class="stat-label">Human Review Rate</div>
+                    </div>
+                    <div class="stat-card blue">
+                        <div class="stat-value" id="stat-avg-comments">-</div>
+                        <div class="stat-label">Avg Inline Comments</div>
+                    </div>
+                </div>
+
+                <!-- Review Trends Chart -->
+                <div class="chart-container">
+                    <div class="chart-title">📈 Review Trends (Last 30 Days)</div>
+                    <canvas id="trends-chart" height="100"></canvas>
+                </div>
+
+                <div class="charts-row">
+                    <!-- Action Distribution Chart -->
+                    <div class="chart-container">
+                        <div class="chart-title">🎯 Action Distribution</div>
+                        <canvas id="actions-chart" height="200"></canvas>
+                    </div>
+
+                    <!-- Top Repositories Chart -->
+                    <div class="chart-container">
+                        <div class="chart-title">📁 Top Repositories</div>
+                        <canvas id="repos-chart" height="200"></canvas>
+                    </div>
+                </div>
+
+                <!-- Top Authors Table -->
+                <div class="chart-container">
+                    <div class="chart-title">👥 Top PR Authors</div>
+                    <table class="analytics-table">
+                        <thead>
+                            <tr>
+                                <th>Author</th>
+                                <th>PRs Reviewed</th>
+                                <th>Approval Rate</th>
+                                <th>Human Review %</th>
+                                <th>Change Request %</th>
+                                <th>Avg Comments</th>
+                            </tr>
+                        </thead>
+                        <tbody id="authors-table-body">
+                            <tr><td colspan="6" style="text-align:center;">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
     <!-- Toast notification -->
     <div id="toast" class="toast"></div>
@@ -233,6 +331,9 @@ class ReviewWebServer:
                         case 'completed-reviews':
                             loadCompletedReviews();
                             break;
+                        case 'analytics':
+                            loadAnalytics();
+                            break;
                     }
                 }
             }
@@ -262,6 +363,8 @@ class ReviewWebServer:
                 loadExpiredApprovals();
             } else if (tabName === 'completed-reviews') {
                 loadCompletedReviews();
+            } else if (tabName === 'analytics') {
+                loadAnalytics();
             }
         }
 
@@ -1091,6 +1194,204 @@ class ReviewWebServer:
             }
         }
 
+        // Analytics variables to store chart instances
+        let trendsChart = null;
+        let actionsChart = null;
+        let reposChart = null;
+
+        async function loadAnalytics() {
+            try {
+                // Load all analytics data in parallel
+                const [overview, trends, actions, repos, authors] = await Promise.all([
+                    fetch('/api/analytics/overview').then(r => r.json()),
+                    fetch('/api/analytics/trends?period=30d').then(r => r.json()),
+                    fetch('/api/analytics/actions').then(r => r.json()),
+                    fetch('/api/analytics/repositories?limit=10').then(r => r.json()),
+                    fetch('/api/analytics/authors?limit=15').then(r => r.json())
+                ]);
+
+                // Update overview cards
+                document.getElementById('stat-total-reviews').textContent = overview.total_reviews || 0;
+                document.getElementById('stat-approval-rate').textContent = (overview.approval_rate || 0) + '%';
+                document.getElementById('stat-human-rate').textContent = (overview.human_review_rate || 0) + '%';
+                document.getElementById('stat-avg-comments').textContent = overview.avg_inline_comments || 0;
+
+                // Render trends chart
+                renderTrendsChart(trends);
+
+                // Render actions chart
+                renderActionsChart(actions);
+
+                // Render repos chart
+                renderReposChart(repos);
+
+                // Render authors table
+                renderAuthorsTable(authors);
+
+            } catch (error) {
+                console.error('Failed to load analytics:', error);
+            }
+        }
+
+        function renderTrendsChart(trends) {
+            const ctx = document.getElementById('trends-chart').getContext('2d');
+            
+            if (trendsChart) {
+                trendsChart.destroy();
+            }
+
+            const labels = trends.map(t => t.date || t.week);
+            const totals = trends.map(t => t.total);
+            const humanReviews = trends.map(t => t.actions?.requires_human_review || 0);
+            const approvals = trends.map(t => 
+                (t.actions?.approve_with_comment || 0) + (t.actions?.approve_without_comment || 0)
+            );
+
+            trendsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Total Reviews',
+                            data: totals,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Approvals',
+                            data: approvals,
+                            borderColor: '#38ef7d',
+                            backgroundColor: 'rgba(56, 239, 125, 0.1)',
+                            fill: false,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Human Reviews',
+                            data: humanReviews,
+                            borderColor: '#f5576c',
+                            backgroundColor: 'rgba(245, 87, 108, 0.1)',
+                            fill: false,
+                            tension: 0.3
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'top' }
+                    },
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        function renderActionsChart(actions) {
+            const ctx = document.getElementById('actions-chart').getContext('2d');
+            
+            if (actionsChart) {
+                actionsChart.destroy();
+            }
+
+            const dist = actions.distribution || {};
+            const labels = [];
+            const data = [];
+            const colors = {
+                'approve_with_comment': '#38ef7d',
+                'approve_without_comment': '#11998e',
+                'request_changes': '#f5576c',
+                'requires_human_review': '#ffc107'
+            };
+
+            for (const [action, info] of Object.entries(dist)) {
+                labels.push(action.replace(/_/g, ' ').replace(/\\b\\w/g, l => l.toUpperCase()));
+                data.push(info.count);
+            }
+
+            actionsChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: Object.values(colors).slice(0, labels.length),
+                        borderWidth: 2,
+                        borderColor: '#fff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+        }
+
+        function renderReposChart(repos) {
+            const ctx = document.getElementById('repos-chart').getContext('2d');
+            
+            if (reposChart) {
+                reposChart.destroy();
+            }
+
+            const labels = repos.map(r => r.repository.split('/').pop());
+            const data = repos.map(r => r.total_reviews);
+
+            reposChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Reviews',
+                        data: data,
+                        backgroundColor: 'rgba(102, 126, 234, 0.8)',
+                        borderColor: '#667eea',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        function renderAuthorsTable(authors) {
+            const tbody = document.getElementById('authors-table-body');
+            
+            if (authors.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No data available</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = authors.map(author => {
+                const approvalClass = author.approval_rate >= 70 ? 'rate-good' : (author.approval_rate >= 40 ? 'rate-warning' : 'rate-danger');
+                const humanClass = author.human_review_rate <= 10 ? 'rate-good' : (author.human_review_rate <= 25 ? 'rate-warning' : 'rate-danger');
+                
+                return `
+                    <tr>
+                        <td><strong>@${author.pr_author}</strong></td>
+                        <td>${author.total_reviews}</td>
+                        <td><span class="rate-badge ${approvalClass}">${author.approval_rate}%</span></td>
+                        <td><span class="rate-badge ${humanClass}">${author.human_review_rate}%</span></td>
+                        <td>${author.change_request_rate || 0}%</td>
+                        <td>${author.avg_inline_comments}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
         function getActionBadge(action) {
             switch (action) {
                 case 'approve_with_comment':
@@ -1112,19 +1413,21 @@ class ReviewWebServer:
 </body>
 </html>
 """
-        
+
         dashboard_path = self.templates_dir / "dashboard.html"
         # Always write the template to ensure we have the latest version
-        dashboard_path.write_text(dashboard_html, encoding='utf-8')
-    
+        dashboard_path.write_text(dashboard_html, encoding="utf-8")
+
     def _setup_routes(self):
         """Setup FastAPI routes."""
-        
+
         @self.app.get("/", response_class=HTMLResponse)
         async def dashboard(request: Request):
             """Main dashboard page."""
-            return self.templates.TemplateResponse("dashboard.html", {"request": request})
-        
+            return self.templates.TemplateResponse(
+                "dashboard.html", {"request": request}
+            )
+
         @self.app.get("/api/pending-approvals")
         async def get_pending_approvals():
             """Get all pending approvals."""
@@ -1134,115 +1437,136 @@ class ReviewWebServer:
             except Exception as e:
                 logger.error(f"Failed to get pending approvals: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
         @self.app.get("/api/human-reviews")
         async def get_human_reviews():
             """Get PRs marked for human review."""
             try:
                 reviews = await self.database.get_human_review_prs()
-                return JSONResponse(content=[{
-                    "id": review.id,
-                    "repository": review.repository,
-                    "pr_number": review.pr_number,
-                    "pr_title": review.pr_title,
-                    "pr_author": review.pr_author,
-                    "review_reason": review.review_reason,
-                    "reviewed_at": review.reviewed_at,
-                    "head_sha": review.head_sha,
-                    "base_sha": review.base_sha,
-                } for review in reviews])
+                return JSONResponse(
+                    content=[
+                        {
+                            "id": review.id,
+                            "repository": review.repository,
+                            "pr_number": review.pr_number,
+                            "pr_title": review.pr_title,
+                            "pr_author": review.pr_author,
+                            "review_reason": review.review_reason,
+                            "reviewed_at": review.reviewed_at,
+                            "head_sha": review.head_sha,
+                            "base_sha": review.base_sha,
+                        }
+                        for review in reviews
+                    ]
+                )
             except Exception as e:
                 logger.error(f"Failed to get human reviews: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
         @self.app.post("/api/approvals/{approval_id}/approve")
         async def approve_pr(approval_id: int, request: Request):
             """Approve a PR and post the review."""
             try:
                 body = await request.json()
-                user_comment = body.get('comment', '')
-                logger.info(f"Received approval request for ID {approval_id} with comment: '{user_comment}'")
-                
+                user_comment = body.get("comment", "")
+                logger.info(
+                    f"Received approval request for ID {approval_id} with comment: '{user_comment}'"
+                )
+
                 # Get the pending approval
                 approval = await self.database.get_pending_approval(approval_id)
                 if not approval:
                     raise HTTPException(status_code=404, detail="Approval not found")
-                
-                if approval['status'] != PENDING_APPROVAL_STATUS_PENDING:
-                    raise HTTPException(status_code=400, detail="Approval is not pending")
-                
+
+                if approval["status"] != PENDING_APPROVAL_STATUS_PENDING:
+                    raise HTTPException(
+                        status_code=400, detail="Approval is not pending"
+                    )
+
                 # Create PR info and review result objects
                 pr_info = PRInfo(
                     id=0,  # Not used for this purpose
-                    number=approval['pr_number'],
-                    repository=approval['repository'].split('/'),
-                    url=approval['pr_url'],
-                    title=approval['pr_title'],
-                    author=approval['pr_author']
+                    number=approval["pr_number"],
+                    repository=approval["repository"].split("/"),
+                    url=approval["pr_url"],
+                    title=approval["pr_title"],
+                    author=approval["pr_author"],
                 )
-                
+
                 # Recreate inline comments
                 inline_comments = [
                     InlineComment(
-                        file=comment['file'],
-                        line=comment['line'],
-                        message=comment['message']
+                        file=comment["file"],
+                        line=comment["line"],
+                        message=comment["message"],
                     )
-                    for comment in approval['inline_comments']
+                    for comment in approval["inline_comments"]
                 ]
-                
+
                 # Use edited versions if available, otherwise use originals
                 # If user_comment is provided from modal, use it; otherwise use display_review_comment (which prioritizes edited)
-                final_comment = user_comment if user_comment else approval['display_review_comment']
-                final_summary = approval['display_review_summary']
-                
+                final_comment = (
+                    user_comment if user_comment else approval["display_review_comment"]
+                )
+                final_summary = approval["display_review_summary"]
+
                 review_result = ReviewResult(
-                    action=ReviewAction(approval['review_action']),
+                    action=ReviewAction(approval["review_action"]),
                     comment=final_comment,
                     summary=final_summary,
-                    reason=approval['review_reason'],
-                    comments=inline_comments  # Already using edited comments from approval['inline_comments']
+                    reason=approval["review_reason"],
+                    comments=inline_comments,  # Already using edited comments from approval['inline_comments']
                 )
-                
+
                 # Post the review to GitHub
-                logger.info(f"Attempting to post GitHub review for PR #{pr_info.number} in {pr_info.repository_name}")
-                logger.info(f"Review action: {review_result.action}, comment: '{review_result.comment}', inline comments: {len(review_result.comments)}")
+                logger.info(
+                    f"Attempting to post GitHub review for PR #{pr_info.number} in {pr_info.repository_name}"
+                )
+                logger.info(
+                    f"Review action: {review_result.action}, comment: '{review_result.comment}', inline comments: {len(review_result.comments)}"
+                )
                 for i, comment in enumerate(review_result.comments):
-                    logger.info(f"  Inline comment {i}: {comment.file}:{comment.line} - {comment.message[:100]}...")
+                    logger.info(
+                        f"  Inline comment {i}: {comment.file}:{comment.line} - {comment.message[:100]}..."
+                    )
                 success = await self._post_github_review(pr_info, review_result)
                 logger.info(f"GitHub review post result: {success}")
-                
+
                 if success:
                     # Update approval status
                     await self.database.update_pending_approval_status(
                         approval_id,
                         PENDING_APPROVAL_STATUS_APPROVED,
-                        review_result.comment
+                        review_result.comment,
                     )
-                    
+
                     # Record the review in main reviews table
                     await self.database.record_review(pr_info, review_result)
-                    
+
                     # Play approval sound
                     if self.sound_notifier:
                         await self.sound_notifier.play_approval_sound()
-                    
+
                     logger.info(f"Successfully approved PR {approval_id}")
                     return JSONResponse(content={"status": "success"})
                 else:
-                    logger.error(f"Failed to post GitHub review for approval {approval_id}")
-                    raise HTTPException(status_code=500, detail="Failed to post GitHub review")
-                    
+                    logger.error(
+                        f"Failed to post GitHub review for approval {approval_id}"
+                    )
+                    raise HTTPException(
+                        status_code=500, detail="Failed to post GitHub review"
+                    )
+
             except Exception as e:
                 logger.error(f"Failed to approve PR {approval_id}: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
         @self.app.post("/api/approvals/{approval_id}/reject")
         async def reject_pr(approval_id: int, request: Request):
             """Reject a pending approval."""
             try:
                 body = await request.json()
-                reason = body.get('reason', '')
+                reason = body.get("reason", "")
 
                 # Update approval status
                 success = await self.database.update_pending_approval_status(
@@ -1264,8 +1588,7 @@ class ReviewWebServer:
             try:
                 if not self.llm_integration:
                     raise HTTPException(
-                        status_code=500,
-                        detail="LLM integration not available"
+                        status_code=500, detail="LLM integration not available"
                     )
 
                 # Get the pending approval
@@ -1273,36 +1596,34 @@ class ReviewWebServer:
                 if not approval:
                     raise HTTPException(status_code=404, detail="Approval not found")
 
-                if approval['status'] != PENDING_APPROVAL_STATUS_PENDING:
+                if approval["status"] != PENDING_APPROVAL_STATUS_PENDING:
                     raise HTTPException(
                         status_code=400,
-                        detail="Only pending approvals can be re-reviewed"
+                        detail="Only pending approvals can be re-reviewed",
                     )
 
                 # Mark as expired (keeps audit trail)
                 await self.database.update_pending_approval_status(
                     approval_id,
                     PENDING_APPROVAL_STATUS_EXPIRED,
-                    "Re-review requested by user"
+                    "Re-review requested by user",
                 )
 
                 # Delete the review record to allow re-review
                 await self.database.delete_review_for_re_review(
-                    approval['repository'],
-                    approval['pr_number'],
-                    approval['head_sha']
+                    approval["repository"], approval["pr_number"], approval["head_sha"]
                 )
 
                 # Build PRInfo for re-review
                 pr_info = PRInfo(
-                    id=approval['pr_number'],
-                    number=approval['pr_number'],
-                    repository=approval['repository'].split('/'),
-                    url=approval['pr_url'],
-                    title=approval['pr_title'],
-                    author=approval['pr_author'],
-                    head_sha=approval['head_sha'],
-                    base_sha=approval['base_sha'],
+                    id=approval["pr_number"],
+                    number=approval["pr_number"],
+                    repository=approval["repository"].split("/"),
+                    url=approval["pr_url"],
+                    title=approval["pr_title"],
+                    author=approval["pr_author"],
+                    head_sha=approval["head_sha"],
+                    base_sha=approval["base_sha"],
                 )
 
                 # Trigger fresh review in background
@@ -1321,7 +1642,9 @@ class ReviewWebServer:
                             ReviewAction.APPROVE_WITH_COMMENT,
                             ReviewAction.APPROVE_WITHOUT_COMMENT,
                         ):
-                            await self.database.create_pending_approval(pr_info, review_result)
+                            await self.database.create_pending_approval(
+                                pr_info, review_result
+                            )
                             if self.sound_notifier:
                                 await self.sound_notifier.play_notification()
                         elif review_result.action == ReviewAction.REQUIRES_HUMAN_REVIEW:
@@ -1332,7 +1655,9 @@ class ReviewWebServer:
                             # REQUEST_CHANGES or other actions
                             await self.database.record_review(pr_info, review_result)
                     except Exception as e:
-                        logger.error(f"Re-review failed for {pr_info.repository_name}#{pr_info.number}: {e}")
+                        logger.error(
+                            f"Re-review failed for {pr_info.repository_name}#{pr_info.number}: {e}"
+                        )
                         failure_result = ReviewResult(
                             action=ReviewAction.REQUIRES_HUMAN_REVIEW,
                             reason=f"Re-review failed: {e}",
@@ -1342,15 +1667,19 @@ class ReviewWebServer:
                 asyncio.create_task(run_review())
 
                 logger.info(f"Triggered re-review for approval {approval_id}")
-                return JSONResponse(content={
-                    "status": "success",
-                    "message": "Review triggered. Refresh in a moment to see results."
-                })
+                return JSONResponse(
+                    content={
+                        "status": "success",
+                        "message": "Review triggered. Refresh in a moment to see results.",
+                    }
+                )
 
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Failed to trigger re-review for approval {approval_id}: {e}")
+                logger.error(
+                    f"Failed to trigger re-review for approval {approval_id}: {e}"
+                )
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.post("/api/reviews/{review_id}/review-again")
@@ -1375,13 +1704,15 @@ class ReviewWebServer:
 
                 # Delete the review record so the PR can be reviewed again
                 await self.database.delete_review_for_re_review(
-                    review.repository, review.pr_number, review.head_sha,
+                    review.repository,
+                    review.pr_number,
+                    review.head_sha,
                 )
 
                 pr_info = PRInfo(
                     id=review.pr_number,
                     number=review.pr_number,
-                    repository=review.repository.split('/'),
+                    repository=review.repository.split("/"),
                     url=f"https://github.com/{review.repository}/pull/{review.pr_number}",
                     title=review.pr_title,
                     author=review.pr_author,
@@ -1403,7 +1734,9 @@ class ReviewWebServer:
                             ReviewAction.APPROVE_WITH_COMMENT,
                             ReviewAction.REQUEST_CHANGES,
                         ):
-                            await self.database.create_pending_approval(pr_info, review_result)
+                            await self.database.create_pending_approval(
+                                pr_info, review_result
+                            )
                             if self.sound_notifier:
                                 await self.sound_notifier.play_notification()
                         elif review_result.action == ReviewAction.REQUIRES_HUMAN_REVIEW:
@@ -1425,10 +1758,12 @@ class ReviewWebServer:
                 asyncio.create_task(run_review())
 
                 logger.info(f"Triggered re-review for human review {review_id}")
-                return JSONResponse(content={
-                    "status": "success",
-                    "message": "Review triggered. Refresh in a moment to see results.",
-                })
+                return JSONResponse(
+                    content={
+                        "status": "success",
+                        "message": "Review triggered. Refresh in a moment to see results.",
+                    }
+                )
 
             except HTTPException:
                 raise
@@ -1473,14 +1808,18 @@ class ReviewWebServer:
         @self.app.get("/api/outdated-approvals")
         async def get_outdated_approvals_legacy():
             """Deprecated alias for merged-or-closed approvals."""
-            logger.warning("/api/outdated-approvals is deprecated; use /api/merged-or-closed-approvals instead")
+            logger.warning(
+                "/api/outdated-approvals is deprecated; use /api/merged-or-closed-approvals instead"
+            )
             try:
                 approvals = await self.database.get_pending_approvals(
                     PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED
                 )
                 return JSONResponse(content=approvals)
             except Exception as e:
-                logger.error(f"Failed to get merged/closed approvals via legacy route: {e}")
+                logger.error(
+                    f"Failed to get merged/closed approvals via legacy route: {e}"
+                )
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/api/rejected-approvals")
@@ -1498,21 +1837,26 @@ class ReviewWebServer:
             """Get completed PR reviews."""
             try:
                 reviews = await self.database.get_completed_reviews()
-                return JSONResponse(content=[{
-                    "id": review.id,
-                    "repository": review.repository,
-                    "pr_number": review.pr_number,
-                    "pr_title": review.pr_title,
-                    "pr_author": review.pr_author,
-                    "review_action": review.review_action.value,
-                    "review_reason": review.review_reason,
-                    "review_comment": review.review_comment,
-                    "review_summary": review.review_summary,
-                    "inline_comments_count": review.inline_comments_count,
-                    "reviewed_at": review.reviewed_at,
-                    "head_sha": review.head_sha,
-                    "base_sha": review.base_sha
-                } for review in reviews])
+                return JSONResponse(
+                    content=[
+                        {
+                            "id": review.id,
+                            "repository": review.repository,
+                            "pr_number": review.pr_number,
+                            "pr_title": review.pr_title,
+                            "pr_author": review.pr_author,
+                            "review_action": review.review_action.value,
+                            "review_reason": review.review_reason,
+                            "review_comment": review.review_comment,
+                            "review_summary": review.review_summary,
+                            "inline_comments_count": review.inline_comments_count,
+                            "reviewed_at": review.reviewed_at,
+                            "head_sha": review.head_sha,
+                            "base_sha": review.base_sha,
+                        }
+                        for review in reviews
+                    ]
+                )
             except Exception as e:
                 logger.error(f"Failed to get completed reviews: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
@@ -1526,122 +1870,214 @@ class ReviewWebServer:
             except Exception as e:
                 logger.error(f"Failed to get stats: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
+        # Analytics API endpoints
+        @self.app.get("/api/analytics/overview")
+        async def get_analytics_overview():
+            """Get comprehensive analytics overview."""
+            try:
+                overview = await self.database.get_analytics_overview()
+                return JSONResponse(content=overview)
+            except Exception as e:
+                logger.error(f"Failed to get analytics overview: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/analytics/trends")
+        async def get_analytics_trends(period: str = "30d"):
+            """Get review trends over time."""
+            try:
+                if period.endswith("w"):
+                    weeks = int(period[:-1])
+                    data = await self.database.get_reviews_by_week(weeks)
+                else:
+                    days = int(period[:-1]) if period.endswith("d") else 30
+                    data = await self.database.get_reviews_by_day(days)
+                return JSONResponse(content=data)
+            except Exception as e:
+                logger.error(f"Failed to get analytics trends: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/analytics/repositories")
+        async def get_analytics_repositories(limit: int = 20):
+            """Get per-repository analytics."""
+            try:
+                data = await self.database.get_repository_stats(limit)
+                return JSONResponse(content=data)
+            except Exception as e:
+                logger.error(f"Failed to get repository analytics: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/analytics/authors")
+        async def get_analytics_authors(limit: int = 20):
+            """Get per-author analytics."""
+            try:
+                data = await self.database.get_author_stats(limit)
+                return JSONResponse(content=data)
+            except Exception as e:
+                logger.error(f"Failed to get author analytics: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/analytics/actions")
+        async def get_analytics_actions():
+            """Get action distribution."""
+            try:
+                data = await self.database.get_action_distribution()
+                return JSONResponse(content=data)
+            except Exception as e:
+                logger.error(f"Failed to get action distribution: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/analytics/pending")
+        async def get_analytics_pending():
+            """Get pending approval statistics."""
+            try:
+                data = await self.database.get_pending_approval_stats()
+                return JSONResponse(content=data)
+            except Exception as e:
+                logger.error(f"Failed to get pending approval stats: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
         # Edit/Delete API endpoints
         @self.app.post("/api/approvals/{approval_id}/update-comment")
         async def update_approval_comment(approval_id: int, request: Request):
             """Update the review comment for a pending approval."""
             try:
                 body = await request.json()
-                new_comment = body.get('comment', '')
-                
-                success = await self.database.update_approval_comment(approval_id, new_comment)
-                
+                new_comment = body.get("comment", "")
+
+                success = await self.database.update_approval_comment(
+                    approval_id, new_comment
+                )
+
                 if success:
                     return JSONResponse(content={"status": "success"})
                 else:
                     raise HTTPException(status_code=404, detail="Approval not found")
-                    
+
             except Exception as e:
-                logger.error(f"Failed to update comment for approval {approval_id}: {e}")
+                logger.error(
+                    f"Failed to update comment for approval {approval_id}: {e}"
+                )
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
         @self.app.post("/api/approvals/{approval_id}/update-summary")
         async def update_approval_summary(approval_id: int, request: Request):
             """Update the review summary for a pending approval."""
             try:
                 body = await request.json()
-                new_summary = body.get('summary', '')
-                
-                success = await self.database.update_approval_summary(approval_id, new_summary)
-                
+                new_summary = body.get("summary", "")
+
+                success = await self.database.update_approval_summary(
+                    approval_id, new_summary
+                )
+
                 if success:
                     return JSONResponse(content={"status": "success"})
                 else:
                     raise HTTPException(status_code=404, detail="Approval not found")
-                    
+
             except Exception as e:
-                logger.error(f"Failed to update summary for approval {approval_id}: {e}")
+                logger.error(
+                    f"Failed to update summary for approval {approval_id}: {e}"
+                )
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
         @self.app.post("/api/approvals/{approval_id}/update-inline-comment")
         async def update_inline_comment(approval_id: int, request: Request):
             """Update a specific inline comment for a pending approval."""
             try:
                 body = await request.json()
-                comment_index = body.get('index')
-                new_message = body.get('message', '')
-                
+                comment_index = body.get("index")
+                new_message = body.get("message", "")
+
                 if comment_index is None:
-                    raise HTTPException(status_code=400, detail="Comment index is required")
-                
+                    raise HTTPException(
+                        status_code=400, detail="Comment index is required"
+                    )
+
                 success = await self.database.update_approval_inline_comment(
                     approval_id, comment_index, new_message
                 )
-                
+
                 if success:
                     return JSONResponse(content={"status": "success"})
                 else:
-                    raise HTTPException(status_code=404, detail="Approval or comment not found")
-                    
+                    raise HTTPException(
+                        status_code=404, detail="Approval or comment not found"
+                    )
+
             except Exception as e:
-                logger.error(f"Failed to update inline comment for approval {approval_id}: {e}")
+                logger.error(
+                    f"Failed to update inline comment for approval {approval_id}: {e}"
+                )
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
         @self.app.post("/api/approvals/{approval_id}/delete-comment")
         async def delete_approval_comment(approval_id: int):
             """Delete the review comment for a pending approval."""
             try:
                 success = await self.database.delete_approval_comment(approval_id)
-                
+
                 if success:
                     return JSONResponse(content={"status": "success"})
                 else:
                     raise HTTPException(status_code=404, detail="Approval not found")
-                    
+
             except Exception as e:
-                logger.error(f"Failed to delete comment for approval {approval_id}: {e}")
+                logger.error(
+                    f"Failed to delete comment for approval {approval_id}: {e}"
+                )
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
         @self.app.post("/api/approvals/{approval_id}/delete-summary")
         async def delete_approval_summary(approval_id: int):
             """Delete the review summary for a pending approval."""
             try:
                 success = await self.database.delete_approval_summary(approval_id)
-                
+
                 if success:
                     return JSONResponse(content={"status": "success"})
                 else:
                     raise HTTPException(status_code=404, detail="Approval not found")
-                    
+
             except Exception as e:
-                logger.error(f"Failed to delete summary for approval {approval_id}: {e}")
+                logger.error(
+                    f"Failed to delete summary for approval {approval_id}: {e}"
+                )
                 raise HTTPException(status_code=500, detail=str(e))
-        
+
         @self.app.post("/api/approvals/{approval_id}/delete-inline-comment")
         async def delete_inline_comment(approval_id: int, request: Request):
             """Delete a specific inline comment for a pending approval."""
             try:
                 body = await request.json()
-                comment_index = body.get('index')
-                
+                comment_index = body.get("index")
+
                 if comment_index is None:
-                    raise HTTPException(status_code=400, detail="Comment index is required")
-                
+                    raise HTTPException(
+                        status_code=400, detail="Comment index is required"
+                    )
+
                 success = await self.database.delete_approval_inline_comment(
                     approval_id, comment_index
                 )
-                
+
                 if success:
                     return JSONResponse(content={"status": "success"})
                 else:
-                    raise HTTPException(status_code=404, detail="Approval or comment not found")
-                    
+                    raise HTTPException(
+                        status_code=404, detail="Approval or comment not found"
+                    )
+
             except Exception as e:
-                logger.error(f"Failed to delete inline comment for approval {approval_id}: {e}")
+                logger.error(
+                    f"Failed to delete inline comment for approval {approval_id}: {e}"
+                )
                 raise HTTPException(status_code=500, detail=str(e))
-    
-    async def _post_github_review(self, pr_info: PRInfo, review_result: ReviewResult) -> bool:
+
+    async def _post_github_review(
+        self, pr_info: PRInfo, review_result: ReviewResult
+    ) -> bool:
         """Post a review to GitHub."""
         try:
             inline_comments_payload = None
@@ -1655,7 +2091,9 @@ class ReviewWebServer:
                 )
                 inline_comments_payload = payload or None
                 review_result.comments = [
-                    InlineComment(file=item['path'], line=item['line'], message=item['body'])
+                    InlineComment(
+                        file=item["path"], line=item["line"], message=item["body"]
+                    )
                     for item in payload
                 ]
                 dropped_comments = dropped
@@ -1671,12 +2109,18 @@ class ReviewWebServer:
                 review_result.comments = []
 
             if dropped_comments:
-                fallback_text = self.github_client.format_dropped_inline_comments(dropped_comments)
+                fallback_text = self.github_client.format_dropped_inline_comments(
+                    dropped_comments
+                )
                 if fallback_text:
                     if review_result.action == ReviewAction.REQUEST_CHANGES:
-                        review_result.summary = self._append_text_block(review_result.summary, fallback_text)
+                        review_result.summary = self._append_text_block(
+                            review_result.summary, fallback_text
+                        )
                     else:
-                        review_result.comment = self._append_text_block(review_result.comment, fallback_text)
+                        review_result.comment = self._append_text_block(
+                            review_result.comment, fallback_text
+                        )
 
             if review_result.action == ReviewAction.APPROVE_WITH_COMMENT:
                 success = await self.github_client.approve_pr(
@@ -1701,11 +2145,13 @@ class ReviewWebServer:
                     review_result.summary or "Changes requested",
                 )
             else:
-                logger.warning(f"Unsupported review action for GitHub posting: {review_result.action}")
+                logger.warning(
+                    f"Unsupported review action for GitHub posting: {review_result.action}"
+                )
                 return False
-                
+
             return success
-            
+
         except Exception as e:
             logger.error(f"Failed to post GitHub review: {e}")
             return False

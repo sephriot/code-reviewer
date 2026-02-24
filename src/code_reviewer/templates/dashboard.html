@@ -49,6 +49,26 @@
         .modal-content { background: white; margin: 5% auto; padding: 20px; width: 80%; max-width: 600px; border-radius: 8px; }
         .close { float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
         textarea { width: 100%; height: 100px; margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        /* Analytics styles */
+        .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }
+        .stat-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 12px; text-align: center; }
+        .stat-card.green { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+        .stat-card.orange { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+        .stat-card.blue { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+        .stat-card .stat-value { font-size: 32px; font-weight: bold; margin-bottom: 5px; }
+        .stat-card .stat-label { font-size: 14px; opacity: 0.9; }
+        .chart-container { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .chart-title { font-size: 16px; font-weight: bold; margin-bottom: 15px; color: #333; }
+        .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 768px) { .charts-row { grid-template-columns: 1fr; } }
+        .analytics-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        .analytics-table th, .analytics-table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        .analytics-table th { background: #f8f9fa; font-weight: 600; }
+        .analytics-table tr:hover { background: #f8f9fa; }
+        .rate-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+        .rate-good { background: #d4edda; color: #155724; }
+        .rate-warning { background: #fff3cd; color: #856404; }
+        .rate-danger { background: #f8d7da; color: #721c24; }
     </style>
 </head>
 <body>
@@ -63,6 +83,7 @@
             <div class="tab" onclick="showTab('merged-closed')">Merged/Closed</div>
             <div class="tab" onclick="showTab('expired')">Expired</div>
             <div class="tab" onclick="showTab('completed-reviews')">Completed Reviews</div>
+            <div class="tab" onclick="showTab('analytics')">📊 Analytics</div>
         </div>
         
         <div id="pending" class="tab-content active">
@@ -113,7 +134,76 @@
                 <div id="completed-reviews-list"></div>
             </div>
         </div>
+
+        <div id="analytics" class="tab-content">
+            <div class="section">
+                <h2>📊 Review Analytics Dashboard</h2>
+                
+                <!-- Overview Stats Cards -->
+                <div class="analytics-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-total-reviews">-</div>
+                        <div class="stat-label">Total Reviews</div>
+                    </div>
+                    <div class="stat-card green">
+                        <div class="stat-value" id="stat-approval-rate">-</div>
+                        <div class="stat-label">Approval Rate</div>
+                    </div>
+                    <div class="stat-card orange">
+                        <div class="stat-value" id="stat-human-rate">-</div>
+                        <div class="stat-label">Human Review Rate</div>
+                    </div>
+                    <div class="stat-card blue">
+                        <div class="stat-value" id="stat-avg-comments">-</div>
+                        <div class="stat-label">Avg Inline Comments</div>
+                    </div>
+                </div>
+
+                <!-- Review Trends Chart -->
+                <div class="chart-container">
+                    <div class="chart-title">📈 Review Trends (Last 30 Days)</div>
+                    <canvas id="trends-chart" height="100"></canvas>
+                </div>
+
+                <div class="charts-row">
+                    <!-- Action Distribution Chart -->
+                    <div class="chart-container">
+                        <div class="chart-title">🎯 Action Distribution</div>
+                        <canvas id="actions-chart" height="200"></canvas>
+                    </div>
+
+                    <!-- Top Repositories Chart -->
+                    <div class="chart-container">
+                        <div class="chart-title">📁 Top Repositories</div>
+                        <canvas id="repos-chart" height="200"></canvas>
+                    </div>
+                </div>
+
+                <!-- Top Authors Table -->
+                <div class="chart-container">
+                    <div class="chart-title">👥 Top PR Authors</div>
+                    <table class="analytics-table">
+                        <thead>
+                            <tr>
+                                <th>Author</th>
+                                <th>PRs Reviewed</th>
+                                <th>Approval Rate</th>
+                                <th>Human Review %</th>
+                                <th>Change Request %</th>
+                                <th>Avg Comments</th>
+                            </tr>
+                        </thead>
+                        <tbody id="authors-table-body">
+                            <tr><td colspan="6" style="text-align:center;">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
     <!-- Toast notification -->
     <div id="toast" class="toast"></div>
@@ -164,6 +254,9 @@
                         case 'completed-reviews':
                             loadCompletedReviews();
                             break;
+                        case 'analytics':
+                            loadAnalytics();
+                            break;
                     }
                 }
             }
@@ -193,6 +286,8 @@
                 loadExpiredApprovals();
             } else if (tabName === 'completed-reviews') {
                 loadCompletedReviews();
+            } else if (tabName === 'analytics') {
+                loadAnalytics();
             }
         }
 
@@ -1020,6 +1115,204 @@
             } catch (error) {
                 console.error('Failed to load completed reviews:', error);
             }
+        }
+
+        // Analytics variables to store chart instances
+        let trendsChart = null;
+        let actionsChart = null;
+        let reposChart = null;
+
+        async function loadAnalytics() {
+            try {
+                // Load all analytics data in parallel
+                const [overview, trends, actions, repos, authors] = await Promise.all([
+                    fetch('/api/analytics/overview').then(r => r.json()),
+                    fetch('/api/analytics/trends?period=30d').then(r => r.json()),
+                    fetch('/api/analytics/actions').then(r => r.json()),
+                    fetch('/api/analytics/repositories?limit=10').then(r => r.json()),
+                    fetch('/api/analytics/authors?limit=15').then(r => r.json())
+                ]);
+
+                // Update overview cards
+                document.getElementById('stat-total-reviews').textContent = overview.total_reviews || 0;
+                document.getElementById('stat-approval-rate').textContent = (overview.approval_rate || 0) + '%';
+                document.getElementById('stat-human-rate').textContent = (overview.human_review_rate || 0) + '%';
+                document.getElementById('stat-avg-comments').textContent = overview.avg_inline_comments || 0;
+
+                // Render trends chart
+                renderTrendsChart(trends);
+
+                // Render actions chart
+                renderActionsChart(actions);
+
+                // Render repos chart
+                renderReposChart(repos);
+
+                // Render authors table
+                renderAuthorsTable(authors);
+
+            } catch (error) {
+                console.error('Failed to load analytics:', error);
+            }
+        }
+
+        function renderTrendsChart(trends) {
+            const ctx = document.getElementById('trends-chart').getContext('2d');
+            
+            if (trendsChart) {
+                trendsChart.destroy();
+            }
+
+            const labels = trends.map(t => t.date || t.week);
+            const totals = trends.map(t => t.total);
+            const humanReviews = trends.map(t => t.actions?.requires_human_review || 0);
+            const approvals = trends.map(t => 
+                (t.actions?.approve_with_comment || 0) + (t.actions?.approve_without_comment || 0)
+            );
+
+            trendsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Total Reviews',
+                            data: totals,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Approvals',
+                            data: approvals,
+                            borderColor: '#38ef7d',
+                            backgroundColor: 'rgba(56, 239, 125, 0.1)',
+                            fill: false,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Human Reviews',
+                            data: humanReviews,
+                            borderColor: '#f5576c',
+                            backgroundColor: 'rgba(245, 87, 108, 0.1)',
+                            fill: false,
+                            tension: 0.3
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'top' }
+                    },
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        function renderActionsChart(actions) {
+            const ctx = document.getElementById('actions-chart').getContext('2d');
+            
+            if (actionsChart) {
+                actionsChart.destroy();
+            }
+
+            const dist = actions.distribution || {};
+            const labels = [];
+            const data = [];
+            const colors = {
+                'approve_with_comment': '#38ef7d',
+                'approve_without_comment': '#11998e',
+                'request_changes': '#f5576c',
+                'requires_human_review': '#ffc107'
+            };
+
+            for (const [action, info] of Object.entries(dist)) {
+                labels.push(action.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()));
+                data.push(info.count);
+            }
+
+            actionsChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: Object.values(colors).slice(0, labels.length),
+                        borderWidth: 2,
+                        borderColor: '#fff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+        }
+
+        function renderReposChart(repos) {
+            const ctx = document.getElementById('repos-chart').getContext('2d');
+            
+            if (reposChart) {
+                reposChart.destroy();
+            }
+
+            const labels = repos.map(r => r.repository.split('/').pop());
+            const data = repos.map(r => r.total_reviews);
+
+            reposChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Reviews',
+                        data: data,
+                        backgroundColor: 'rgba(102, 126, 234, 0.8)',
+                        borderColor: '#667eea',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        function renderAuthorsTable(authors) {
+            const tbody = document.getElementById('authors-table-body');
+            
+            if (authors.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No data available</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = authors.map(author => {
+                const approvalClass = author.approval_rate >= 70 ? 'rate-good' : (author.approval_rate >= 40 ? 'rate-warning' : 'rate-danger');
+                const humanClass = author.human_review_rate <= 10 ? 'rate-good' : (author.human_review_rate <= 25 ? 'rate-warning' : 'rate-danger');
+                
+                return `
+                    <tr>
+                        <td><strong>@${author.pr_author}</strong></td>
+                        <td>${author.total_reviews}</td>
+                        <td><span class="rate-badge ${approvalClass}">${author.approval_rate}%</span></td>
+                        <td><span class="rate-badge ${humanClass}">${author.human_review_rate}%</span></td>
+                        <td>${author.change_request_rate || 0}%</td>
+                        <td>${author.avg_inline_comments}</td>
+                    </tr>
+                `;
+            }).join('');
         }
 
         function getActionBadge(action) {
