@@ -77,6 +77,16 @@ SOUND_ENABLED=true
 TIMEOUT_SOUND_ENABLED=true
 # TIMEOUT_SOUND_FILE=sounds/review_timeout.wav
 
+# Own PRs monitoring
+OWN_PR_ENABLED=true
+# REPOSITORIES=owner/repo1,owner/repo2  # Same filter as regular PR monitoring
+
+# Own PR sound notifications
+OWN_PR_READY_SOUND_ENABLED=true
+# OWN_PR_READY_SOUND_FILE=sounds/pr_ready.wav
+OWN_PR_NEEDS_ATTENTION_SOUND_ENABLED=true
+# OWN_PR_NEEDS_ATTENTION_SOUND_FILE=sounds/pr_needs_attention.wav
+
 # Dry run mode
 DRY_RUN=false
 

@@ -20,23 +20,23 @@ class GitHubClient:
         self.github = Github(token)
         self.session = None
         self._default_headers = {
-            'Authorization': f'token {self.token}',
-            'Accept': 'application/vnd.github.v3+json',
+            "Authorization": f"token {self.token}",
+            "Accept": "application/vnd.github.v3+json",
         }
 
     def _ensure_session(self) -> None:
         """Ensure an aiohttp session is available."""
         if self.session is None or self.session.closed:
             self.session = aiohttp.ClientSession(headers=self._default_headers)
-        
+
     async def __aenter__(self):
         self._ensure_session()
         return self
-        
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session:
             await self.session.close()
-            
+
     async def close(self):
         """Close the aiohttp session."""
         logger.debug(f"GitHubClient.close() called, session: {self.session}")
@@ -50,90 +50,175 @@ class GitHubClient:
             self.session = None
         else:
             logger.debug("No session to close")
-            
-    async def get_review_requests(self, username: str, repositories: Optional[List[str]] = None, pr_authors: Optional[List[str]] = None) -> List[PRInfo]:
+
+    async def get_review_requests(
+        self,
+        username: str,
+        repositories: Optional[List[str]] = None,
+        pr_authors: Optional[List[str]] = None,
+    ) -> List[PRInfo]:
         """Get PRs where the user is requested as a reviewer - minimal info only."""
         try:
             # Use GitHub search API to find PRs where user is requested as reviewer
             # Don't add any filters to the query - filter on application side instead
             query = f"type:pr state:open review-requested:{username}"
-            
+
             self._ensure_session()
-            
+
             url = f"https://api.github.com/search/issues"
-            params = {
-                'q': query,
-                'sort': 'updated',
-                'order': 'desc'
-            }
-            
+            params = {"q": query, "sort": "updated", "order": "desc"}
+
             async with self.session.get(url, params=params) as response:
                 data = await response.json()
-                
+
                 if response.status != 200:
                     raise Exception(f"GitHub API error: {data}")
-                
+
                 all_prs = []
-                for item in data.get('items', []):
-                    if item.get('pull_request'):  # Ensure it's a PR
+                for item in data.get("items", []):
+                    if item.get("pull_request"):  # Ensure it's a PR
                         # Get author and title information from the API response
-                        author = item.get('user', {}).get('login', '')
-                        title = item.get('title', '')
-                        repository = item['repository_url'].split('/')[-2:]  # [owner, repo]
-                        
+                        author = item.get("user", {}).get("login", "")
+                        title = item.get("title", "")
+                        repository = item["repository_url"].split("/")[
+                            -2:
+                        ]  # [owner, repo]
+
                         # Fetch detailed PR information including head/base SHAs
-                        detailed_pr = await self._fetch_pr_details(repository[0], repository[1], item['number'])
+                        detailed_pr = await self._fetch_pr_details(
+                            repository[0], repository[1], item["number"]
+                        )
                         if not detailed_pr:
-                            logger.warning(f"Failed to fetch details for PR #{item['number']} in {'/'.join(repository)}")
+                            logger.warning(
+                                f"Failed to fetch details for PR #{item['number']} in {'/'.join(repository)}"
+                            )
                             continue
-                            
+
                         # Include title, author, and SHA information in PRInfo
                         pr_info = PRInfo(
-                            id=item['id'],
-                            number=item['number'],
+                            id=item["id"],
+                            number=item["number"],
                             repository=repository,
-                            url=item['html_url'],
+                            url=item["html_url"],
                             title=title,
                             author=author,
-                            head_sha=detailed_pr.get('head', {}).get('sha', ''),
-                            base_sha=detailed_pr.get('base', {}).get('sha', '')
+                            head_sha=detailed_pr.get("head", {}).get("sha", ""),
+                            base_sha=detailed_pr.get("base", {}).get("sha", ""),
                         )
                         all_prs.append(pr_info)
-                
+
                 # Apply filters on the application side
                 logger.debug(f"Found {len(all_prs)} total PRs before filtering")
                 for pr in all_prs:
-                    logger.debug(f"  PR #{pr.number} in {pr.repository_name} by {pr.author}: {pr.title}")
-                
+                    logger.debug(
+                        f"  PR #{pr.number} in {pr.repository_name} by {pr.author}: {pr.title}"
+                    )
+
                 filtered_prs = all_prs
-                
+
                 # Filter by repositories
                 if repositories:
-                    logger.info(f"Filtering PRs to repositories: {', '.join(repositories)}")
-                    logger.debug(f"Available repositories: {[pr.repository_name for pr in filtered_prs]}")
-                    filtered_prs = [pr for pr in filtered_prs if pr.repository_name in repositories]
-                
+                    logger.info(
+                        f"Filtering PRs to repositories: {', '.join(repositories)}"
+                    )
+                    logger.debug(
+                        f"Available repositories: {[pr.repository_name for pr in filtered_prs]}"
+                    )
+                    filtered_prs = [
+                        pr for pr in filtered_prs if pr.repository_name in repositories
+                    ]
+
                 # Filter by PR authors
                 if pr_authors:
                     logger.info(f"Filtering PRs to authors: {', '.join(pr_authors)}")
-                    filtered_prs = [pr for pr in filtered_prs if pr.author in pr_authors]
-                
+                    filtered_prs = [
+                        pr for pr in filtered_prs if pr.author in pr_authors
+                    ]
+
                 if repositories or pr_authors:
-                    logger.debug(f"Found {len(all_prs)} total PRs, {len(filtered_prs)} match filters")
+                    logger.debug(
+                        f"Found {len(all_prs)} total PRs, {len(filtered_prs)} match filters"
+                    )
                 else:
                     logger.info("No filters specified, monitoring all accessible PRs")
-                        
+
                 return filtered_prs
-                
+
         except Exception as e:
             logger.error(f"Error fetching review requests: {e}")
             return []
 
-    async def _fetch_pr_details(self, owner: str, repo: str, pr_number: int) -> Optional[dict]:
+    async def get_own_prs(
+        self, username: str, repositories: Optional[List[str]] = None
+    ) -> List[PRInfo]:
+        """Get PRs authored by the user - minimal info only."""
+        try:
+            query = f"type:pr state:open author:{username}"
+
+            self._ensure_session()
+
+            url = f"https://api.github.com/search/issues"
+            params = {"q": query, "sort": "updated", "order": "desc"}
+
+            async with self.session.get(url, params=params) as response:
+                data = await response.json()
+
+                if response.status != 200:
+                    raise Exception(f"GitHub API error: {data}")
+
+                all_prs = []
+                for item in data.get("items", []):
+                    if item.get("pull_request"):
+                        author = item.get("user", {}).get("login", "")
+                        title = item.get("title", "")
+                        repository = item["repository_url"].split("/")[-2:]
+
+                        detailed_pr = await self._fetch_pr_details(
+                            repository[0], repository[1], item["number"]
+                        )
+                        if not detailed_pr:
+                            logger.warning(
+                                f"Failed to fetch details for PR #{item['number']} in {'/'.join(repository)}"
+                            )
+                            continue
+
+                        pr_info = PRInfo(
+                            id=item["id"],
+                            number=item["number"],
+                            repository=repository,
+                            url=item["html_url"],
+                            title=title,
+                            author=author,
+                            head_sha=detailed_pr.get("head", {}).get("sha", ""),
+                            base_sha=detailed_pr.get("base", {}).get("sha", ""),
+                        )
+                        all_prs.append(pr_info)
+
+                logger.debug(f"Found {len(all_prs)} total own PRs before filtering")
+
+                filtered_prs = all_prs
+
+                if repositories:
+                    logger.info(
+                        f"Filtering own PRs to repositories: {', '.join(repositories)}"
+                    )
+                    filtered_prs = [
+                        pr for pr in filtered_prs if pr.repository_name in repositories
+                    ]
+
+                return filtered_prs
+
+        except Exception as e:
+            logger.error(f"Error fetching own PRs: {e}")
+            return []
+
+    async def _fetch_pr_details(
+        self, owner: str, repo: str, pr_number: int
+    ) -> Optional[dict]:
         """Fetch detailed PR information including head and base SHAs."""
         try:
             self._ensure_session()
-            
+
             url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
             async with self.session.get(url) as response:
                 if response.status == 200:
@@ -141,9 +226,11 @@ class GitHubClient:
                 else:
                     logger.error(f"Failed to fetch PR details: {response.status}")
                     return None
-                    
+
         except Exception as e:
-            logger.error(f"Error fetching PR details for #{pr_number} in {owner}/{repo}: {e}")
+            logger.error(
+                f"Error fetching PR details for #{pr_number} in {owner}/{repo}: {e}"
+            )
             return None
 
     async def prepare_inline_comments(
@@ -157,7 +244,9 @@ class GitHubClient:
             return [], []
 
         owner, repo_name = repository[0], repository[1]
-        valid_lines_map = await self._collect_valid_comment_lines(owner, repo_name, pr_number)
+        valid_lines_map = await self._collect_valid_comment_lines(
+            owner, repo_name, pr_number
+        )
 
         valid_payload: List[Dict[str, Any]] = []
         dropped: List[InlineComment] = []
@@ -189,12 +278,14 @@ class GitHubClient:
 
             valid_lines = valid_lines_map.get(path)
             if valid_lines and line in valid_lines:
-                valid_payload.append({
-                    'path': path,
-                    'line': line,
-                    'side': 'RIGHT',
-                    'body': body,
-                })
+                valid_payload.append(
+                    {
+                        "path": path,
+                        "line": line,
+                        "side": "RIGHT",
+                        "body": body,
+                    }
+                )
             else:
                 # Log diagnostic info about valid line range for debugging LLM line number issues
                 if valid_lines:
@@ -258,7 +349,7 @@ class GitHubClient:
         url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/files"
 
         while True:
-            params = {'per_page': 100, 'page': page}
+            params = {"per_page": 100, "page": page}
             async with self.session.get(url, params=params) as response:
                 data = await response.json()
 
@@ -266,12 +357,12 @@ class GitHubClient:
                     raise Exception(f"GitHub API error: {data}")
 
                 for file_info in data:
-                    filename = file_info.get('filename')
-                    patch = file_info.get('patch')
+                    filename = file_info.get("filename")
+                    patch = file_info.get("patch")
                     if filename and patch:
                         patches[filename] = patch
 
-                link_header = response.headers.get('Link', '')
+                link_header = response.headers.get("Link", "")
                 if link_header and 'rel="next"' in link_header:
                     page += 1
                     continue
@@ -291,7 +382,7 @@ class GitHubClient:
         new_line_number: Optional[int] = None
 
         for raw_line in patch.splitlines():
-            if raw_line.startswith('@@'):
+            if raw_line.startswith("@@"):
                 match = re.search(r"\+([0-9]+)(?:,([0-9]+))?", raw_line)
                 if match:
                     new_line_number = int(match.group(1))
@@ -302,10 +393,10 @@ class GitHubClient:
             if new_line_number is None:
                 continue
 
-            if raw_line.startswith('+') or raw_line.startswith(' '):
+            if raw_line.startswith("+") or raw_line.startswith(" "):
                 valid_lines.add(new_line_number)
                 new_line_number += 1
-            elif raw_line.startswith('-'):
+            elif raw_line.startswith("-"):
                 # Removed lines don't advance the new file line counter
                 continue
             else:
@@ -318,33 +409,32 @@ class GitHubClient:
     def format_dropped_inline_comments(dropped: List[InlineComment]) -> str:
         """Build fallback text describing inline comments we couldn't post."""
         if not dropped:
-            return ''
+            return ""
 
         lines = [
             "The following suggestions could not be attached inline because the referenced lines are outside the latest diff:",
         ]
 
         for comment in dropped:
-            location = comment.file or 'unknown file'
+            location = comment.file or "unknown file"
             if comment.line:
                 location = f"{location}:{comment.line}"
 
-            message = (comment.message or '').strip().replace('\n', ' ')
+            message = (comment.message or "").strip().replace("\n", " ")
             if len(message) > 300:
                 message = f"{message[:297]}..."
 
             lines.append(f"- `{location}` – {message}")
 
         return "\n\n" + "\n".join(lines)
-            
-            
+
     async def get_pr_status(self, repository: Any, pr_number: int) -> Optional[dict]:
         """Fetch current state/merge information for a PR."""
         try:
             if isinstance(repository, (list, tuple)):
                 owner, repo_name = repository
-            elif isinstance(repository, str) and '/' in repository:
-                owner, repo_name = repository.split('/', 1)
+            elif isinstance(repository, str) and "/" in repository:
+                owner, repo_name = repository.split("/", 1)
             else:
                 raise ValueError(f"Invalid repository identifier: {repository}")
 
@@ -353,13 +443,13 @@ class GitHubClient:
                 return None
 
             return {
-                'state': pr_data.get('state'),
-                'merged': pr_data.get('merged'),
-                'head_sha': pr_data.get('head', {}).get('sha'),
-                'base_sha': pr_data.get('base', {}).get('sha'),
-                'updated_at': pr_data.get('updated_at'),
-                'closed_at': pr_data.get('closed_at'),
-                'merged_at': pr_data.get('merged_at'),
+                "state": pr_data.get("state"),
+                "merged": pr_data.get("merged"),
+                "head_sha": pr_data.get("head", {}).get("sha"),
+                "base_sha": pr_data.get("base", {}).get("sha"),
+                "updated_at": pr_data.get("updated_at"),
+                "closed_at": pr_data.get("closed_at"),
+                "merged_at": pr_data.get("merged_at"),
             }
 
         except Exception as e:
@@ -368,37 +458,39 @@ class GitHubClient:
             )
             return None
 
-
-    async def approve_pr(self, repository: List[str], pr_number: int, comment: Optional[str] = None, 
-                       inline_comments: Optional[List[Dict[str, Any]]] = None):
+    async def approve_pr(
+        self,
+        repository: List[str],
+        pr_number: int,
+        comment: Optional[str] = None,
+        inline_comments: Optional[List[Dict[str, Any]]] = None,
+    ):
         """Approve a PR with optional comment and inline comments."""
         try:
             owner, repo_name = repository[0], repository[1]
-            
+
             self._ensure_session()
-            
+
             url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
-            
-            data = {
-                'event': 'APPROVE'
-            }
-            
+
+            data = {"event": "APPROVE"}
+
             if comment:
-                data['body'] = comment
-                
+                data["body"] = comment
+
             # Add inline comments if provided
             if inline_comments:
-                data['comments'] = []
+                data["comments"] = []
                 for comment_data in inline_comments:
                     inline_comment = {
-                        'path': comment_data.get('path', comment_data.get('file')),
-                        'body': comment_data.get('body', comment_data.get('message')),
+                        "path": comment_data.get("path", comment_data.get("file")),
+                        "body": comment_data.get("body", comment_data.get("message")),
                     }
 
-                    line_value = comment_data.get('line')
+                    line_value = comment_data.get("line")
                     if line_value is not None:
                         try:
-                            inline_comment['line'] = int(line_value)
+                            inline_comment["line"] = int(line_value)
                         except (ValueError, TypeError):
                             logger.warning(
                                 "Skipping non-integer line value for inline comment: %s",
@@ -406,78 +498,84 @@ class GitHubClient:
                             )
                             continue
 
-                    start_line = comment_data.get('start_line')
+                    start_line = comment_data.get("start_line")
                     if start_line is not None:
                         try:
-                            inline_comment['start_line'] = int(start_line)
+                            inline_comment["start_line"] = int(start_line)
                         except (ValueError, TypeError):
                             logger.warning(
                                 "Skipping non-integer start_line for inline comment: %s",
                                 start_line,
                             )
 
-                    side = comment_data.get('side')
+                    side = comment_data.get("side")
                     if side:
-                        inline_comment['side'] = side
-                    elif 'line' in inline_comment:
-                        inline_comment['side'] = 'RIGHT'
+                        inline_comment["side"] = side
+                    elif "line" in inline_comment:
+                        inline_comment["side"] = "RIGHT"
 
-                    start_side = comment_data.get('start_side')
+                    start_side = comment_data.get("start_side")
                     if start_side:
-                        inline_comment['start_side'] = start_side
+                        inline_comment["start_side"] = start_side
 
-                    position = comment_data.get('position')
+                    position = comment_data.get("position")
                     if position is not None:
-                        inline_comment['position'] = position
+                        inline_comment["position"] = position
 
-                    data['comments'].append(inline_comment)
-                logger.info(f"Added {len(data['comments'])} inline comments to approval")
-                for i, comment in enumerate(data['comments']):
-                    line_desc = comment.get('line', comment.get('position', 'n/a'))
-                    logger.info(f"  Comment {i}: {comment['path']}:{line_desc} - {comment['body'][:100]}...")
-                
+                    data["comments"].append(inline_comment)
+                logger.info(
+                    f"Added {len(data['comments'])} inline comments to approval"
+                )
+                for i, comment in enumerate(data["comments"]):
+                    line_desc = comment.get("line", comment.get("position", "n/a"))
+                    logger.info(
+                        f"  Comment {i}: {comment['path']}:{line_desc} - {comment['body'][:100]}..."
+                    )
+
             logger.info(f"Posting approval to GitHub with data: {data}")
             async with self.session.post(url, json=data) as response:
                 result = await response.json()
-                
+
                 if response.status not in [200, 201]:
                     raise Exception(f"GitHub API error: {result}")
-                    
+
                 logger.info(f"Successfully approved PR #{pr_number}")
                 return True
-                
+
         except Exception as e:
             logger.error(f"Error approving PR: {e}")
             return False
-            
-    async def request_changes(self, repository: List[str], pr_number: int, 
-                           comments: List[Dict[str, Any]], summary: str):
+
+    async def request_changes(
+        self,
+        repository: List[str],
+        pr_number: int,
+        comments: List[Dict[str, Any]],
+        summary: str,
+    ):
         """Request changes on a PR with inline comments."""
         try:
             owner, repo_name = repository[0], repository[1]
-            
+
             self._ensure_session()
-            
+
             url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
-            
-            data = {
-                'event': 'REQUEST_CHANGES',
-                'body': summary
-            }
-            
+
+            data = {"event": "REQUEST_CHANGES", "body": summary}
+
             # Add inline comments if provided
             if comments:
-                data['comments'] = []
+                data["comments"] = []
                 for comment in comments:
                     inline_comment = {
-                        'path': comment.get('path', comment.get('file')),
-                        'body': comment.get('body', comment.get('message')),
+                        "path": comment.get("path", comment.get("file")),
+                        "body": comment.get("body", comment.get("message")),
                     }
 
-                    line_value = comment.get('line')
+                    line_value = comment.get("line")
                     if line_value is not None:
                         try:
-                            inline_comment['line'] = int(line_value)
+                            inline_comment["line"] = int(line_value)
                         except (ValueError, TypeError):
                             logger.warning(
                                 "Skipping non-integer line value for inline comment: %s",
@@ -485,68 +583,67 @@ class GitHubClient:
                             )
                             continue
 
-                    start_line = comment.get('start_line')
+                    start_line = comment.get("start_line")
                     if start_line is not None:
                         try:
-                            inline_comment['start_line'] = int(start_line)
+                            inline_comment["start_line"] = int(start_line)
                         except (ValueError, TypeError):
                             logger.warning(
                                 "Skipping non-integer start_line for inline comment: %s",
                                 start_line,
                             )
 
-                    side = comment.get('side')
+                    side = comment.get("side")
                     if side:
-                        inline_comment['side'] = side
-                    elif 'line' in inline_comment:
-                        inline_comment['side'] = 'RIGHT'
+                        inline_comment["side"] = side
+                    elif "line" in inline_comment:
+                        inline_comment["side"] = "RIGHT"
 
-                    start_side = comment.get('start_side')
+                    start_side = comment.get("start_side")
                     if start_side:
-                        inline_comment['start_side'] = start_side
+                        inline_comment["start_side"] = start_side
 
-                    position = comment.get('position')
+                    position = comment.get("position")
                     if position is not None:
-                        inline_comment['position'] = position
+                        inline_comment["position"] = position
 
-                    data['comments'].append(inline_comment)
-                    
+                    data["comments"].append(inline_comment)
+
             async with self.session.post(url, json=data) as response:
                 result = await response.json()
-                
+
                 if response.status not in [200, 201]:
                     raise Exception(f"GitHub API error: {result}")
-                    
+
                 logger.info(f"Successfully requested changes for PR #{pr_number}")
                 return True
-                
+
         except Exception as e:
             logger.error(f"Error requesting changes: {e}")
             return False
-            
-    async def add_review_comment(self, repository: List[str], pr_number: int, comment: str):
+
+    async def add_review_comment(
+        self, repository: List[str], pr_number: int, comment: str
+    ):
         """Add a general comment to a PR without approving or requesting changes."""
         try:
             owner, repo_name = repository[0], repository[1]
-            
+
             self._ensure_session()
-            
+
             url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
-            
-            data = {
-                'event': 'COMMENT',
-                'body': comment
-            }
-                    
+
+            data = {"event": "COMMENT", "body": comment}
+
             async with self.session.post(url, json=data) as response:
                 result = await response.json()
-                
+
                 if response.status not in [200, 201]:
                     raise Exception(f"GitHub API error: {result}")
-                    
+
                 logger.info(f"Successfully added comment to PR #{pr_number}")
                 return True
-                
+
         except Exception as e:
             logger.error(f"Error adding review comment: {e}")
             return False

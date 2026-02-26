@@ -18,6 +18,11 @@ from .database import (
     PENDING_APPROVAL_STATUS_PENDING,
     PENDING_APPROVAL_STATUS_REJECTED,
     PENDING_APPROVAL_STATUS_EXPIRED,
+    OWN_PR_STATUS_PENDING,
+    OWN_PR_STATUS_READY_FOR_MERGING,
+    OWN_PR_STATUS_NEEDS_ATTENTION,
+    OWN_PR_STATUS_MERGED,
+    OWN_PR_STATUS_CLOSED,
 )
 from .github_client import GitHubClient
 from .models import ReviewRecord, ReviewResult, ReviewAction, InlineComment, PRInfo
@@ -1436,6 +1441,124 @@ class ReviewWebServer:
                 return JSONResponse(content=approvals)
             except Exception as e:
                 logger.error(f"Failed to get pending approvals: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/own-prs")
+        async def get_own_prs():
+            """Get all own PRs."""
+            try:
+                prs = await self.database.get_own_prs()
+                return JSONResponse(content=prs)
+            except Exception as e:
+                logger.error(f"Failed to get own PRs: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.delete("/api/own-prs/{pr_id}")
+        async def delete_own_pr(pr_id: int):
+            """Delete an own PR from tracking."""
+            try:
+                deleted = await self.database.delete_own_pr(pr_id)
+                if deleted:
+                    return JSONResponse(
+                        content={"status": "success", "message": "Own PR deleted"}
+                    )
+                else:
+                    raise HTTPException(status_code=404, detail="Own PR not found")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to delete own PR: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/api/own-prs/{pr_id}/review-again")
+        async def review_own_pr_again(pr_id: int, request: Request):
+            """Trigger a fresh review for an own PR with optional custom context."""
+            try:
+                if not self.llm_integration:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="LLM integration not available",
+                    )
+
+                user_context = None
+                try:
+                    body = await request.json()
+                    user_context = body.get("user_context", "").strip() or None
+                except Exception:
+                    pass
+
+                own_pr = await self.database.get_own_pr_by_id(pr_id)
+                if not own_pr:
+                    raise HTTPException(status_code=404, detail="Own PR not found")
+
+                await self.database.delete_own_pr_by_commit(
+                    own_pr["repository"], own_pr["pr_number"], own_pr["head_sha"]
+                )
+
+                pr_info = PRInfo(
+                    id=own_pr["pr_number"],
+                    number=own_pr["pr_number"],
+                    repository=own_pr["repository"].split("/"),
+                    url=own_pr["pr_url"],
+                    title=own_pr["pr_title"],
+                    author=own_pr["pr_author"],
+                    head_sha=own_pr["head_sha"],
+                    base_sha=own_pr["base_sha"],
+                )
+
+                async def run_review():
+                    try:
+                        logger.info(
+                            f"Starting re-review for own PR {pr_info.repository_name}#{pr_info.number}"
+                            + (f" with user context" if user_context else "")
+                        )
+                        review_result = await self.llm_integration.review_pr(
+                            pr_info, user_context=user_context
+                        )
+                        logger.info(
+                            f"Re-review complete for own PR {pr_info.repository_name}#{pr_info.number}: "
+                            f"{review_result.action.value}"
+                        )
+
+                        await self.database.create_own_pr(pr_info, review_result)
+
+                        if review_result.action in (
+                            ReviewAction.APPROVE_WITHOUT_COMMENT,
+                            ReviewAction.APPROVE_WITH_COMMENT,
+                        ):
+                            if self.sound_notifier:
+                                await self.sound_notifier.play_pr_ready_sound()
+                        else:
+                            if self.sound_notifier:
+                                await (
+                                    self.sound_notifier.play_pr_needs_attention_sound()
+                                )
+
+                    except Exception as e:
+                        logger.error(
+                            f"Re-review failed for own PR {pr_info.repository_name}#{pr_info.number}: {e}"
+                        )
+                        failure_result = ReviewResult(
+                            action=ReviewAction.REQUIRES_HUMAN_REVIEW,
+                            reason=f"Re-review failed: {e}",
+                        )
+                        await self.database.create_own_pr(pr_info, failure_result)
+                        if self.sound_notifier:
+                            await self.sound_notifier.play_pr_needs_attention_sound()
+
+                asyncio.create_task(run_review())
+
+                return JSONResponse(
+                    content={
+                        "status": "success",
+                        "message": "Review triggered. Refresh in a moment to see results.",
+                    }
+                )
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to trigger re-review for own PR {pr_id}: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/api/human-reviews")

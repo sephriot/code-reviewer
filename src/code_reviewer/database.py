@@ -21,6 +21,20 @@ PENDING_APPROVAL_STATUS_REJECTED = "rejected"
 PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED = "merged_or_closed"
 PENDING_APPROVAL_STATUS_EXPIRED = "expired"
 
+OWN_PR_STATUS_PENDING = "pending"
+OWN_PR_STATUS_READY_FOR_MERGING = "ready_for_merging"
+OWN_PR_STATUS_NEEDS_ATTENTION = "needs_attention"
+OWN_PR_STATUS_MERGED = "merged"
+OWN_PR_STATUS_CLOSED = "closed"
+
+VALID_OWN_PR_STATUSES = {
+    OWN_PR_STATUS_PENDING,
+    OWN_PR_STATUS_READY_FOR_MERGING,
+    OWN_PR_STATUS_NEEDS_ATTENTION,
+    OWN_PR_STATUS_MERGED,
+    OWN_PR_STATUS_CLOSED,
+}
+
 VALID_PENDING_APPROVAL_STATUSES = {
     PENDING_APPROVAL_STATUS_PENDING,
     PENDING_APPROVAL_STATUS_APPROVED,
@@ -170,6 +184,39 @@ class ReviewDatabase:
 
         # Migrate UNIQUE constraint to include head_sha (if needed)
         self._migrate_pending_approvals_unique_constraint(cursor)
+
+        # Create own_prs table for tracking own PR reviews
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS own_prs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                repository TEXT NOT NULL,
+                pr_number INTEGER NOT NULL,
+                pr_title TEXT,
+                pr_author TEXT,
+                pr_url TEXT NOT NULL,
+                head_sha TEXT NOT NULL,
+                base_sha TEXT,
+                status TEXT DEFAULT 'pending',
+                review_action TEXT,
+                review_comment TEXT,
+                review_summary TEXT,
+                review_reason TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(repository, pr_number, head_sha)
+            )
+        """)
+
+        # Create index for faster lookups
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_own_prs_lookup 
+            ON own_prs(repository, pr_number)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_own_prs_status 
+            ON own_prs(status)
+        """)
 
         conn.commit()
         logger.info(f"Database initialized at: {self.db_path}")
@@ -1830,6 +1877,208 @@ class ReviewDatabase:
             "unique_repositories": unique_repos,
             "unique_authors": unique_authors,
         }
+
+    async def create_own_pr(self, pr_info: PRInfo, review_result: ReviewResult) -> int:
+        """Create a new own_pr entry for tracking."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._create_own_pr_sync, pr_info, review_result
+        )
+
+    def _create_own_pr_sync(self, pr_info: PRInfo, review_result: ReviewResult) -> int:
+        """Synchronous implementation of create_own_pr."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        status = (
+            OWN_PR_STATUS_READY_FOR_MERGING
+            if review_result.action
+            in (
+                ReviewAction.APPROVE_WITHOUT_COMMENT,
+                ReviewAction.APPROVE_WITH_COMMENT,
+            )
+            else OWN_PR_STATUS_NEEDS_ATTENTION
+        )
+
+        try:
+            cursor.execute(
+                """
+                INSERT INTO own_prs (
+                    repository, pr_number, pr_title, pr_author, pr_url,
+                    head_sha, base_sha, status, review_action, review_comment,
+                    review_summary, review_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    "/".join(pr_info.repository),
+                    pr_info.number,
+                    pr_info.title,
+                    pr_info.author,
+                    pr_info.url,
+                    pr_info.head_sha,
+                    pr_info.base_sha,
+                    status,
+                    review_result.action.value,
+                    review_result.comment,
+                    review_result.summary,
+                    review_result.reason,
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            return -1
+
+    async def get_own_prs(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all own PRs, optionally filtered by status."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_own_prs_sync, status
+        )
+
+    def _get_own_prs_sync(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Synchronous implementation of get_own_prs."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        if status:
+            cursor.execute(
+                "SELECT * FROM own_prs WHERE status = ? ORDER BY updated_at DESC",
+                (status,),
+            )
+        else:
+            cursor.execute("SELECT * FROM own_prs ORDER BY updated_at DESC")
+
+        return [dict(row) for row in cursor.fetchall()]
+
+    async def get_own_pr_by_commit(
+        self, repository: str, pr_number: int, head_sha: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get an own_pr entry by repository, PR number, and head SHA."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_own_pr_by_commit_sync, repository, pr_number, head_sha
+        )
+
+    def _get_own_pr_by_commit_sync(
+        self, repository: str, pr_number: int, head_sha: str
+    ) -> Optional[Dict[str, Any]]:
+        """Synchronous implementation of get_own_pr_by_commit."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT * FROM own_prs WHERE repository = ? AND pr_number = ? AND head_sha = ?",
+            (repository, pr_number, head_sha),
+        )
+
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_own_pr_status(
+        self,
+        pr_id: int,
+        status: str,
+        review_action: Optional[str] = None,
+        review_comment: Optional[str] = None,
+        review_summary: Optional[str] = None,
+        review_reason: Optional[str] = None,
+    ) -> bool:
+        """Update the status of an own_pr."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None,
+            self._update_own_pr_status_sync,
+            pr_id,
+            status,
+            review_action,
+            review_comment,
+            review_summary,
+            review_reason,
+        )
+
+    def _update_own_pr_status_sync(
+        self,
+        pr_id: int,
+        status: str,
+        review_action: Optional[str] = None,
+        review_comment: Optional[str] = None,
+        review_summary: Optional[str] = None,
+        review_reason: Optional[str] = None,
+    ) -> bool:
+        """Synchronous implementation of update_own_pr_status."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        updates = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
+        params = [status]
+
+        if review_action is not None:
+            updates.append("review_action = ?")
+            params.append(review_action)
+        if review_comment is not None:
+            updates.append("review_comment = ?")
+            params.append(review_comment)
+        if review_summary is not None:
+            updates.append("review_summary = ?")
+            params.append(review_summary)
+        if review_reason is not None:
+            updates.append("review_reason = ?")
+            params.append(review_reason)
+
+        params.append(pr_id)
+
+        cursor.execute(f"UPDATE own_prs SET {', '.join(updates)} WHERE id = ?", params)
+        conn.commit()
+        return cursor.rowcount > 0
+
+    async def delete_own_pr(self, pr_id: int) -> bool:
+        """Delete an own_pr entry."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._delete_own_pr_sync, pr_id
+        )
+
+    def _delete_own_pr_sync(self, pr_id: int) -> bool:
+        """Synchronous implementation of delete_own_pr."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("DELETE FROM own_prs WHERE id = ?", (pr_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    async def delete_own_pr_by_commit(
+        self, repository: str, pr_number: int, head_sha: str
+    ) -> bool:
+        """Delete an own_pr entry by commit SHA."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._delete_own_pr_by_commit_sync, repository, pr_number, head_sha
+        )
+
+    def _delete_own_pr_by_commit_sync(
+        self, repository: str, pr_number: int, head_sha: str
+    ) -> bool:
+        """Synchronous implementation of delete_own_pr_by_commit."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "DELETE FROM own_prs WHERE repository = ? AND pr_number = ? AND head_sha = ?",
+            (repository, pr_number, head_sha),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    async def get_own_pr_by_id(self, pr_id: int) -> Optional[Dict[str, Any]]:
+        """Get an own_pr by its ID."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_own_pr_by_id_sync, pr_id
+        )
+
+    def _get_own_pr_by_id_sync(self, pr_id: int) -> Optional[Dict[str, Any]]:
+        """Synchronous implementation of get_own_pr_by_id."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM own_prs WHERE id = ?", (pr_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
     def close(self):
         """Close database connections."""
