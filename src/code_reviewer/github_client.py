@@ -1,6 +1,7 @@
 """GitHub API client for PR operations."""
 
 import asyncio
+import fnmatch
 import logging
 import re
 from typing import List, Dict, Any, Optional, Set, Tuple
@@ -12,6 +13,15 @@ from .models import PRInfo, InlineComment
 
 
 logger = logging.getLogger(__name__)
+
+
+def _matches_repository_filter(repo_name: str, patterns: List[str]) -> bool:
+    """Check if a repository name matches any of the filter patterns.
+
+    Supports glob patterns (*, ?, [...]) via fnmatch.
+    Exact strings match exactly (backward compatible).
+    """
+    return any(fnmatch.fnmatch(repo_name, pattern) for pattern in patterns)
 
 
 class GitHubClient:
@@ -125,7 +135,11 @@ class GitHubClient:
                         f"Available repositories: {[pr.repository_name for pr in filtered_prs]}"
                     )
                     filtered_prs = [
-                        pr for pr in filtered_prs if pr.repository_name in repositories
+                        pr
+                        for pr in filtered_prs
+                        if _matches_repository_filter(
+                            pr.repository_name, repositories
+                        )
                     ]
 
                 # Filter by PR authors
@@ -203,7 +217,11 @@ class GitHubClient:
                         f"Filtering own PRs to repositories: {', '.join(repositories)}"
                     )
                     filtered_prs = [
-                        pr for pr in filtered_prs if pr.repository_name in repositories
+                        pr
+                        for pr in filtered_prs
+                        if _matches_repository_filter(
+                            pr.repository_name, repositories
+                        )
                     ]
 
                 return filtered_prs

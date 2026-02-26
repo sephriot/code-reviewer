@@ -1,7 +1,37 @@
 import pytest
 
-from code_reviewer.github_client import GitHubClient
+from code_reviewer.github_client import GitHubClient, _matches_repository_filter
 from code_reviewer.models import InlineComment
+
+
+class TestMatchesRepositoryFilter:
+    def test_exact_match(self):
+        assert _matches_repository_filter("spacelift-io/worker-pool", ["spacelift-io/worker-pool"])
+
+    def test_exact_no_match(self):
+        assert not _matches_repository_filter("spacelift-io/worker-pool", ["spacelift-io/other"])
+
+    def test_wildcard_org(self):
+        assert _matches_repository_filter("spacelift-io/worker-pool", ["spacelift-io/*"])
+        assert _matches_repository_filter("spacelift-io/backend", ["spacelift-io/*"])
+        assert not _matches_repository_filter("other-org/backend", ["spacelift-io/*"])
+
+    def test_wildcard_prefix(self):
+        assert _matches_repository_filter("spacelift-io/worker-pool", ["spacelift-io/worker-*"])
+        assert not _matches_repository_filter("spacelift-io/backend", ["spacelift-io/worker-*"])
+
+    def test_question_mark(self):
+        assert _matches_repository_filter("spacelift-io/app-v1", ["spacelift-io/app-v?"])
+        assert not _matches_repository_filter("spacelift-io/app-v12", ["spacelift-io/app-v?"])
+
+    def test_multiple_patterns(self):
+        patterns = ["spacelift-io/*", "other-org/specific-repo"]
+        assert _matches_repository_filter("spacelift-io/anything", patterns)
+        assert _matches_repository_filter("other-org/specific-repo", patterns)
+        assert not _matches_repository_filter("other-org/other-repo", patterns)
+
+    def test_empty_patterns(self):
+        assert not _matches_repository_filter("spacelift-io/repo", [])
 
 
 def test_extract_valid_diff_lines_basic():
