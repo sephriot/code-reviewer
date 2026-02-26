@@ -1357,7 +1357,8 @@
 
         // Own PRs state
         let ownPRsData = [];
-        let ownPRsFilter = 'all';
+        let ownPRsFilter = 'open';
+        const OPEN_STATUSES = ['pending', 'ready_for_merging', 'needs_attention'];
 
         async function loadOwnPRs() {
             try {
@@ -1372,12 +1373,14 @@
 
         function renderOwnPRFilters() {
             const container = document.getElementById('own-pr-filters');
-            const counts = { all: ownPRsData.length };
+            const counts = { all: ownPRsData.length, open: 0 };
             ownPRsData.forEach(pr => {
                 counts[pr.status] = (counts[pr.status] || 0) + 1;
+                if (OPEN_STATUSES.includes(pr.status)) counts.open++;
             });
 
             const filters = [
+                { key: 'open', label: 'Open' },
                 { key: 'all', label: 'All' },
                 { key: 'ready_for_merging', label: 'Ready' },
                 { key: 'needs_attention', label: 'Needs Attention' },
@@ -1387,7 +1390,7 @@
             ];
 
             container.innerHTML = filters
-                .filter(f => f.key === 'all' || counts[f.key])
+                .filter(f => f.key === 'open' || f.key === 'all' || counts[f.key])
                 .map(f => `<button class="filter-btn${ownPRsFilter === f.key ? ' active' : ''}" onclick="filterOwnPRs('${f.key}')">${f.label} (${counts[f.key] || 0})</button>`)
                 .join('');
         }
@@ -1417,7 +1420,9 @@
 
         function renderOwnPRs() {
             const container = document.getElementById('own-prs-list');
-            const filtered = ownPRsFilter === 'all' ? ownPRsData : ownPRsData.filter(pr => pr.status === ownPRsFilter);
+            const filtered = ownPRsFilter === 'all' ? ownPRsData
+                : ownPRsFilter === 'open' ? ownPRsData.filter(pr => OPEN_STATUSES.includes(pr.status))
+                : ownPRsData.filter(pr => pr.status === ownPRsFilter);
 
             if (filtered.length === 0) {
                 container.innerHTML = '<p>No PRs found.</p>';
