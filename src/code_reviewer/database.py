@@ -525,12 +525,12 @@ class ReviewDatabase:
 
         cursor.execute(
             """
-            SELECT * FROM pending_approvals 
-            WHERE repository = ? AND pr_number = ? AND head_sha = ? AND status = ?
+            SELECT * FROM pending_approvals
+            WHERE repository = ? AND pr_number = ? AND head_sha = ?
             ORDER BY created_at DESC
             LIMIT 1
         """,
-            (repository, pr_number, head_sha, PENDING_APPROVAL_STATUS_PENDING),
+            (repository, pr_number, head_sha),
         )
 
         row = cursor.fetchone()
@@ -687,18 +687,34 @@ class ReviewDatabase:
                 pr_info.number,
             )
 
-        # Check if this exact commit already has a pending approval (duplicate prevention)
+        # Check if this exact commit already has an existing record (duplicate prevention)
         existing_commit = self._get_pending_approval_for_commit_sync(
             pr_info.repository_name, pr_info.number, pr_info.head_sha
         )
 
         if existing_commit:
-            logger.info(
-                f"Pending approval already exists for PR #{pr_info.number} commit {pr_info.head_sha[:8]}, returning existing ID: {existing_commit['id']}"
-            )
-            return existing_commit["id"]
+            existing_status = existing_commit.get("status")
+            if existing_status == PENDING_APPROVAL_STATUS_EXPIRED:
+                # Expired records can be replaced - delete and continue to insert
+                cursor.execute(
+                    """
+                    DELETE FROM pending_approvals
+                    WHERE id = ?
+                """,
+                    (existing_commit["id"],),
+                )
+                logger.info(
+                    f"Deleted expired pending approval ID {existing_commit['id']} for PR #{pr_info.number} "
+                    f"commit {pr_info.head_sha[:8]} to allow re-review"
+                )
+            else:
+                logger.info(
+                    f"Pending approval already exists for PR #{pr_info.number} commit "
+                    f"{pr_info.head_sha[:8]} (status={existing_status}), returning existing ID: {existing_commit['id']}"
+                )
+                return existing_commit["id"]
 
-        # Delete any expired records for the same commit (allows re-review after expiration)
+        # Delete any remaining expired records for the same commit (allows re-review after expiration)
         cursor.execute(
             """
             DELETE FROM pending_approvals
