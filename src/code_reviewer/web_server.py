@@ -1583,13 +1583,21 @@ class ReviewWebServer:
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.post("/api/approvals/{approval_id}/review-again")
-        async def review_again(approval_id: int):
+        async def review_again(approval_id: int, request: Request):
             """Expire pending approval and trigger fresh review."""
             try:
                 if not self.llm_integration:
                     raise HTTPException(
                         status_code=500, detail="LLM integration not available"
                     )
+
+                # Parse optional user context from request body
+                user_context = None
+                try:
+                    body = await request.json()
+                    user_context = body.get("user_context", "").strip() or None
+                except Exception:
+                    pass
 
                 # Get the pending approval
                 approval = await self.database.get_pending_approval(approval_id)
@@ -1627,12 +1635,17 @@ class ReviewWebServer:
                 )
 
                 # Trigger fresh review in background
+                re_review_context = user_context
+
                 async def run_review():
                     try:
                         logger.info(
                             f"Starting re-review for {pr_info.repository_name}#{pr_info.number}"
+                            + (f" with user context" if re_review_context else "")
                         )
-                        review_result = await self.llm_integration.review_pr(pr_info)
+                        review_result = await self.llm_integration.review_pr(
+                            pr_info, user_context=re_review_context
+                        )
                         logger.info(
                             f"Re-review complete for {pr_info.repository_name}#{pr_info.number}: "
                             f"{review_result.action.value}"
@@ -1683,7 +1696,7 @@ class ReviewWebServer:
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.post("/api/reviews/{review_id}/review-again")
-        async def review_human_review_again(review_id: int):
+        async def review_human_review_again(review_id: int, request: Request):
             """Delete a human-review record and trigger a fresh LLM review."""
             try:
                 if not self.llm_integration:
@@ -1691,6 +1704,14 @@ class ReviewWebServer:
                         status_code=500,
                         detail="LLM integration not available",
                     )
+
+                # Parse optional user context from request body
+                user_context = None
+                try:
+                    body = await request.json()
+                    user_context = body.get("user_context", "").strip() or None
+                except Exception:
+                    pass
 
                 review = await self.database.get_review_by_id(review_id)
                 if not review:
@@ -1720,12 +1741,17 @@ class ReviewWebServer:
                     base_sha=review.base_sha,
                 )
 
+                re_review_context = user_context
+
                 async def run_review():
                     try:
                         logger.info(
                             f"Starting re-review for {pr_info.repository_name}#{pr_info.number}"
+                            + (f" with user context" if re_review_context else "")
                         )
-                        review_result = await self.llm_integration.review_pr(pr_info)
+                        review_result = await self.llm_integration.review_pr(
+                            pr_info, user_context=re_review_context
+                        )
                         logger.info(
                             f"Re-review complete for {pr_info.repository_name}#{pr_info.number}: "
                             f"{review_result.action.value}"

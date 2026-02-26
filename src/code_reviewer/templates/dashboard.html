@@ -222,8 +222,69 @@
         </div>
     </div>
 
+    <!-- Modal for re-review with context -->
+    <div id="re-review-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeReReviewModal()">&times;</span>
+            <h3>Review Again</h3>
+            <div id="re-review-modal-pr-info"></div>
+            <textarea id="re-review-context" placeholder="Optional: Provide additional context for the follow-up review (e.g. explain domain-specific logic, clarify intent, point out false positives)..." style="min-height: 100px;"></textarea>
+            <div class="buttons">
+                <button class="btn btn-retry" onclick="confirmReReview()">Start Re-Review</button>
+                <button class="btn" onclick="closeReReviewModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let currentApprovalId = null;
+        let reReviewTargetId = null;
+        let reReviewTargetType = null; // 'approval' or 'review'
+
+        function showReReviewModal(id, type, title) {
+            reReviewTargetId = id;
+            reReviewTargetType = type;
+            document.getElementById('re-review-modal-pr-info').innerHTML = `<strong>${title}</strong>`;
+            document.getElementById('re-review-context').value = '';
+            document.getElementById('re-review-modal').style.display = 'block';
+        }
+
+        function closeReReviewModal() {
+            document.getElementById('re-review-modal').style.display = 'none';
+            reReviewTargetId = null;
+            reReviewTargetType = null;
+        }
+
+        async function confirmReReview() {
+            if (!reReviewTargetId || !reReviewTargetType) return;
+
+            const userContext = document.getElementById('re-review-context').value.trim();
+            const url = reReviewTargetType === 'approval'
+                ? `/api/approvals/${reReviewTargetId}/review-again`
+                : `/api/reviews/${reReviewTargetId}/review-again`;
+
+            closeReReviewModal();
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({user_context: userContext}),
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showToast(result.message || 'Review triggered. Refresh to see results.');
+                    refreshCurrentView();
+                } else {
+                    const errorText = await response.text();
+                    alert('Failed to trigger re-review: ' + errorText);
+                }
+            } catch (error) {
+                console.error('Failed to trigger re-review:', error);
+                alert('Failed to trigger re-review: ' + error.message);
+            }
+        }
 
         function refreshCurrentView() {
             // Find the currently active tab and refresh its data
@@ -359,7 +420,7 @@
                                 Approve & Post Review
                             </button>
                             <button class="btn btn-reject" onclick="rejectPR(${approval.id})">Reject</button>
-                            <button class="btn btn-retry" onclick="reviewAgain(${approval.id})">Review Again</button>
+                            <button class="btn btn-retry" onclick="reviewAgain(${approval.id}, '${approval.pr_title.replace(/'/g, "\\'")}')">Review Again</button>
                             <a href="${approval.pr_url}" target="_blank" class="btn btn-view">View PR</a>
                         </div>
                     </div>
@@ -390,7 +451,7 @@
                         ${review.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${review.review_reason}</div>` : ''}
                         <div class="buttons">
                             <a href="https://github.com/${review.repository}/pull/${review.pr_number}" target="_blank" class="btn btn-view">View PR</a>
-                            <button class="btn btn-retry" onclick="reviewHumanReviewAgain(${review.id})">Review Again</button>
+                            <button class="btn btn-retry" onclick="reviewHumanReviewAgain(${review.id}, '${review.pr_title.replace(/'/g, "\\'")}')">Review Again</button>
                         </div>
                     </div>
                 `).join('');
@@ -698,48 +759,12 @@
             }, duration);
         }
 
-        async function reviewAgain(id) {
-            if (!confirm('Discard this review and trigger a fresh one?')) return;
-
-            try {
-                const response = await fetch(`/api/approvals/${id}/review-again`, {
-                    method: 'POST'
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    showToast(result.message || 'Review triggered. Refresh to see results.');
-                    refreshCurrentView();
-                } else {
-                    const errorText = await response.text();
-                    alert('Failed to trigger re-review: ' + errorText);
-                }
-            } catch (error) {
-                console.error('Failed to trigger re-review:', error);
-                alert('Failed to trigger re-review: ' + error.message);
-            }
+        function reviewAgain(id, title) {
+            showReReviewModal(id, 'approval', title || 'PR Review');
         }
 
-        async function reviewHumanReviewAgain(id) {
-            if (!confirm('Discard this human review record and trigger a fresh LLM review?')) return;
-
-            try {
-                const response = await fetch(`/api/reviews/${id}/review-again`, {
-                    method: 'POST'
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    showToast(result.message || 'Review triggered. Refresh to see results.');
-                    refreshCurrentView();
-                } else {
-                    const errorText = await response.text();
-                    alert('Failed to trigger re-review: ' + errorText);
-                }
-            } catch (error) {
-                console.error('Failed to trigger re-review:', error);
-                alert('Failed to trigger re-review: ' + error.message);
-            }
+        function reviewHumanReviewAgain(id, title) {
+            showReReviewModal(id, 'review', title || 'PR Review');
         }
 
         async function loadApprovedHistory() {

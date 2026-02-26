@@ -55,10 +55,11 @@ class LLMIntegration:
         *,
         timeout: Optional[int] = None,
         previous_pending: Optional[Dict[str, Any]] = None,
+        user_context: Optional[str] = None,
     ) -> ReviewResult:
         """Review a PR using the selected language model CLI."""
         try:
-            run_coro = self._run_model_cli(pr_info, previous_pending)
+            run_coro = self._run_model_cli(pr_info, previous_pending, user_context=user_context)
             if timeout and timeout > 0:
                 result = await asyncio.wait_for(run_coro, timeout=timeout)
             else:
@@ -75,7 +76,7 @@ class LLMIntegration:
             logger.error(f"Error during {self.model.value} review: {exc}")
             raise
 
-    async def _run_model_cli(self, pr_info: PRInfo, previous_pending: Optional[Dict[str, Any]]) -> str:
+    async def _run_model_cli(self, pr_info: PRInfo, previous_pending: Optional[Dict[str, Any]], *, user_context: Optional[str] = None) -> str:
         """Execute the configured CLI and return raw output."""
         prompt_template = self.prompt_file.read_text(encoding="utf-8")
         if self.output_format_file:
@@ -94,12 +95,20 @@ class LLMIntegration:
             else ""
         )
 
+        user_context_block = (
+            f"\n\nAdditional context from the reviewer for this follow-up review:\n{user_context}\n"
+            "Please take this additional context into account when performing your review.\n"
+            if user_context
+            else ""
+        )
+
         full_prompt = (
             f"Please review this GitHub pull request: {pr_url}\n\n"
             f"Repository: {repo_name}\n"
             f"PR Number: #{pr_number}\n\n"
             f"{prompt_template}\n"
             f"{context_block}"
+            f"{user_context_block}"
             f"\nPlease analyze the pull request at {pr_url} and provide your review following the instructions above."
         )
 

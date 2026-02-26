@@ -28,7 +28,7 @@ async def test_review_prompt_includes_previous_pending_context(tmp_path: Path):
             self.captured_context = None
             self.captured_block = None
 
-        async def _run_model_cli(self, pr_info: PRInfo, previous_pending=None):  # type: ignore[override]
+        async def _run_model_cli(self, pr_info: PRInfo, previous_pending=None, *, user_context=None):  # type: ignore[override]
             prompt_template = self.prompt_file.read_text(encoding="utf-8")
             previous_context = self._format_previous_pending(previous_pending) if previous_pending else ""
             context_block = (
