@@ -17,6 +17,7 @@ from .database import (
     OWN_PR_STATUS_NEEDS_ATTENTION,
     OWN_PR_STATUS_MERGED,
     OWN_PR_STATUS_CLOSED,
+    OWN_PR_STATUS_EXPIRED,
 )
 from .models import PRInfo, ReviewResult, ReviewAction
 
@@ -565,29 +566,26 @@ class GitHubMonitor:
                 f"Checking own PR #{pr_info.number} in {repo_name} (head: {pr_info.head_sha[:8] if pr_info.head_sha else 'unknown'})"
             )
 
-            existing_pr = await self.db.get_own_pr_by_commit(
-                repo_name, pr_info.number, pr_info.head_sha
+            existing_pr = await self.db.get_own_pr_by_pr_number(
+                repo_name, pr_info.number
             )
 
-            if existing_pr:
+            if existing_pr and existing_pr.get("head_sha") == pr_info.head_sha:
                 logger.debug(
                     f"Own PR #{pr_info.number} already tracked with same head SHA, skipping"
                 )
                 continue
 
-            if existing_pr and existing_pr.get("head_sha") != pr_info.head_sha:
+            if existing_pr:
                 logger.info(
-                    f"New commit detected for own PR #{pr_info.number}, re-reviewing..."
+                    f"New commit detected for own PR #{pr_info.number}, expiring old reviews..."
                 )
-                await self.db.delete_own_pr_by_commit(
-                    repo_name, pr_info.number, existing_pr["head_sha"]
-                )
-                await self._process_own_pr(pr_info)
-            elif not existing_pr:
-                logger.info(
-                    f"Found new own PR to review: #{pr_info.number} in {repo_name}"
-                )
-                await self._process_own_pr(pr_info)
+                await self.db.expire_own_prs_for_pr(repo_name, pr_info.number)
+
+            logger.info(
+                f"Found own PR to review: #{pr_info.number} in {repo_name}"
+            )
+            await self._process_own_pr(pr_info)
 
     async def _process_own_pr(self, pr_info: PRInfo):
         """Process a single own PR for review."""

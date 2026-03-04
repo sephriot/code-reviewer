@@ -26,6 +26,7 @@ OWN_PR_STATUS_READY_FOR_MERGING = "ready_for_merging"
 OWN_PR_STATUS_NEEDS_ATTENTION = "needs_attention"
 OWN_PR_STATUS_MERGED = "merged"
 OWN_PR_STATUS_CLOSED = "closed"
+OWN_PR_STATUS_EXPIRED = "expired"
 
 VALID_OWN_PR_STATUSES = {
     OWN_PR_STATUS_PENDING,
@@ -33,6 +34,7 @@ VALID_OWN_PR_STATUSES = {
     OWN_PR_STATUS_NEEDS_ATTENTION,
     OWN_PR_STATUS_MERGED,
     OWN_PR_STATUS_CLOSED,
+    OWN_PR_STATUS_EXPIRED,
 }
 
 VALID_PENDING_APPROVAL_STATUSES = {
@@ -1971,6 +1973,48 @@ class ReviewDatabase:
 
         row = cursor.fetchone()
         return dict(row) if row else None
+
+    async def get_own_pr_by_pr_number(
+        self, repository: str, pr_number: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get the most recent own_pr entry by repository and PR number."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_own_pr_by_pr_number_sync, repository, pr_number
+        )
+
+    def _get_own_pr_by_pr_number_sync(
+        self, repository: str, pr_number: int
+    ) -> Optional[Dict[str, Any]]:
+        """Synchronous implementation of get_own_pr_by_pr_number."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM own_prs WHERE repository = ? AND pr_number = ? ORDER BY updated_at DESC LIMIT 1",
+            (repository, pr_number),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    async def expire_own_prs_for_pr(
+        self, repository: str, pr_number: int
+    ) -> int:
+        """Mark all own_pr entries for a PR as expired."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._expire_own_prs_for_pr_sync, repository, pr_number
+        )
+
+    def _expire_own_prs_for_pr_sync(
+        self, repository: str, pr_number: int
+    ) -> int:
+        """Synchronous implementation of expire_own_prs_for_pr."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE own_prs SET status = 'expired' WHERE repository = ? AND pr_number = ? AND status NOT IN ('merged', 'closed', 'expired')",
+            (repository, pr_number),
+        )
+        conn.commit()
+        return cursor.rowcount
 
     async def update_own_pr_status(
         self,

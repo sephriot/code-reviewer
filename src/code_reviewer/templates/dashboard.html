@@ -69,17 +69,6 @@
         .rate-good { background: #d4edda; color: #155724; }
         .rate-warning { background: #fff3cd; color: #856404; }
         .rate-danger { background: #f8d7da; color: #721c24; }
-        .status-ready { background: #d4edda; color: #155724; }
-        .status-needs-attention { background: #f8d7da; color: #721c24; }
-        .status-pending-review { background: #e2e3e5; color: #6c757d; }
-        .status-merged { background: #cce5ff; color: #004085; }
-        .status-closed { background: #e2e3e5; color: #6c757d; }
-        .own-pr-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 15px; }
-        .filter-btn { padding: 6px 14px; border-radius: 20px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-size: 13px; transition: all 0.2s; }
-        .filter-btn:hover { background: #f0f0f0; }
-        .filter-btn.active { background: #667eea; color: #fff; border-color: #667eea; }
-        .own-pr-context-area { margin-top: 10px; }
-        .own-pr-context-area textarea { width: 100%; height: 80px; margin: 5px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: inherit; resize: vertical; }
     </style>
 </head>
 <body>
@@ -94,7 +83,6 @@
             <div class="tab" onclick="showTab('merged-closed')">Merged/Closed</div>
             <div class="tab" onclick="showTab('expired')">Expired</div>
             <div class="tab" onclick="showTab('completed-reviews')">Completed Reviews</div>
-            <div class="tab" onclick="showTab('own-prs')">My PRs</div>
             <div class="tab" onclick="showTab('analytics')">📊 Analytics</div>
         </div>
         
@@ -144,14 +132,6 @@
             <div class="section">
                 <h2>Last 50 Completed PR Reviews</h2>
                 <div id="completed-reviews-list"></div>
-            </div>
-        </div>
-
-        <div id="own-prs" class="tab-content">
-            <div class="section">
-                <h2>My Pull Requests</h2>
-                <div id="own-pr-filters"></div>
-                <div id="own-prs-list"></div>
             </div>
         </div>
 
@@ -274,9 +254,6 @@
                         case 'completed-reviews':
                             loadCompletedReviews();
                             break;
-                        case 'own-prs':
-                            loadOwnPRs();
-                            break;
                         case 'analytics':
                             loadAnalytics();
                             break;
@@ -309,8 +286,6 @@
                 loadExpiredApprovals();
             } else if (tabName === 'completed-reviews') {
                 loadCompletedReviews();
-            } else if (tabName === 'own-prs') {
-                loadOwnPRs();
             } else if (tabName === 'analytics') {
                 loadAnalytics();
             }
@@ -1352,163 +1327,6 @@
                     return '<span class="status-badge" style="background: #fff3cd; color: #856404;">HUMAN REVIEW</span>';
                 default:
                     return `<span class="status-badge" style="background: #e2e3e5; color: #6c757d;">${action.replace('_', ' ').toUpperCase()}</span>`;
-            }
-        }
-
-        // Own PRs state
-        let ownPRsData = [];
-        let ownPRsFilter = 'open';
-        const OPEN_STATUSES = ['pending', 'ready_for_merging', 'needs_attention'];
-
-        async function loadOwnPRs() {
-            try {
-                const response = await fetch('/api/own-prs');
-                ownPRsData = await response.json();
-                renderOwnPRFilters();
-                renderOwnPRs();
-            } catch (error) {
-                console.error('Failed to load own PRs:', error);
-            }
-        }
-
-        function renderOwnPRFilters() {
-            const container = document.getElementById('own-pr-filters');
-            const counts = { all: ownPRsData.length, open: 0 };
-            ownPRsData.forEach(pr => {
-                counts[pr.status] = (counts[pr.status] || 0) + 1;
-                if (OPEN_STATUSES.includes(pr.status)) counts.open++;
-            });
-
-            const filters = [
-                { key: 'open', label: 'Open' },
-                { key: 'all', label: 'All' },
-                { key: 'ready_for_merging', label: 'Ready' },
-                { key: 'needs_attention', label: 'Needs Attention' },
-                { key: 'pending', label: 'Pending Review' },
-                { key: 'merged', label: 'Merged' },
-                { key: 'closed', label: 'Closed' }
-            ];
-
-            container.innerHTML = filters
-                .filter(f => f.key === 'open' || f.key === 'all' || counts[f.key])
-                .map(f => `<button class="filter-btn${ownPRsFilter === f.key ? ' active' : ''}" onclick="filterOwnPRs('${f.key}')">${f.label} (${counts[f.key] || 0})</button>`)
-                .join('');
-        }
-
-        function filterOwnPRs(status) {
-            ownPRsFilter = status;
-            renderOwnPRFilters();
-            renderOwnPRs();
-        }
-
-        function getOwnPRStatusBadge(status) {
-            switch (status) {
-                case 'ready_for_merging':
-                    return '<span class="status-badge status-ready">READY</span>';
-                case 'needs_attention':
-                    return '<span class="status-badge status-needs-attention">NEEDS ATTENTION</span>';
-                case 'pending':
-                    return '<span class="status-badge status-pending-review">PENDING REVIEW</span>';
-                case 'merged':
-                    return '<span class="status-badge status-merged">MERGED</span>';
-                case 'closed':
-                    return '<span class="status-badge status-closed">CLOSED</span>';
-                default:
-                    return `<span class="status-badge" style="background: #e2e3e5; color: #6c757d;">${status.toUpperCase()}</span>`;
-            }
-        }
-
-        function renderOwnPRs() {
-            const container = document.getElementById('own-prs-list');
-            const filtered = ownPRsFilter === 'all' ? ownPRsData
-                : ownPRsFilter === 'open' ? ownPRsData.filter(pr => OPEN_STATUSES.includes(pr.status))
-                : ownPRsData.filter(pr => pr.status === ownPRsFilter);
-
-            if (filtered.length === 0) {
-                container.innerHTML = '<p>No PRs found.</p>';
-                return;
-            }
-
-            container.innerHTML = filtered.map(pr => `
-                <div class="pr-card">
-                    <div class="pr-title">${pr.pr_title || 'Untitled PR'}
-                        ${getOwnPRStatusBadge(pr.status)}
-                        ${pr.review_action ? getActionBadge(pr.review_action) : ''}
-                    </div>
-                    <div class="pr-meta">
-                        ${pr.repository} #${pr.pr_number} by ${pr.pr_author}
-                        <br><small>Updated: ${new Date(pr.updated_at).toLocaleString()}</small>
-                        <br><small>Created: ${new Date(pr.created_at).toLocaleString()}</small>
-                        <br><small>Head SHA: ${pr.head_sha ? pr.head_sha.substring(0, 8) : 'N/A'}</small>
-                    </div>
-                    ${pr.review_summary ? `<div class="review-comment"><strong>Summary:</strong><br>${pr.review_summary}</div>` : ''}
-                    ${pr.review_comment ? `<div class="review-comment"><strong>Comment:</strong><br>${pr.review_comment}</div>` : ''}
-                    ${pr.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${pr.review_reason}</div>` : ''}
-                    <div id="own-pr-context-${pr.id}" class="own-pr-context-area" style="display:none;">
-                        <textarea id="own-pr-context-input-${pr.id}" placeholder="Optional: provide context for the re-review (e.g. what changed, what to focus on)..."></textarea>
-                        <div style="margin-top: 5px;">
-                            <button class="btn btn-approve" onclick="submitOwnPRReview(${pr.id})" style="margin-right: 5px;">Submit Review</button>
-                            <button class="btn" onclick="cancelOwnPRContext(${pr.id})">Cancel</button>
-                        </div>
-                    </div>
-                    <div class="buttons" id="own-pr-buttons-${pr.id}">
-                        <a href="${pr.pr_url}" target="_blank" class="btn btn-view">View PR</a>
-                        <button class="btn btn-retry" onclick="toggleOwnPRContext(${pr.id})">Review Again</button>
-                        <button class="btn btn-reject" onclick="deleteOwnPR(${pr.id})">Remove</button>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        function toggleOwnPRContext(id) {
-            document.getElementById(`own-pr-context-${id}`).style.display = 'block';
-        }
-
-        function cancelOwnPRContext(id) {
-            document.getElementById(`own-pr-context-${id}`).style.display = 'none';
-            document.getElementById(`own-pr-context-input-${id}`).value = '';
-        }
-
-        async function submitOwnPRReview(id) {
-            const userContext = document.getElementById(`own-pr-context-input-${id}`).value;
-            try {
-                const response = await fetch(`/api/own-prs/${id}/review-again`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ user_context: userContext || '' })
-                });
-
-                if (response.ok) {
-                    const result = await response.json();
-                    showToast(result.message || 'Review triggered. Refresh to see results.');
-                    loadOwnPRs();
-                } else {
-                    const errorText = await response.text();
-                    alert('Failed to trigger re-review: ' + errorText);
-                }
-            } catch (error) {
-                console.error('Failed to trigger re-review:', error);
-                alert('Failed to trigger re-review: ' + error.message);
-            }
-        }
-
-        async function deleteOwnPR(id) {
-            if (!confirm('Remove this PR from tracking?')) return;
-            try {
-                const response = await fetch(`/api/own-prs/${id}`, {
-                    method: 'DELETE'
-                });
-
-                if (response.ok) {
-                    showToast('PR removed from tracking.');
-                    loadOwnPRs();
-                } else {
-                    const errorText = await response.text();
-                    alert('Failed to remove PR: ' + errorText);
-                }
-            } catch (error) {
-                console.error('Failed to remove PR:', error);
-                alert('Failed to remove PR: ' + error.message);
             }
         }
 
