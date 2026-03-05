@@ -46,6 +46,9 @@ dev = [
 [project.scripts]
 code-reviewer = "code_reviewer.main:main"
 
+[tool.setuptools.package-data]
+code_reviewer = ["templates/*.html"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
