@@ -47,8 +47,6 @@ async def test_get_analytics_overview_empty(db):
     overview = await db.get_analytics_overview()
 
     assert overview["total_reviews"] == 0
-    assert overview["reviews_7d"] == 0
-    assert overview["reviews_30d"] == 0
     assert overview["avg_inline_comments"] == 0
     assert overview["human_review_rate"] == 0
     assert overview["approval_rate"] == 0

@@ -672,10 +672,10 @@ class ReviewWebServer:
 
         # Analytics API endpoints
         @self.app.get("/api/analytics/overview")
-        async def get_analytics_overview():
+        async def get_analytics_overview(days: Optional[int] = None):
             """Get comprehensive analytics overview."""
             try:
-                overview = await self.database.get_analytics_overview()
+                overview = await self.database.get_analytics_overview(days)
                 return JSONResponse(content=overview)
             except Exception as e:
                 logger.error(f"Failed to get analytics overview: {e}")
@@ -697,40 +697,40 @@ class ReviewWebServer:
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/api/analytics/repositories")
-        async def get_analytics_repositories(limit: int = 20):
+        async def get_analytics_repositories(limit: int = 20, days: Optional[int] = None):
             """Get per-repository analytics."""
             try:
-                data = await self.database.get_repository_stats(limit)
+                data = await self.database.get_repository_stats(limit, days)
                 return JSONResponse(content=data)
             except Exception as e:
                 logger.error(f"Failed to get repository analytics: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/api/analytics/authors")
-        async def get_analytics_authors(limit: int = 20):
+        async def get_analytics_authors(limit: int = 20, days: Optional[int] = None):
             """Get per-author analytics."""
             try:
-                data = await self.database.get_author_stats(limit)
+                data = await self.database.get_author_stats(limit, days)
                 return JSONResponse(content=data)
             except Exception as e:
                 logger.error(f"Failed to get author analytics: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/api/analytics/actions")
-        async def get_analytics_actions():
+        async def get_analytics_actions(days: Optional[int] = None):
             """Get action distribution."""
             try:
-                data = await self.database.get_action_distribution()
+                data = await self.database.get_action_distribution(days)
                 return JSONResponse(content=data)
             except Exception as e:
                 logger.error(f"Failed to get action distribution: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/api/analytics/pending")
-        async def get_analytics_pending():
+        async def get_analytics_pending(days: Optional[int] = None):
             """Get pending approval statistics."""
             try:
-                data = await self.database.get_pending_approval_stats()
+                data = await self.database.get_pending_approval_stats(days)
                 return JSONResponse(content=data)
             except Exception as e:
                 logger.error(f"Failed to get pending approval stats: {e}")

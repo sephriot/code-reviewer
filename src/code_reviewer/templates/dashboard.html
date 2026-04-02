@@ -157,8 +157,22 @@
 
         <div id="analytics" class="tab-content">
             <div class="section">
-                <h2>📊 Review Analytics Dashboard</h2>
-                
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <h2 style="margin: 0;">📊 Review Analytics Dashboard</h2>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label for="analytics-period" style="font-size: 14px; color: #666;">Time period:</label>
+                        <select id="analytics-period" onchange="onAnalyticsPeriodChange()" style="padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; background: #fff; cursor: pointer;">
+                            <option value="7">Last 7 days</option>
+                            <option value="14">Last 14 days</option>
+                            <option value="30" selected>Last 30 days</option>
+                            <option value="90">Last 90 days</option>
+                            <option value="180">Last 6 months</option>
+                            <option value="365">Last year</option>
+                            <option value="0">All time</option>
+                        </select>
+                    </div>
+                </div>
+
                 <!-- Overview Stats Cards -->
                 <div class="analytics-grid">
                     <div class="stat-card">
@@ -181,7 +195,7 @@
 
                 <!-- Review Trends Chart -->
                 <div class="chart-container">
-                    <div class="chart-title">📈 Review Trends (Last 30 Days)</div>
+                    <div class="chart-title" id="trends-chart-title">📈 Review Trends (Last 30 Days)</div>
                     <canvas id="trends-chart" height="100"></canvas>
                 </div>
 
@@ -1147,15 +1161,42 @@
         let actionsChart = null;
         let reposChart = null;
 
+        function getAnalyticsDays() {
+            const sel = document.getElementById('analytics-period');
+            return sel ? parseInt(sel.value, 10) : 30;
+        }
+
+        function getAnalyticsPeriodLabel() {
+            const sel = document.getElementById('analytics-period');
+            if (sel) {
+                return sel.options[sel.selectedIndex].text;
+            }
+            return 'Last 30 days';
+        }
+
+        function onAnalyticsPeriodChange() {
+            loadAnalytics();
+        }
+
         async function loadAnalytics() {
             try {
+                const days = getAnalyticsDays();
+                const daysParam = days > 0 ? `days=${days}` : '';
+                const trendsPeriod = days > 0 ? `${days}d` : '3650d';
+
+                // Update trends chart title
+                const titleEl = document.getElementById('trends-chart-title');
+                if (titleEl) {
+                    titleEl.textContent = `📈 Review Trends (${getAnalyticsPeriodLabel()})`;
+                }
+
                 // Load all analytics data in parallel
                 const [overview, trends, actions, repos, authors] = await Promise.all([
-                    fetch('/api/analytics/overview').then(r => r.json()),
-                    fetch('/api/analytics/trends?period=30d').then(r => r.json()),
-                    fetch('/api/analytics/actions').then(r => r.json()),
-                    fetch('/api/analytics/repositories?limit=10').then(r => r.json()),
-                    fetch('/api/analytics/authors?limit=15').then(r => r.json())
+                    fetch(`/api/analytics/overview${daysParam ? '?' + daysParam : ''}`).then(r => r.json()),
+                    fetch(`/api/analytics/trends?period=${trendsPeriod}`).then(r => r.json()),
+                    fetch(`/api/analytics/actions${daysParam ? '?' + daysParam : ''}`).then(r => r.json()),
+                    fetch(`/api/analytics/repositories?limit=10${daysParam ? '&' + daysParam : ''}`).then(r => r.json()),
+                    fetch(`/api/analytics/authors?limit=15${daysParam ? '&' + daysParam : ''}`).then(r => r.json())
                 ]);
 
                 // Update overview cards
