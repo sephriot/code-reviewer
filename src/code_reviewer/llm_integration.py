@@ -29,6 +29,15 @@ class LLMIntegration:
 
     _CODEX_OUTPUT_FILE = "codex_review_output.json"
 
+    # Cursor Agent CLI: stdin prompt, stdout JSON envelope with `result` text body.
+    # Default matches `agent --help`: --print, --output-format json, --trust for headless.
+    _DEFAULT_CURSOR_AGENT_ARGV = [
+        "agent",
+        "--print",
+        "--output-format",
+        "json",
+        "--trust",
+    ]
 
     _CLI_COMMANDS = {
         ReviewModel.CLAUDE: ["claude", "--print"],
@@ -42,12 +51,22 @@ class LLMIntegration:
         ],
     }
 
-    def __init__(self, prompt_file: Path, model: ReviewModel, *, output_format_file: Optional[Path] = None, show_thinking: bool = False, atlas_enabled: bool = False):
+    def __init__(
+        self,
+        prompt_file: Path,
+        model: ReviewModel,
+        *,
+        output_format_file: Optional[Path] = None,
+        show_thinking: bool = False,
+        atlas_enabled: bool = False,
+        agent_argv: Optional[List[str]] = None,
+    ):
         self.prompt_file = prompt_file
         self.output_format_file = output_format_file
         self.model = model
         self.show_thinking = show_thinking
         self.atlas_enabled = atlas_enabled
+        self.agent_argv = agent_argv
 
     async def review_pr(
         self,
@@ -64,6 +83,8 @@ class LLMIntegration:
                 result = await asyncio.wait_for(run_coro, timeout=timeout)
             else:
                 result = await run_coro
+            if self.model is ReviewModel.AGENT:
+                result = self._unwrap_cursor_agent_json(result)
             return self._parse_review_result(result)
         except asyncio.TimeoutError:
             logger.warning(
@@ -208,10 +229,17 @@ class LLMIntegration:
 
     def _build_command(self, codex_output_path: Optional[Path] = None, pr_info: Optional[PRInfo] = None) -> List[str]:
         """Resolve the CLI command for the configured model."""
-        try:
-            command = list(self._CLI_COMMANDS[self.model])
-        except KeyError:  # pragma: no cover - defensive
-            raise ValueError(f"Unsupported review model: {self.model}")
+        if self.model is ReviewModel.AGENT:
+            command = (
+                list(self.agent_argv)
+                if self.agent_argv
+                else list(self._DEFAULT_CURSOR_AGENT_ARGV)
+            )
+        else:
+            try:
+                command = list(self._CLI_COMMANDS[self.model])
+            except KeyError:  # pragma: no cover - defensive
+                raise ValueError(f"Unsupported review model: {self.model}")
 
         if self.model is ReviewModel.CLAUDE and self.show_thinking:
             command.extend(["--output-format", "stream-json", "--verbose"])
@@ -225,6 +253,22 @@ class LLMIntegration:
             command.append(str(output_target))
 
         return command
+
+    @staticmethod
+    def _unwrap_cursor_agent_json(raw_output: str) -> str:
+        """Extract assistant text from Cursor Agent `--output-format json` stdout."""
+        text = raw_output.strip()
+        if not text:
+            return raw_output
+        try:
+            envelope = json.loads(text)
+        except json.JSONDecodeError:
+            return raw_output
+        if not isinstance(envelope, dict):
+            return raw_output
+        if envelope.get("type") == "result" and isinstance(envelope.get("result"), str):
+            return envelope["result"]
+        return raw_output
 
     def _build_atlas_system_prompt(self, pr_info: PRInfo) -> str:
         """Build a system prompt instructing the review agent to use Atlas knowledge."""

@@ -9,6 +9,7 @@ class ReviewModel(Enum):
     """Supported language model CLIs for reviews."""
     CLAUDE = "CLAUDE"
     CODEX = "CODEX"
+    AGENT = "AGENT"  # Cursor Agent CLI (`agent --print`, etc.)
 
 
 class ReviewAction(Enum):

@@ -1,10 +1,11 @@
 """Configuration management for the code reviewer."""
 
+import json
 import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import yaml
 
@@ -23,6 +24,7 @@ class Config:
     prompt_file: Path
     output_format_file: Optional[Path] = None
     review_model: ReviewModel = ReviewModel.CLAUDE
+    review_agent_argv: Optional[List[str]] = None
     poll_interval: int = 60
     review_timeout: int = 600
     log_level: str = "INFO"
@@ -95,6 +97,7 @@ class Config:
             "OWN_PR_READY_SOUND_FILE": "own_pr_ready_sound_file",
             "OWN_PR_NEEDS_ATTENTION_SOUND_ENABLED": "own_pr_needs_attention_sound_enabled",
             "OWN_PR_NEEDS_ATTENTION_SOUND_FILE": "own_pr_needs_attention_sound_file",
+            "REVIEW_AGENT_ARGV": "review_agent_argv",
         }
 
         for env_var, config_key in env_mappings.items():
@@ -135,6 +138,15 @@ class Config:
                     # Parse comma-separated lists
                     items = [item.strip() for item in value.split(",") if item.strip()]
                     config_data[config_key] = items if items else None
+                elif config_key == "review_agent_argv":
+                    try:
+                        parsed = json.loads(value)
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(
+                            "REVIEW_AGENT_ARGV must be a JSON array of strings, "
+                            f'e.g. \'["agent","--print","--output-format","json","--trust"]\': {exc}'
+                        ) from exc
+                    config_data[config_key] = parsed
                 else:
                     config_data[config_key] = value
 
@@ -169,6 +181,13 @@ class Config:
         config_data["review_model"] = cls._normalize_review_model(
             config_data.get("review_model", ReviewModel.CLAUDE)
         )
+
+        if "review_agent_argv" in config_data and config_data["review_agent_argv"] is not None:
+            argv = config_data["review_agent_argv"]
+            if not isinstance(argv, list) or not all(isinstance(x, str) for x in argv):
+                raise ValueError("review_agent_argv must be a list of strings")
+            if len(argv) == 0:
+                raise ValueError("review_agent_argv cannot be empty when set")
 
         # Validate required fields
         required_fields = ["github_token", "github_username"]

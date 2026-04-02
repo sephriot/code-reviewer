@@ -2,10 +2,11 @@
 """Main entry point for the code reviewer application."""
 
 import asyncio
+import json
 import signal
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import click
 from dotenv import load_dotenv
@@ -30,6 +31,7 @@ class CodeReviewer:
             output_format_file=config.output_format_file,
             show_thinking=config.show_thinking,
             atlas_enabled=config.atlas_enabled,
+            agent_argv=config.review_agent_argv,
         )
         self.monitor = GitHubMonitor(self.github_client, self.model_integration, config)
         self.web_server = None
@@ -145,10 +147,22 @@ class CodeReviewer:
 @click.option(
     "--model",
     "review_model",
-    type=click.Choice(["CLAUDE", "CODEX"]),
+    type=click.Choice(["CLAUDE", "CODEX", "AGENT"]),
     envvar="REVIEW_MODEL",
     default="CLAUDE",
     help="Language model CLI to use for reviews (env: REVIEW_MODEL)",
+)
+@click.option(
+    "--review-agent-argv",
+    "review_agent_argv_json",
+    type=str,
+    default=None,
+    envvar="REVIEW_AGENT_ARGV",
+    help=(
+        "When --model AGENT: JSON array of argv for the Cursor `agent` CLI "
+        '(default: ["agent","--print","--output-format","json","--trust"]). '
+        "Env: REVIEW_AGENT_ARGV"
+    ),
 )
 @click.option(
     "--github-token", envvar="GITHUB_TOKEN", help="GitHub personal access token"
@@ -287,6 +301,7 @@ def main(
     prompt: Optional[str],
     output_format: Optional[str],
     review_model: str,
+    review_agent_argv_json: Optional[str],
     github_token: Optional[str],
     github_username: Optional[str],
     poll_interval: int,
@@ -316,7 +331,27 @@ def main(
     load_dotenv()
 
     try:
-        app_config = Config.load(
+        review_agent_argv: Optional[List[str]] = None
+        if review_agent_argv_json:
+            try:
+                review_agent_argv = json.loads(review_agent_argv_json)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "--review-agent-argv / REVIEW_AGENT_ARGV must be a JSON array of strings: "
+                    f"{exc}"
+                ) from exc
+            if not isinstance(review_agent_argv, list) or not all(
+                isinstance(x, str) for x in review_agent_argv
+            ):
+                raise ValueError(
+                    "--review-agent-argv / REVIEW_AGENT_ARGV must be a JSON array of strings"
+                )
+            if len(review_agent_argv) == 0:
+                raise ValueError(
+                    "--review-agent-argv / REVIEW_AGENT_ARGV cannot be an empty array"
+                )
+
+        load_kwargs = dict(
             config_file=config,
             prompt_file=prompt,
             output_format_file=output_format,
@@ -345,6 +380,10 @@ def main(
             show_thinking=show_thinking,
             atlas_enabled=atlas_enabled,
         )
+        if review_agent_argv is not None:
+            load_kwargs["review_agent_argv"] = review_agent_argv
+
+        app_config = Config.load(**load_kwargs)
 
         # Set up logging
         app_config.setup_logging()
