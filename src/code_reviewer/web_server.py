@@ -60,6 +60,21 @@ class ReviewWebServer:
 
         self._setup_routes()
 
+    def _review_busy_response(self) -> JSONResponse:
+        """Return a consistent response when another review is already running."""
+        active_target = None
+        if self.llm_integration:
+            active_target = self.llm_integration.active_review_target
+
+        message = "Another review is already in progress."
+        if active_target:
+            message = f"Another review is already in progress for {active_target}."
+
+        return JSONResponse(
+            status_code=409,
+            content={"status": "busy", "message": message},
+        )
+
     @staticmethod
     def _append_text_block(original: Optional[str], addition: str) -> str:
         """Append a formatted block of text with spacing."""
@@ -155,6 +170,15 @@ class ReviewWebServer:
                     head_sha=own_pr["head_sha"],
                     base_sha=own_pr["base_sha"],
                 )
+
+                if self.llm_integration.review_in_progress:
+                    logger.info(
+                        "Rejecting own PR re-review for %s#%s because %s is already running",
+                        pr_info.repository_name,
+                        pr_info.number,
+                        self.llm_integration.active_review_target or "another review",
+                    )
+                    return self._review_busy_response()
 
                 async def run_review():
                     try:
@@ -433,6 +457,15 @@ class ReviewWebServer:
                     base_sha=approval["base_sha"],
                 )
 
+                if self.llm_integration.review_in_progress:
+                    logger.info(
+                        "Rejecting approval re-review for %s#%s because %s is already running",
+                        pr_info.repository_name,
+                        pr_info.number,
+                        self.llm_integration.active_review_target or "another review",
+                    )
+                    return self._review_busy_response()
+
                 # Trigger fresh review in background
                 re_review_context = user_context
 
@@ -539,6 +572,15 @@ class ReviewWebServer:
                     head_sha=review.head_sha,
                     base_sha=review.base_sha,
                 )
+
+                if self.llm_integration.review_in_progress:
+                    logger.info(
+                        "Rejecting human-review re-review for %s#%s because %s is already running",
+                        pr_info.repository_name,
+                        pr_info.number,
+                        self.llm_integration.active_review_target or "another review",
+                    )
+                    return self._review_busy_response()
 
                 re_review_context = user_context
 

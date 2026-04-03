@@ -67,6 +67,18 @@ class LLMIntegration:
         self.show_thinking = show_thinking
         self.atlas_enabled = atlas_enabled
         self.agent_argv = agent_argv
+        self._review_lock = asyncio.Lock()
+        self._active_review_target: Optional[str] = None
+
+    @property
+    def review_in_progress(self) -> bool:
+        """Whether a review is currently executing."""
+        return self._review_lock.locked()
+
+    @property
+    def active_review_target(self) -> Optional[str]:
+        """Current review target in `owner/repo#pr` form when known."""
+        return self._active_review_target
 
     async def review_pr(
         self,
@@ -77,25 +89,40 @@ class LLMIntegration:
         user_context: Optional[str] = None,
     ) -> ReviewResult:
         """Review a PR using the selected language model CLI."""
-        try:
-            run_coro = self._run_model_cli(pr_info, previous_pending, user_context=user_context)
-            if timeout and timeout > 0:
-                result = await asyncio.wait_for(run_coro, timeout=timeout)
-            else:
-                result = await run_coro
-            if self.model is ReviewModel.AGENT:
-                result = self._unwrap_cursor_agent_json(result)
-            return self._parse_review_result(result)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "%s review exceeded timeout after %s seconds",
-                self.model.value,
-                timeout,
+        review_target = f"{pr_info.repository_name}#{pr_info.number}"
+
+        if self.review_in_progress:
+            logger.info(
+                "Waiting for active review %s to finish before starting %s",
+                self.active_review_target or "unknown",
+                review_target,
             )
-            raise
-        except Exception as exc:  # pragma: no cover - pass through for upstream handling
-            logger.error(f"Error during {self.model.value} review: {exc}")
-            raise
+
+        async with self._review_lock:
+            self._active_review_target = review_target
+            try:
+                run_coro = self._run_model_cli(
+                    pr_info, previous_pending, user_context=user_context
+                )
+                if timeout and timeout > 0:
+                    result = await asyncio.wait_for(run_coro, timeout=timeout)
+                else:
+                    result = await run_coro
+                if self.model is ReviewModel.AGENT:
+                    result = self._unwrap_cursor_agent_json(result)
+                return self._parse_review_result(result)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "%s review exceeded timeout after %s seconds",
+                    self.model.value,
+                    timeout,
+                )
+                raise
+            except Exception as exc:  # pragma: no cover - pass through for upstream handling
+                logger.error(f"Error during {self.model.value} review: {exc}")
+                raise
+            finally:
+                self._active_review_target = None
 
     async def _run_model_cli(self, pr_info: PRInfo, previous_pending: Optional[Dict[str, Any]], *, user_context: Optional[str] = None) -> str:
         """Execute the configured CLI and return raw output."""

@@ -1,0 +1,21 @@
+id: K-000018
+title: Single-flight review execution
+type: decision
+confidence: high
+summary: Reviews are globally serialized through `LLMIntegration.review_pr`, and both PR polling loops skip cycles while any review is active. Web re-review endpoints return a busy response instead of launching another review during an active run.
+details: 'Implemented by adding a shared async lock and active-target tracking in `src/code_reviewer/llm_integration.py`. `GitHubMonitor.start_monitoring` and `start_own_prs_monitoring` now guard against duplicate loop startup, and `_check_for_new_prs` / `_check_for_own_prs` return early when `llm_integration.review_in_progress` is true. `ReviewWebServer` re-review endpoints check the same shared state and respond with HTTP 409 and `{status: "busy"}` when another review is already running. Verified with async tests in `tests/test_review_serialization.py`.'
+pitfalls:
+- Do not add separate per-caller review locks; they would allow monitor and web-triggered reviews to drift out of sync.
+- The web UI remains responsive because the server keeps running in its own task; only review execution is serialized.
+tags:
+- concurrency
+- reviews
+- polling
+- web-ui
+- llm
+sources:
+- src/code_reviewer/llm_integration.py
+- src/code_reviewer/github_monitor.py
+- src/code_reviewer/web_server.py
+- tests/test_review_serialization.py
+updated_at: 2026-04-03

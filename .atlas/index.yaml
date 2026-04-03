@@ -1,4 +1,4 @@
-next_id: 18
+next_id: 19
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -231,3 +231,18 @@ entries:
   - tts
   - notification
   - template
+- id: K-000018
+  title: Single-flight review execution
+  type: decision
+  confidence: high
+  tags:
+  - concurrency
+  - reviews
+  - polling
+  - web-ui
+  - llm
+  sources:
+  - src/code_reviewer/llm_integration.py
+  - src/code_reviewer/github_monitor.py
+  - src/code_reviewer/web_server.py
+  - tests/test_review_serialization.py

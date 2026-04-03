@@ -36,6 +36,8 @@ class GitHubMonitor:
         self.llm_integration = model_integration
         self.config = config
         self.running = True
+        self._review_monitor_loop_lock = asyncio.Lock()
+        self._own_pr_monitor_loop_lock = asyncio.Lock()
         self.sound_notifier = SoundNotifier(
             enabled=config.sound_enabled,
             sound_file=config.sound_file,
@@ -56,45 +58,50 @@ class GitHubMonitor:
 
     async def start_monitoring(self):
         """Start monitoring for new PRs."""
-        mode = "DRY RUN" if self.config.dry_run else "LIVE"
-        logger.info(f"Starting GitHub PR monitoring in {mode} mode...")
+        if self._review_monitor_loop_lock.locked():
+            logger.warning("Assigned PR monitoring loop is already running; skipping")
+            return
 
-        if self.config.dry_run:
-            logger.info(
-                "DRY RUN MODE: No actual GitHub actions will be performed, only logged"
-            )
+        async with self._review_monitor_loop_lock:
+            mode = "DRY RUN" if self.config.dry_run else "LIVE"
+            logger.info(f"Starting GitHub PR monitoring in {mode} mode...")
 
-        if self.config.repositories:
-            logger.info(
-                f"Repository filtering enabled: {', '.join(self.config.repositories)}"
-            )
-        else:
-            logger.info("Monitoring all repositories where you have review access")
+            if self.config.dry_run:
+                logger.info(
+                    "DRY RUN MODE: No actual GitHub actions will be performed, only logged"
+                )
 
-        if self.config.pr_authors:
-            logger.info(
-                f"PR author filtering enabled: {', '.join(self.config.pr_authors)}"
-            )
-        else:
-            logger.info("Monitoring PRs from all authors")
+            if self.config.repositories:
+                logger.info(
+                    f"Repository filtering enabled: {', '.join(self.config.repositories)}"
+                )
+            else:
+                logger.info("Monitoring all repositories where you have review access")
 
-        while self.running:
-            try:
-                await self._check_for_new_prs()
-                # Use asyncio.sleep with shorter intervals to allow faster shutdown
-                for _ in range(self.config.poll_interval):
-                    if not self.running:
-                        break
-                    await asyncio.sleep(1)
-            except Exception as e:
-                logger.error(f"Error during PR monitoring: {e}")
-                # Sleep with interruption check
-                for _ in range(self.config.poll_interval):
-                    if not self.running:
-                        break
-                    await asyncio.sleep(1)
+            if self.config.pr_authors:
+                logger.info(
+                    f"PR author filtering enabled: {', '.join(self.config.pr_authors)}"
+                )
+            else:
+                logger.info("Monitoring PRs from all authors")
 
-        logger.info("PR monitoring stopped")
+            while self.running:
+                try:
+                    await self._check_for_new_prs()
+                    # Use asyncio.sleep with shorter intervals to allow faster shutdown
+                    for _ in range(self.config.poll_interval):
+                        if not self.running:
+                            break
+                        await asyncio.sleep(1)
+                except Exception as e:
+                    logger.error(f"Error during PR monitoring: {e}")
+                    # Sleep with interruption check
+                    for _ in range(self.config.poll_interval):
+                        if not self.running:
+                            break
+                        await asyncio.sleep(1)
+
+            logger.info("PR monitoring stopped")
 
     def cleanup_sync(self):
         """Cleanup resources synchronously."""
@@ -125,6 +132,13 @@ class GitHubMonitor:
         """Check for new PRs where user is assigned as reviewer."""
         logger.debug("Checking for new PRs to review...")
         try:
+            if self.llm_integration.review_in_progress:
+                logger.info(
+                    "Skipping assigned PR poll while review is in progress for %s",
+                    self.llm_integration.active_review_target or "unknown target",
+                )
+                return
+
             try:
                 await self._expire_merged_or_closed_pending_approvals()
             except Exception as cleanup_error:
@@ -551,37 +565,49 @@ class GitHubMonitor:
             logger.info("Own PR monitoring is disabled")
             return
 
-        mode = "DRY RUN" if self.config.dry_run else "LIVE"
-        logger.info(f"Starting own PR monitoring in {mode} mode...")
+        if self._own_pr_monitor_loop_lock.locked():
+            logger.warning("Own PR monitoring loop is already running; skipping")
+            return
 
-        if self.config.repositories:
-            logger.info(
-                f"Monitoring own PRs in repositories: {', '.join(self.config.repositories)}"
-            )
-        else:
-            logger.warning(
-                "No repositories specified for own PR monitoring - please configure REPOSITORIES"
-            )
+        async with self._own_pr_monitor_loop_lock:
+            mode = "DRY RUN" if self.config.dry_run else "LIVE"
+            logger.info(f"Starting own PR monitoring in {mode} mode...")
 
-        while self.running:
-            try:
-                await self._check_for_own_prs()
-                for _ in range(self.config.poll_interval):
-                    if not self.running:
-                        break
-                    await asyncio.sleep(1)
-            except Exception as e:
-                logger.error(f"Error during own PR monitoring: {e}")
-                for _ in range(self.config.poll_interval):
-                    if not self.running:
-                        break
-                    await asyncio.sleep(1)
+            if self.config.repositories:
+                logger.info(
+                    f"Monitoring own PRs in repositories: {', '.join(self.config.repositories)}"
+                )
+            else:
+                logger.warning(
+                    "No repositories specified for own PR monitoring - please configure REPOSITORIES"
+                )
 
-        logger.info("Own PR monitoring stopped")
+            while self.running:
+                try:
+                    await self._check_for_own_prs()
+                    for _ in range(self.config.poll_interval):
+                        if not self.running:
+                            break
+                        await asyncio.sleep(1)
+                except Exception as e:
+                    logger.error(f"Error during own PR monitoring: {e}")
+                    for _ in range(self.config.poll_interval):
+                        if not self.running:
+                            break
+                        await asyncio.sleep(1)
+
+            logger.info("Own PR monitoring stopped")
 
     async def _check_for_own_prs(self):
         """Check for own PRs that need review."""
         logger.debug("Checking for own PRs to review...")
+
+        if self.llm_integration.review_in_progress:
+            logger.info(
+                "Skipping own PR poll while review is in progress for %s",
+                self.llm_integration.active_review_target or "unknown target",
+            )
+            return
 
         await self._expire_merged_or_closed_own_prs()
 
