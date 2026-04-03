@@ -1617,13 +1617,17 @@ class ReviewDatabase:
 
         return list(result.values())
 
-    async def get_repository_stats(self, limit: int = 20, days: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def get_repository_stats(
+        self, limit: int = 20, days: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """Get per-repository statistics, optionally filtered to the last N days."""
         return await asyncio.get_event_loop().run_in_executor(
             None, self._get_repository_stats_sync, limit, days
         )
 
-    def _get_repository_stats_sync(self, limit: int, days: Optional[int] = None) -> List[Dict[str, Any]]:
+    def _get_repository_stats_sync(
+        self, limit: int, days: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """Synchronous implementation of get_repository_stats."""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1680,13 +1684,17 @@ class ReviewDatabase:
 
         return results
 
-    async def get_author_stats(self, limit: int = 20, days: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def get_author_stats(
+        self, limit: int = 20, days: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """Get per-author statistics, optionally filtered to the last N days."""
         return await asyncio.get_event_loop().run_in_executor(
             None, self._get_author_stats_sync, limit, days
         )
 
-    def _get_author_stats_sync(self, limit: int, days: Optional[int] = None) -> List[Dict[str, Any]]:
+    def _get_author_stats_sync(
+        self, limit: int, days: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """Synchronous implementation of get_author_stats."""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1749,13 +1757,17 @@ class ReviewDatabase:
 
         return results
 
-    async def get_action_distribution(self, days: Optional[int] = None) -> Dict[str, Any]:
+    async def get_action_distribution(
+        self, days: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Get action distribution with percentages, optionally filtered to the last N days."""
         return await asyncio.get_event_loop().run_in_executor(
             None, self._get_action_distribution_sync, days
         )
 
-    def _get_action_distribution_sync(self, days: Optional[int] = None) -> Dict[str, Any]:
+    def _get_action_distribution_sync(
+        self, days: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Synchronous implementation of get_action_distribution."""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1766,12 +1778,15 @@ class ReviewDatabase:
             date_filter = "WHERE reviewed_at > datetime('now', ?)"
             params = (f"-{days} days",)
 
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT review_action, COUNT(*) as count
             FROM pr_reviews
             {date_filter}
             GROUP BY review_action
-        """, params)
+        """,
+            params,
+        )
 
         total = 0
         distribution = {}
@@ -1791,13 +1806,17 @@ class ReviewDatabase:
 
         return {"total": total, "distribution": distribution}
 
-    async def get_pending_approval_stats(self, days: Optional[int] = None) -> Dict[str, Any]:
+    async def get_pending_approval_stats(
+        self, days: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Get pending approval statistics, optionally filtered to the last N days."""
         return await asyncio.get_event_loop().run_in_executor(
             None, self._get_pending_approval_stats_sync, days
         )
 
-    def _get_pending_approval_stats_sync(self, days: Optional[int] = None) -> Dict[str, Any]:
+    def _get_pending_approval_stats_sync(
+        self, days: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Synchronous implementation of get_pending_approval_stats."""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1808,14 +1827,17 @@ class ReviewDatabase:
             date_filter = "WHERE created_at > datetime('now', ?)"
             params = (f"-{days} days",)
 
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT
                 status,
                 COUNT(*) as count
             FROM pending_approvals
             {date_filter}
             GROUP BY status
-        """, params)
+        """,
+            params,
+        )
 
         status_counts = {row["status"]: row["count"] for row in cursor.fetchall()}
 
@@ -1831,13 +1853,17 @@ class ReviewDatabase:
             "decided": decided,
         }
 
-    async def get_analytics_overview(self, days: Optional[int] = None) -> Dict[str, Any]:
+    async def get_analytics_overview(
+        self, days: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Get comprehensive analytics overview, optionally filtered to the last N days."""
         return await asyncio.get_event_loop().run_in_executor(
             None, self._get_analytics_overview_sync, days
         )
 
-    def _get_analytics_overview_sync(self, days: Optional[int] = None) -> Dict[str, Any]:
+    def _get_analytics_overview_sync(
+        self, days: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Synchronous implementation of get_analytics_overview."""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1848,44 +1874,59 @@ class ReviewDatabase:
             date_filter = "WHERE reviewed_at > datetime('now', ?)"
             params = (f"-{days} days",)
 
-        cursor.execute(f"SELECT COUNT(*) as total FROM pr_reviews {date_filter}", params)
+        cursor.execute(
+            f"SELECT COUNT(*) as total FROM pr_reviews {date_filter}", params
+        )
         total_reviews = cursor.fetchone()["total"]
 
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT AVG(inline_comments_count) as avg
             FROM pr_reviews {date_filter}
-        """, params)
+        """,
+            params,
+        )
         avg_comments = cursor.fetchone()["avg"] or 0
 
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT
                 SUM(CASE WHEN review_action = 'requires_human_review' THEN 1 ELSE 0 END) as human,
                 COUNT(*) as total
             FROM pr_reviews {date_filter}
-        """, params)
+        """,
+            params,
+        )
         row = cursor.fetchone()
         human_reviews = row["human"] or 0
         human_rate = (
             round(human_reviews / row["total"] * 100, 1) if row["total"] > 0 else 0
         )
 
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT
                 SUM(CASE WHEN review_action IN ('approve_with_comment', 'approve_without_comment') THEN 1 ELSE 0 END) as approved,
                 COUNT(*) as total
             FROM pr_reviews {date_filter}
-        """, params)
+        """,
+            params,
+        )
         row = cursor.fetchone()
         approved = row["approved"] or 0
         approval_rate = (
             round(approved / row["total"] * 100, 1) if row["total"] > 0 else 0
         )
 
-        cursor.execute(f"SELECT COUNT(DISTINCT repository) as repos FROM pr_reviews {date_filter}", params)
+        cursor.execute(
+            f"SELECT COUNT(DISTINCT repository) as repos FROM pr_reviews {date_filter}",
+            params,
+        )
         unique_repos = cursor.fetchone()["repos"]
 
         cursor.execute(
-            f"SELECT COUNT(DISTINCT pr_author) as authors FROM pr_reviews {date_filter.replace('WHERE', 'WHERE pr_author IS NOT NULL AND') if date_filter else 'WHERE pr_author IS NOT NULL'}", params
+            f"SELECT COUNT(DISTINCT pr_author) as authors FROM pr_reviews {date_filter.replace('WHERE', 'WHERE pr_author IS NOT NULL AND') if date_filter else 'WHERE pr_author IS NOT NULL'}",
+            params,
         )
         unique_authors = cursor.fetchone()["authors"]
 
@@ -2007,23 +2048,19 @@ class ReviewDatabase:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT * FROM own_prs WHERE repository = ? AND pr_number = ? ORDER BY updated_at DESC LIMIT 1",
+            "SELECT * FROM own_prs WHERE repository = ? AND pr_number = ? AND status NOT IN ('merged', 'closed', 'expired') ORDER BY updated_at DESC LIMIT 1",
             (repository, pr_number),
         )
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    async def expire_own_prs_for_pr(
-        self, repository: str, pr_number: int
-    ) -> int:
+    async def expire_own_prs_for_pr(self, repository: str, pr_number: int) -> int:
         """Mark all own_pr entries for a PR as expired."""
         return await asyncio.get_event_loop().run_in_executor(
             None, self._expire_own_prs_for_pr_sync, repository, pr_number
         )
 
-    def _expire_own_prs_for_pr_sync(
-        self, repository: str, pr_number: int
-    ) -> int:
+    def _expire_own_prs_for_pr_sync(self, repository: str, pr_number: int) -> int:
         """Synchronous implementation of expire_own_prs_for_pr."""
         conn = self._get_connection()
         cursor = conn.cursor()
