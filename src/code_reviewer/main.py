@@ -69,6 +69,8 @@ class CodeReviewer:
                 f"Web UI enabled at http://{self.config.web_host}:{self.config.web_port}"
             )
 
+        await self.monitor.sound_notifier.play_all_enabled()
+
         try:
             if self.config.web_enabled:
                 if self.config.own_pr_enabled:

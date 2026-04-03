@@ -178,6 +178,16 @@ class SoundNotifier:
         except Exception as e:
             logger.warning(f"Failed to play own PR needs attention sound: {e}")
 
+    async def play_all_enabled(self):
+        """Play all enabled sounds (used for startup notification)."""
+        await self.play_notification()
+        await self.play_approval_sound()
+        await self.play_timeout_sound()
+        await self.play_merged_or_closed_sound()
+        await self.play_pr_ready_sound()
+        await self.play_pr_needs_attention_sound()
+        await self.play_review_started_sound()
+
     async def play_review_started_sound(self):
         """Play a sound when review process starts for a PR."""
         if not self.review_started_sound_enabled:

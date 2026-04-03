@@ -59,22 +59,6 @@ class GitHubMonitor:
         mode = "DRY RUN" if self.config.dry_run else "LIVE"
         logger.info(f"Starting GitHub PR monitoring in {mode} mode...")
 
-        # Play startup notification sound
-        logger.debug("Playing startup notification sound")
-        await self.sound_notifier.play_notification()
-
-        # Play approval sound test
-        logger.debug("Playing approval notification sound")
-        await self.sound_notifier.play_approval_sound()
-
-        # Play timeout sound test
-        logger.debug("Playing timeout notification sound")
-        await self.sound_notifier.play_timeout_sound()
-
-        # Play merged/closed sound test
-        logger.debug("Playing merged/closed notification sound")
-        await self.sound_notifier.play_merged_or_closed_sound()
-
         if self.config.dry_run:
             logger.info(
                 "DRY RUN MODE: No actual GitHub actions will be performed, only logged"
