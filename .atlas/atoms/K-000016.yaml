@@ -1,0 +1,11 @@
+id: K-000016
+title: Click duplicate option names cause silent startup failures
+type: gotcha
+confidence: high
+summary: When using Click framework, duplicate parameter names cause silent failures. The app may fail to start with cryptic errors like \"missing required positional arguments\" even though all options are properly defined. Always verify each @click.option has a unique name, and avoid reusing option names in different decorators.
+tags:
+- click
+- cli
+- bugfix
+- startup
+updated_at: 2026-04-03

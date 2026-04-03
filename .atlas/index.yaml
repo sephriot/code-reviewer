@@ -1,4 +1,4 @@
-next_id: 16
+next_id: 18
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -213,3 +213,21 @@ entries:
   - prompts/fast_review_prompt.md
   - prompts/world_class_review_prompt.md
   - prompts/adaptive_review_prompt.md
+- id: K-000016
+  title: Click duplicate option names cause silent startup failures
+  type: gotcha
+  confidence: high
+  tags:
+  - click
+  - cli
+  - bugfix
+  - startup
+- id: K-000017
+  title: TTS sound notification with dynamic templates
+  type: note
+  confidence: high
+  tags:
+  - sound
+  - tts
+  - notification
+  - template

@@ -1,0 +1,11 @@
+id: K-000017
+title: TTS sound notification with dynamic templates
+type: note
+confidence: high
+summary: 'Sound notifications support both audio files and text-to-speech (TTS). For TTS, use format `tool:text to speak` (e.g., `say:Hello world` on macOS, `espeak:Hello` on Linux). Dynamic placeholders are supported: {repo}, {pr_number}, {author}, {title}. Placeholders are replaced at runtime with PR metadata.'
+tags:
+- sound
+- tts
+- notification
+- template
+updated_at: 2026-04-03
