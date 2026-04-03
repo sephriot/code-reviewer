@@ -198,7 +198,14 @@ class GitHubMonitor:
                         logger.debug(
                             "Playing notification sound for new PR discovery (dry run mode)"
                         )
-                        await self.sound_notifier.play_notification()
+                        await self.sound_notifier.play_notification(
+                            {
+                                "repo": pr_info.repository_name,
+                                "pr_number": pr_info.number,
+                                "author": pr_info.author,
+                                "title": pr_info.title,
+                            }
+                        )
 
                     await self._process_pr(pr_info)
                 else:
@@ -343,7 +350,14 @@ class GitHubMonitor:
                     reason=reason,
                 )
                 await self.db.record_review(pr_info, failure_result)
-                await self.sound_notifier.play_notification()
+                await self.sound_notifier.play_notification(
+                    {
+                        "repo": pr_info.repository_name,
+                        "pr_number": pr_info.number,
+                        "author": pr_info.author,
+                        "title": pr_info.title,
+                    }
+                )
 
         except Exception as e:
             logger.error(f"Error processing PR #{pr_info.number}: {e}")
@@ -358,7 +372,14 @@ class GitHubMonitor:
                     reason=reason,
                 )
                 await self.db.record_review(pr_info, failure_result)
-                await self.sound_notifier.play_notification()
+                await self.sound_notifier.play_notification(
+                    {
+                        "repo": pr_info.repository_name,
+                        "pr_number": pr_info.number,
+                        "author": pr_info.author,
+                        "title": pr_info.title,
+                    }
+                )
 
     async def _expire_merged_or_closed_pending_approvals(self) -> None:
         """Mark pending approvals as merged_or_closed if their PRs are merged or closed."""
@@ -433,7 +454,14 @@ class GitHubMonitor:
             )
 
             # Play notification sound for human attention
-            await self.sound_notifier.play_notification()
+            await self.sound_notifier.play_notification(
+                {
+                    "repo": pr_info.repository_name,
+                    "pr_number": pr_info.number,
+                    "author": pr_info.author,
+                    "title": pr_info.title,
+                }
+            )
 
         elif action == ReviewAction.APPROVE_WITHOUT_COMMENT:
             await self.github_client.approve_pr(pr_info.repository, pr_info.number)
@@ -457,14 +485,28 @@ class GitHubMonitor:
             )
 
             # Play notification sound for human attention
-            await self.sound_notifier.play_notification()
+            await self.sound_notifier.play_notification(
+                {
+                    "repo": pr_info.repository_name,
+                    "pr_number": pr_info.number,
+                    "author": pr_info.author,
+                    "title": pr_info.title,
+                }
+            )
 
         elif action == ReviewAction.REQUIRES_HUMAN_REVIEW:
             reason = review_result.reason or "PR requires human review"
             logger.info(f"PR #{pr_info.number} requires human review: {reason}")
 
             # Play notification sound
-            await self.sound_notifier.play_notification()
+            await self.sound_notifier.play_notification(
+                {
+                    "repo": pr_info.repository_name,
+                    "pr_number": pr_info.number,
+                    "author": pr_info.author,
+                    "title": pr_info.title,
+                }
+            )
 
     async def _log_skip_reason(self, pr_info: PRInfo):
         """Log the specific reason why a PR is being skipped."""

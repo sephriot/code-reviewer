@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 class SoundNotifier:
     """Cross-platform sound notification system."""
 
+    DEMO_CONTEXT = {
+        "repo": "demo/repository",
+        "pr_number": 123,
+        "author": "demo-author",
+        "title": "Demo pull request",
+    }
+
     def __init__(
         self,
         enabled: bool = True,
@@ -107,14 +114,19 @@ class SoundNotifier:
         else:
             await self._play_system_sound()
 
-    async def play_notification(self):
+    @classmethod
+    def get_demo_context(cls) -> dict:
+        """Return synthetic PR metadata for startup/demo playback."""
+        return dict(cls.DEMO_CONTEXT)
+
+    async def play_notification(self, context: dict = None):
         """Play a notification sound."""
         if not self.enabled:
             logger.debug("Sound notifications are disabled")
             return
 
         try:
-            await self._play_sound_config(self.sound_file)
+            await self._play_sound_config(self.sound_file, "Notification", context)
         except Exception as e:
             logger.warning(f"Failed to play notification sound: {e}")
 
@@ -186,15 +198,16 @@ class SoundNotifier:
         except Exception as e:
             logger.warning(f"Failed to play own PR needs attention sound: {e}")
 
-    async def play_all_enabled(self):
+    async def play_all_enabled(self, context: dict = None):
         """Play all enabled sounds (used for startup notification)."""
-        await self.play_notification()
-        await self.play_approval_sound()
-        await self.play_timeout_sound()
-        await self.play_merged_or_closed_sound()
-        await self.play_pr_ready_sound()
-        await self.play_pr_needs_attention_sound()
-        await self.play_review_started_sound()
+        playback_context = context or self.get_demo_context()
+        await self.play_notification(playback_context)
+        await self.play_approval_sound(playback_context)
+        await self.play_timeout_sound(playback_context)
+        await self.play_merged_or_closed_sound(playback_context)
+        await self.play_pr_ready_sound(playback_context)
+        await self.play_pr_needs_attention_sound(playback_context)
+        await self.play_review_started_sound(playback_context)
 
     async def play_review_started_sound(self, context: dict = None):
         """Play a sound when review process starts for a PR."""

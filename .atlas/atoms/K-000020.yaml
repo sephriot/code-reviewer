@@ -1,0 +1,22 @@
+id: K-000020
+title: TTS placeholder templates leak on generic notification and startup sound paths
+type: gotcha
+confidence: high
+summary: '`SoundNotifier._play_sound_config` only applies `SoundFileConfig.apply_template(...)` when a caller supplies `context`. The fix is two-part: `play_notification(context=...)` must receive PR metadata on PR-aware callers, and startup sound self-tests must use synthetic demo PR metadata instead of calling templated TTS sounds with no context. This prevents raw `{repo}` / `{pr_number}` tokens from being spoken aloud.'
+tags:
+- sound
+- tts
+- template
+- notification
+- startup
+- bug
+- fix
+sources:
+- src/code_reviewer/sound_notifier.py
+- src/code_reviewer/github_monitor.py
+- src/code_reviewer/web_server.py
+- src/code_reviewer/main.py
+- tests/test_sound_notifier.py
+links:
+- K-000017
+updated_at: 2026-04-03

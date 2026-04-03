@@ -74,7 +74,9 @@ class CodeReviewer:
         for placeholder, desc in templates:
             click.echo(f"  {placeholder} - {desc}")
 
-        await self.monitor.sound_notifier.play_all_enabled()
+        await self.monitor.sound_notifier.play_all_enabled(
+            self.monitor.sound_notifier.get_demo_context()
+        )
 
         try:
             if self.config.web_enabled:

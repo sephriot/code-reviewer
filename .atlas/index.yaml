@@ -1,4 +1,4 @@
-next_id: 20
+next_id: 21
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -265,3 +265,23 @@ entries:
   links:
   - K-000001
   - K-000014
+- id: K-000020
+  title: TTS placeholder templates leak on generic notification and startup sound paths
+  type: gotcha
+  confidence: high
+  tags:
+  - sound
+  - tts
+  - template
+  - notification
+  - startup
+  - bug
+  - fix
+  sources:
+  - src/code_reviewer/sound_notifier.py
+  - src/code_reviewer/github_monitor.py
+  - src/code_reviewer/web_server.py
+  - src/code_reviewer/main.py
+  - tests/test_sound_notifier.py
+  links:
+  - K-000017

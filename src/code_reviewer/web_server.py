@@ -491,11 +491,25 @@ class ReviewWebServer:
                                 pr_info, review_result
                             )
                             if self.sound_notifier:
-                                await self.sound_notifier.play_notification()
+                                await self.sound_notifier.play_notification(
+                                    {
+                                        "repo": pr_info.repository_name,
+                                        "pr_number": pr_info.number,
+                                        "author": pr_info.author,
+                                        "title": pr_info.title,
+                                    }
+                                )
                         elif review_result.action == ReviewAction.REQUIRES_HUMAN_REVIEW:
                             await self.database.record_review(pr_info, review_result)
                             if self.sound_notifier:
-                                await self.sound_notifier.play_notification()
+                                await self.sound_notifier.play_notification(
+                                    {
+                                        "repo": pr_info.repository_name,
+                                        "pr_number": pr_info.number,
+                                        "author": pr_info.author,
+                                        "title": pr_info.title,
+                                    }
+                                )
                         else:
                             # REQUEST_CHANGES or other actions
                             await self.database.record_review(pr_info, review_result)
@@ -605,11 +619,25 @@ class ReviewWebServer:
                                 pr_info, review_result
                             )
                             if self.sound_notifier:
-                                await self.sound_notifier.play_notification()
+                                await self.sound_notifier.play_notification(
+                                    {
+                                        "repo": pr_info.repository_name,
+                                        "pr_number": pr_info.number,
+                                        "author": pr_info.author,
+                                        "title": pr_info.title,
+                                    }
+                                )
                         elif review_result.action == ReviewAction.REQUIRES_HUMAN_REVIEW:
                             await self.database.record_review(pr_info, review_result)
                             if self.sound_notifier:
-                                await self.sound_notifier.play_notification()
+                                await self.sound_notifier.play_notification(
+                                    {
+                                        "repo": pr_info.repository_name,
+                                        "pr_number": pr_info.number,
+                                        "author": pr_info.author,
+                                        "title": pr_info.title,
+                                    }
+                                )
                         else:
                             await self.database.record_review(pr_info, review_result)
                     except Exception as e:

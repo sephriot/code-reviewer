@@ -4,6 +4,64 @@ from code_reviewer.sound_notifier import SoundNotifier
 
 
 @pytest.mark.asyncio
+async def test_play_notification_applies_template_context(monkeypatch):
+    spoken = {}
+
+    async def fake_play_tts(self, text=""):
+        spoken["text"] = text
+
+    async def fake_play_system(self):
+        spoken["system"] = True
+
+    monkeypatch.setattr(SoundNotifier, "_play_tts", fake_play_tts)
+    monkeypatch.setattr(SoundNotifier, "_play_system_sound", fake_play_system)
+
+    notifier = SoundNotifier(sound_file="say:Review {title} in {repo} by {author}")
+
+    await notifier.play_notification(
+        {
+            "repo": "acme/widgets",
+            "pr_number": 42,
+            "author": "octocat",
+            "title": "Fix race condition",
+        }
+    )
+
+    assert spoken["text"] == "Review Fix race condition in acme/widgets by octocat"
+    assert "system" not in spoken
+
+
+@pytest.mark.asyncio
+async def test_play_all_enabled_uses_demo_context_for_templates(monkeypatch):
+    spoken = []
+
+    async def fake_play_tts(self, text=""):
+        spoken.append(text)
+
+    async def fake_play_system(self):
+        spoken.append("system")
+
+    monkeypatch.setattr(SoundNotifier, "_play_tts", fake_play_tts)
+    monkeypatch.setattr(SoundNotifier, "_play_system_sound", fake_play_system)
+
+    notifier = SoundNotifier(
+        sound_file="say:Review {title} in {repo} by {author} #{pr_number}",
+        approval_sound_enabled=False,
+        timeout_sound_enabled=False,
+        merged_or_closed_sound_enabled=False,
+        own_pr_ready_sound_enabled=False,
+        own_pr_needs_attention_sound_enabled=False,
+        review_started_sound_enabled=False,
+    )
+
+    await notifier.play_all_enabled()
+
+    assert spoken == [
+        "Review Demo pull request in demo/repository by demo-author #123"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_play_merged_or_closed_sound_uses_custom_file(tmp_path, monkeypatch):
     played = {}
 
