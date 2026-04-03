@@ -296,6 +296,23 @@ TIMEOUT_SOUND_FILE="espeak:Review timed out"
 REVIEW_STARTED_SOUND_FILE="sounds/review_started.mp3"
 ```
 
+**Template Placeholders:** You can include dynamic information in TTS messages using placeholders:
+
+| Placeholder | Description |
+|-------------|-------------|
+| `{repo}` | Repository name (owner/repo) |
+| `{pr_number}` | PR number |
+| `{author}` | PR author username |
+| `{title}` | PR title |
+
+```bash
+# Examples with templates
+SOUND_FILE="say:New review request for PR {title} in {repo} authored by {author}"
+APPROVAL_SOUND_FILE="say:PR {title} in {repo} has been approved"
+OWN_PR_READY_SOUND_FILE="say:Your own PR {title} in {repo} is ready!"
+OWN_PR_NEEDS_ATTENTION_SOUND_FILE="say:Your own PR {title} in {repo} needs attention!"
+```
+
 **Available sound file options:**
 
 | Environment Variable | Description |

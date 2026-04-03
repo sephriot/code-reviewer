@@ -13,8 +13,43 @@ poll_interval: 60  # seconds
 log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
 
 # Sound notifications
+# You can use either:
+#   - Audio file path: "sounds/notification.wav"
+#   - Text-to-speech: "say:Text to speak" (macOS) or "espeak:Text to speak" (Linux)
+# Available placeholders for TTS: {repo}, {pr_number}, {author}, {title}
 sound_enabled: true
-# sound_file: "sounds/notification.wav"  # Optional custom sound file
+# sound_file: "sounds/notification.wav"
+# sound_file: "say:New review request for PR {title} in {repo} authored by {author}"
+
+# Approval sound
+approval_sound_enabled: true
+# approval_sound_file: "sounds/pr_approved.mp3"
+# approval_sound_file: "say:PR {title} in {repo} has been approved"
+
+# Review started sound
+review_started_sound_enabled: true
+# review_started_sound_file: "sounds/review_started.mp3"
+# review_started_sound_file: "say:Review started for PR {title} in {repo}"
+
+# Timeout sound
+timeout_sound_enabled: true
+# timeout_sound_file: "sounds/review_timeout.mp3"
+# timeout_sound_file: "say:Review for PR {title} in {repo} timed out"
+
+# Merged/closed sound
+merged_or_closed_sound_enabled: true
+# merged_or_closed_sound_file: "sounds/pr_merged_closed.mp3"
+# merged_or_closed_sound_file: "say:PR {title} in {repo} has been merged or closed"
+
+# Own PR monitoring
+own_pr_enabled: false
+# Own PR sounds
+own_pr_ready_sound_enabled: true
+# own_pr_ready_sound_file: "sounds/pr_ready.mp3"
+# own_pr_ready_sound_file: "say:Your own PR {title} in {repo} is ready for merge!"
+own_pr_needs_attention_sound_enabled: true
+# own_pr_needs_attention_sound_file: "sounds/pr_needs_attention.mp3"
+# own_pr_needs_attention_sound_file: "say:Your own PR {title} in {repo} needs attention!"
 
 # Dry run mode (log actions instead of performing them)
 dry_run: false
