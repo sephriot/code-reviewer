@@ -626,6 +626,22 @@ class GitHubMonitor:
                 f"Checking own PR #{pr_info.number} in {repo_name} (head: {pr_info.head_sha[:8] if pr_info.head_sha else 'unknown'})"
             )
 
+            tracked_same_commit = await self.db.get_own_pr_by_commit(
+                repo_name, pr_info.number, pr_info.head_sha
+            )
+            if tracked_same_commit and tracked_same_commit.get("status") in (
+                OWN_PR_STATUS_PENDING,
+                OWN_PR_STATUS_READY_FOR_MERGING,
+                OWN_PR_STATUS_NEEDS_ATTENTION,
+            ):
+                logger.debug(
+                    "Own PR #%s already tracked for head SHA %s with status %s, skipping",
+                    pr_info.number,
+                    pr_info.head_sha[:8] if pr_info.head_sha else "unknown",
+                    tracked_same_commit.get("status"),
+                )
+                continue
+
             existing_pr = await self.db.get_own_pr_by_pr_number(
                 repo_name, pr_info.number
             )
