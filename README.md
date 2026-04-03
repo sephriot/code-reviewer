@@ -277,6 +277,37 @@ code-reviewer --no-sound
 code-reviewer --sound-file /path/to/notification.wav
 ```
 
+### Text-to-Speech (TTS) Notifications
+
+Instead of audio files, you can use text-to-speech tools (like `say` on macOS or `espeak` on Linux) for vocal notifications. This is useful for hearing what type of notification is playing.
+
+**Format:** `tool:text to speak`
+
+```bash
+# macOS: Use 'say' command with custom message
+REVIEW_STARTED_SOUND_FILE="say:Review started for PR"
+APPROVAL_SOUND_FILE="say:PR approved!"
+
+# Linux: Use 'espeak' command
+REVIEW_STARTED_SOUND_FILE="espeak:Review started"
+TIMEOUT_SOUND_FILE="espeak:Review timed out"
+
+# Use audio file (just specify the path)
+REVIEW_STARTED_SOUND_FILE="sounds/review_started.mp3"
+```
+
+**Available sound file options:**
+
+| Environment Variable | Description |
+|---------------------|-------------|
+| `SOUND_FILE` | General notification sound |
+| `APPROVAL_SOUND_FILE` | PR approval sound |
+| `TIMEOUT_SOUND_FILE` | Review timeout sound |
+| `MERGED_OR_CLOSED_SOUND_FILE` | PR merged/closed sound |
+| `REVIEW_STARTED_SOUND_FILE` | Review started sound (new!) |
+| `OWN_PR_READY_SOUND_FILE` | Own PR ready for merge sound |
+| `OWN_PR_NEEDS_ATTENTION_SOUND_FILE` | Own PR needs attention sound |
+
 ### Review Actions
 
 The system can take four different actions based on Claude's analysis:

@@ -5,7 +5,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import yaml
 
@@ -13,6 +13,27 @@ from .models import ReviewModel
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SoundFileConfig:
+    """Configuration for a sound file or TTS tool."""
+
+    tool: Optional[str] = None
+    text: Optional[str] = None
+    path: Optional[Path] = None
+
+    def is_tts(self) -> bool:
+        """Check if this is a TTS configuration."""
+        return self.tool is not None and self.tool != ""
+
+    def is_file(self) -> bool:
+        """Check if this is a file path configuration."""
+        return self.path is not None and self.path.exists()
+
+    def get_text(self, default: str = "") -> str:
+        """Get the text to speak, or default if not set."""
+        return self.text if self.text else default
 
 
 @dataclass
@@ -31,13 +52,13 @@ class Config:
     repositories: Optional[list] = None
     pr_authors: Optional[list] = None
     sound_enabled: bool = True
-    sound_file: Optional[Path] = None
+    sound_file: Optional[SoundFileConfig] = None
     approval_sound_enabled: bool = True
-    approval_sound_file: Optional[Path] = None
+    approval_sound_file: Optional[SoundFileConfig] = None
     timeout_sound_enabled: bool = True
-    timeout_sound_file: Optional[Path] = None
+    timeout_sound_file: Optional[SoundFileConfig] = None
     merged_or_closed_sound_enabled: bool = True
-    merged_or_closed_sound_file: Optional[Path] = None
+    merged_or_closed_sound_file: Optional[SoundFileConfig] = None
     dry_run: bool = False
     database_path: Path = Path("data/reviews.db")
     web_enabled: bool = False
@@ -47,9 +68,12 @@ class Config:
     atlas_enabled: bool = False
     own_pr_enabled: bool = False
     own_pr_ready_sound_enabled: bool = True
-    own_pr_ready_sound_file: Optional[Path] = None
+    own_pr_ready_sound_file: Optional[SoundFileConfig] = None
     own_pr_needs_attention_sound_enabled: bool = True
-    own_pr_needs_attention_sound_file: Optional[Path] = None
+    own_pr_needs_attention_sound_file: Optional[SoundFileConfig] = None
+    review_started_sound_enabled: bool = True
+    review_started_sound_file: Optional[SoundFileConfig] = None
+    review_started_comment_enabled: bool = False
 
     @classmethod
     def load(cls, config_file: Optional[str] = None, **overrides) -> "Config":
@@ -98,6 +122,9 @@ class Config:
             "OWN_PR_NEEDS_ATTENTION_SOUND_ENABLED": "own_pr_needs_attention_sound_enabled",
             "OWN_PR_NEEDS_ATTENTION_SOUND_FILE": "own_pr_needs_attention_sound_file",
             "REVIEW_AGENT_ARGV": "review_agent_argv",
+            "REVIEW_STARTED_SOUND_ENABLED": "review_started_sound_enabled",
+            "REVIEW_STARTED_SOUND_FILE": "review_started_sound_file",
+            "REVIEW_STARTED_COMMENT_ENABLED": "review_started_comment_enabled",
         }
 
         for env_var, config_key in env_mappings.items():
@@ -117,6 +144,8 @@ class Config:
                     "own_pr_enabled",
                     "own_pr_ready_sound_enabled",
                     "own_pr_needs_attention_sound_enabled",
+                    "review_started_sound_enabled",
+                    "review_started_comment_enabled",
                 ]:
                     config_data[config_key] = value.lower() in (
                         "true",
@@ -129,11 +158,12 @@ class Config:
                     "approval_sound_file",
                     "timeout_sound_file",
                     "merged_or_closed_sound_file",
-                    "database_path",
                     "own_pr_ready_sound_file",
                     "own_pr_needs_attention_sound_file",
+                    "review_started_sound_file",
                 ]:
-                    config_data[config_key] = Path(value)
+                    # Keep as string for later parsing in sound file fields processing
+                    config_data[config_key] = value
                 elif config_key in ["repositories", "pr_authors"]:
                     # Parse comma-separated lists
                     items = [item.strip() for item in value.split(",") if item.strip()]
@@ -182,7 +212,10 @@ class Config:
             config_data.get("review_model", ReviewModel.CLAUDE)
         )
 
-        if "review_agent_argv" in config_data and config_data["review_agent_argv"] is not None:
+        if (
+            "review_agent_argv" in config_data
+            and config_data["review_agent_argv"] is not None
+        ):
             argv = config_data["review_agent_argv"]
             if not isinstance(argv, list) or not all(isinstance(x, str) for x in argv):
                 raise ValueError("review_agent_argv must be a list of strings")
@@ -218,14 +251,28 @@ class Config:
                 )
             config_data["output_format_file"] = output_format_file
 
-        # Handle path conversions
-        for path_field in [
-            "prompt_file",
-            "output_format_file",
+        # Handle sound files - convert to SoundFileConfig or keep as Path
+        sound_file_fields = [
             "sound_file",
             "approval_sound_file",
             "timeout_sound_file",
             "merged_or_closed_sound_file",
+            "own_pr_ready_sound_file",
+            "own_pr_needs_attention_sound_file",
+            "review_started_sound_file",
+        ]
+        for field in sound_file_fields:
+            if field in config_data and config_data[field] is not None:
+                value = config_data[field]
+                if isinstance(value, str):
+                    config_data[field] = cls._parse_sound_file(value)
+                elif isinstance(value, Path):
+                    config_data[field] = SoundFileConfig(path=value)
+
+        # Handle path conversions for non-sound fields
+        for path_field in [
+            "prompt_file",
+            "output_format_file",
             "database_path",
         ]:
             if path_field in config_data and config_data[path_field] is not None:
@@ -233,6 +280,17 @@ class Config:
                     config_data[path_field] = Path(config_data[path_field])
 
         return cls(**config_data)
+
+    @staticmethod
+    def _parse_sound_file(value: str) -> "SoundFileConfig":
+        """Parse sound file config from string format: 'tool:text' or 'path/to/file'."""
+        if ":" in value:
+            parts = value.split(":", 1)
+            tool = parts[0].strip().lower()
+            text = parts[1].strip() if len(parts) > 1 else ""
+            return SoundFileConfig(tool=tool, text=text)
+        else:
+            return SoundFileConfig(tool=None, text=None, path=Path(value))
 
     @staticmethod
     def _normalize_review_model(value) -> ReviewModel:

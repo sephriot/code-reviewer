@@ -5,7 +5,7 @@ import logging
 import platform
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 
 logger = logging.getLogger(__name__)
@@ -17,39 +17,89 @@ class SoundNotifier:
     def __init__(
         self,
         enabled: bool = True,
-        sound_file: Optional[Path] = None,
+        sound_file: Optional[Union["SoundFileConfig", Path]] = None,
         approval_sound_enabled: bool = True,
-        approval_sound_file: Optional[Path] = None,
+        approval_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
         timeout_sound_enabled: bool = True,
-        timeout_sound_file: Optional[Path] = None,
+        timeout_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
         merged_or_closed_sound_enabled: bool = True,
-        merged_or_closed_sound_file: Optional[Path] = None,
+        merged_or_closed_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
         own_pr_ready_sound_enabled: bool = True,
-        own_pr_ready_sound_file: Optional[Path] = None,
+        own_pr_ready_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
         own_pr_needs_attention_sound_enabled: bool = True,
-        own_pr_needs_attention_sound_file: Optional[Path] = None,
+        own_pr_needs_attention_sound_file: Optional[
+            Union["SoundFileConfig", Path]
+        ] = None,
+        review_started_sound_enabled: bool = True,
+        review_started_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
         *,
         outdated_sound_enabled: Optional[bool] = None,
-        outdated_sound_file: Optional[Path] = None,
+        outdated_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
     ):
+        from .config import SoundFileConfig
+
         self.enabled = enabled
-        self.sound_file = sound_file
+        self.sound_file = self._normalize_sound_file(sound_file)
         self.approval_sound_enabled = approval_sound_enabled
-        self.approval_sound_file = approval_sound_file
+        self.approval_sound_file = self._normalize_sound_file(approval_sound_file)
         self.timeout_sound_enabled = timeout_sound_enabled
-        self.timeout_sound_file = timeout_sound_file
+        self.timeout_sound_file = self._normalize_sound_file(timeout_sound_file)
         if outdated_sound_enabled is not None:
             merged_or_closed_sound_enabled = outdated_sound_enabled
         if outdated_sound_file is not None:
-            merged_or_closed_sound_file = Path(outdated_sound_file)
+            merged_or_closed_sound_file = self._normalize_sound_file(
+                outdated_sound_file
+            )
 
         self.merged_or_closed_sound_enabled = merged_or_closed_sound_enabled
-        self.merged_or_closed_sound_file = merged_or_closed_sound_file
+        self.merged_or_closed_sound_file = self._normalize_sound_file(
+            merged_or_closed_sound_file
+        )
         self.own_pr_ready_sound_enabled = own_pr_ready_sound_enabled
-        self.own_pr_ready_sound_file = own_pr_ready_sound_file
+        self.own_pr_ready_sound_file = self._normalize_sound_file(
+            own_pr_ready_sound_file
+        )
         self.own_pr_needs_attention_sound_enabled = own_pr_needs_attention_sound_enabled
-        self.own_pr_needs_attention_sound_file = own_pr_needs_attention_sound_file
+        self.own_pr_needs_attention_sound_file = self._normalize_sound_file(
+            own_pr_needs_attention_sound_file
+        )
+        self.review_started_sound_enabled = review_started_sound_enabled
+        self.review_started_sound_file = self._normalize_sound_file(
+            review_started_sound_file
+        )
         self.system = platform.system().lower()
+
+    def _normalize_sound_file(self, value):
+        """Normalize sound file config to SoundFileConfig."""
+        from .config import SoundFileConfig, Config
+
+        if value is None:
+            return None
+        if isinstance(value, SoundFileConfig):
+            return value
+        if isinstance(value, Path):
+            return SoundFileConfig(path=value)
+        if isinstance(value, str):
+            return Config._parse_sound_file(value)
+        return value
+
+    async def _play_sound_config(self, sound_config, default_text: str = ""):
+        """Play a sound based on SoundFileConfig - handles both file and TTS."""
+        from .config import SoundFileConfig
+
+        if sound_config is None:
+            await self._play_system_sound()
+            return
+
+        # Check if it's a TTS config (tool:text format)
+        if sound_config.is_tts():
+            await self._play_tts(sound_config.text or default_text)
+        # Check if it's a file path that exists
+        elif sound_config.is_file():
+            await self._play_sound_file(sound_config.path)
+        # No valid config, fall back to system sound
+        else:
+            await self._play_system_sound()
 
     async def play_notification(self):
         """Play a notification sound."""
@@ -58,11 +108,7 @@ class SoundNotifier:
             return
 
         try:
-            if self.sound_file and self.sound_file.exists():
-                await self._play_custom_sound()
-            else:
-                await self._play_system_sound()
-
+            await self._play_sound_config(self.sound_file)
         except Exception as e:
             logger.warning(f"Failed to play notification sound: {e}")
 
@@ -73,14 +119,7 @@ class SoundNotifier:
             return
 
         try:
-            if self.approval_sound_file and self.approval_sound_file.exists():
-                await self._play_sound_file(self.approval_sound_file)
-            elif self.enabled and self.sound_file and self.sound_file.exists():
-                # Fallback to general notification sound
-                await self._play_custom_sound()
-            else:
-                await self._play_system_sound()
-
+            await self._play_sound_config(self.approval_sound_file, "Approved")
         except Exception as e:
             logger.warning(f"Failed to play approval sound: {e}")
 
@@ -91,15 +130,9 @@ class SoundNotifier:
             return
 
         try:
-            if self.timeout_sound_file and self.timeout_sound_file.exists():
-                await self._play_sound_file(self.timeout_sound_file)
-            elif self.enabled and self.sound_file and self.sound_file.exists():
-                await self._play_custom_sound()
-            else:
-                await self._play_system_sound()
+            await self._play_sound_config(self.timeout_sound_file, "Timeout")
         except Exception as e:
             logger.warning(f"Failed to play timeout sound: {e}")
-            await self._play_system_sound()
 
     async def play_merged_or_closed_sound(self):
         """Play a sound when pending approvals become merged_or_closed."""
@@ -108,18 +141,9 @@ class SoundNotifier:
             return
 
         try:
-            if (
-                self.merged_or_closed_sound_file
-                and self.merged_or_closed_sound_file.exists()
-            ):
-                await self._play_sound_file(self.merged_or_closed_sound_file)
-            elif self.enabled and self.sound_file and self.sound_file.exists():
-                await self._play_custom_sound()
-            else:
-                await self._play_system_sound()
+            await self._play_sound_config(self.merged_or_closed_sound_file, "Outdated")
         except Exception as e:
             logger.warning(f"Failed to play merged/closed sound: {e}")
-            await self._play_system_sound()
 
     async def play_outdated_sound(self):
         """Backward compatible alias for play_merged_or_closed_sound."""
@@ -135,13 +159,9 @@ class SoundNotifier:
             return
 
         try:
-            if self.own_pr_ready_sound_file and self.own_pr_ready_sound_file.exists():
-                await self._play_sound_file(self.own_pr_ready_sound_file)
-            elif self.enabled and self.sound_file and self.sound_file.exists():
-                await self._play_custom_sound()
-            else:
-                await self._play_system_sound()
-
+            await self._play_sound_config(
+                self.own_pr_ready_sound_file, "Ready for merge"
+            )
         except Exception as e:
             logger.warning(f"Failed to play own PR ready sound: {e}")
 
@@ -152,18 +172,61 @@ class SoundNotifier:
             return
 
         try:
-            if (
-                self.own_pr_needs_attention_sound_file
-                and self.own_pr_needs_attention_sound_file.exists()
-            ):
-                await self._play_sound_file(self.own_pr_needs_attention_sound_file)
-            elif self.enabled and self.sound_file and self.sound_file.exists():
-                await self._play_custom_sound()
-            else:
-                await self._play_system_sound()
-
+            await self._play_sound_config(
+                self.own_pr_needs_attention_sound_file, "Needs attention"
+            )
         except Exception as e:
             logger.warning(f"Failed to play own PR needs attention sound: {e}")
+
+    async def play_review_started_sound(self):
+        """Play a sound when review process starts for a PR."""
+        if not self.review_started_sound_enabled:
+            logger.debug("Review started sound notifications are disabled")
+            return
+
+        try:
+            await self._play_sound_config(
+                self.review_started_sound_file, "Review started"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to play review started sound: {e}")
+
+    async def _play_tts(self, text: str = ""):
+        """Play a text-to-speech notification."""
+        if not text:
+            text = "Notification"
+
+        try:
+            if self.system == "darwin":
+                cmd = ["say", text]
+            elif self.system == "linux":
+                for tts in ["espeak", "festival"]:
+                    if await self._command_exists(tts):
+                        if tts == "espeak":
+                            cmd = ["espeak", text]
+                        else:
+                            cmd = ["festival", "--tts"]
+                        break
+                else:
+                    logger.warning("No TTS tool found on Linux")
+                    return
+            elif self.system == "windows":
+                cmd = [
+                    "powershell",
+                    "-c",
+                    f"Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Speak('{text}')",
+                ]
+            else:
+                logger.warning(f"TTS not supported on {self.system}")
+                return
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            await process.communicate()
+
+        except Exception as e:
+            logger.warning(f"Failed to play TTS sound: {e}")
 
     async def _play_custom_sound(self):
         """Play a custom sound file."""

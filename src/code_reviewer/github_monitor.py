@@ -49,6 +49,8 @@ class GitHubMonitor:
             own_pr_ready_sound_file=config.own_pr_ready_sound_file,
             own_pr_needs_attention_sound_enabled=config.own_pr_needs_attention_sound_enabled,
             own_pr_needs_attention_sound_file=config.own_pr_needs_attention_sound_file,
+            review_started_sound_enabled=config.review_started_sound_enabled,
+            review_started_sound_file=config.review_started_sound_file,
         )
         self.db = ReviewDatabase(config.database_path)
 
@@ -207,6 +209,26 @@ class GitHubMonitor:
                         pr_info.number,
                         pr_info.head_sha[:8] if pr_info.head_sha else "unknown",
                     )
+
+            # Post 👀 comment and play sound before review starts
+            if self.config.review_started_comment_enabled:
+                if self.config.dry_run:
+                    logger.info(
+                        f"[DRY RUN] Would post '👀' comment on PR #{pr_info.number}"
+                    )
+                else:
+                    logger.debug(f"Posting '👀' comment on PR #{pr_info.number}")
+                    await self.github_client.add_review_comment(
+                        pr_info.repository, pr_info.number, "👀"
+                    )
+
+            if self.config.dry_run:
+                logger.info(
+                    f"[DRY RUN] Would play review started sound for PR #{pr_info.number}"
+                )
+            else:
+                logger.debug(f"Playing review started sound for PR #{pr_info.number}")
+                await self.sound_notifier.play_review_started_sound()
 
             # Run model-driven code review - the CLI will fetch all PR details
             logger.debug(
@@ -582,9 +604,7 @@ class GitHubMonitor:
                 )
                 await self.db.expire_own_prs_for_pr(repo_name, pr_info.number)
 
-            logger.info(
-                f"Found own PR to review: #{pr_info.number} in {repo_name}"
-            )
+            logger.info(f"Found own PR to review: #{pr_info.number} in {repo_name}")
             await self._process_own_pr(pr_info)
 
     async def _process_own_pr(self, pr_info: PRInfo):
