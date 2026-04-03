@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from code_reviewer.database import (
+    OWN_PR_STATUS_CLOSED,
     OWN_PR_STATUS_EXPIRED,
+    OWN_PR_STATUS_MERGED,
     OWN_PR_STATUS_NEEDS_ATTENTION,
     OWN_PR_STATUS_READY_FOR_MERGING,
 )
@@ -85,6 +87,44 @@ async def test_review_pr_serializes_concurrent_requests(monkeypatch):
         integration.review_pr(_make_pr_info(1)),
         integration.review_pr(_make_pr_info(2)),
     )
+
+    assert max_active_reviews == 1
+    assert integration.review_in_progress is False
+    assert integration.active_review_target is None
+
+
+def test_review_pr_serializes_concurrent_requests_when_constructed_before_loop(
+    monkeypatch,
+):
+    integration = LLMIntegration(Path("prompt.txt"), ReviewModel.CLAUDE)
+    active_reviews = 0
+    max_active_reviews = 0
+
+    async def fake_run_model_cli(self, pr_info, previous_pending, *, user_context=None):
+        nonlocal active_reviews, max_active_reviews
+        active_reviews += 1
+        max_active_reviews = max(max_active_reviews, active_reviews)
+        await asyncio.sleep(0.05)
+        active_reviews -= 1
+        return '{"action":"approve_without_comment","reason":"ok"}'
+
+    monkeypatch.setattr(LLMIntegration, "_run_model_cli", fake_run_model_cli)
+    monkeypatch.setattr(
+        LLMIntegration,
+        "_parse_review_result",
+        lambda self, result: ReviewResult(
+            action=ReviewAction.APPROVE_WITHOUT_COMMENT,
+            reason="ok",
+        ),
+    )
+
+    async def exercise() -> None:
+        await asyncio.gather(
+            integration.review_pr(_make_pr_info(3)),
+            integration.review_pr(_make_pr_info(4)),
+        )
+
+    asyncio.run(exercise())
 
     assert max_active_reviews == 1
     assert integration.review_in_progress is False
@@ -201,5 +241,97 @@ async def test_check_for_own_prs_reviews_new_head_sha_and_expires_old_one(tmp_pa
         assert old_entry["status"] == OWN_PR_STATUS_EXPIRED
         assert new_entry is not None
         assert new_entry["status"] == OWN_PR_STATUS_NEEDS_ATTENTION
+    finally:
+        monitor.db.close()
+
+
+def test_monitor_loops_bind_locks_to_running_loop_when_constructed_before_loop(
+    tmp_path,
+):
+    github_client = AsyncMock()
+    llm_integration = AsyncMock()
+    llm_integration.review_in_progress = False
+    llm_integration.active_review_target = None
+
+    monitor = GitHubMonitor(
+        github_client,
+        llm_integration,
+        _make_monitor_config(tmp_path),
+    )
+
+    async def exercise() -> None:
+        monitor.running = True
+
+        async def stop_after_one_review_poll():
+            monitor.running = False
+
+        async def stop_after_one_own_pr_poll():
+            return None
+
+        monitor._check_for_new_prs = stop_after_one_review_poll
+        monitor._check_for_own_prs = stop_after_one_own_pr_poll
+        monitor.config.own_pr_enabled = True
+
+        await asyncio.gather(
+            monitor.start_monitoring(),
+            monitor.start_own_prs_monitoring(),
+        )
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        monitor.db.close()
+
+
+@pytest.mark.asyncio
+async def test_expire_merged_or_closed_own_prs_updates_active_records(tmp_path):
+    github_client = AsyncMock()
+    github_client.get_pr_status.side_effect = [
+        {"state": "closed", "merged": False},
+        {"state": "closed", "merged": True},
+    ]
+
+    llm_integration = AsyncMock()
+    llm_integration.review_in_progress = False
+    llm_integration.active_review_target = None
+
+    monitor = GitHubMonitor(
+        github_client,
+        llm_integration,
+        _make_monitor_config(tmp_path),
+    )
+
+    first_pr = _make_pr_info(21)
+    second_pr = _make_pr_info(22)
+
+    try:
+        await monitor.db.create_own_pr(
+            first_pr,
+            ReviewResult(
+                action=ReviewAction.REQUEST_CHANGES,
+                reason="needs work",
+            ),
+        )
+        await monitor.db.create_own_pr(
+            second_pr,
+            ReviewResult(
+                action=ReviewAction.APPROVE_WITHOUT_COMMENT,
+                reason="ready",
+            ),
+        )
+
+        await monitor._expire_merged_or_closed_own_prs()
+
+        first_entry = await monitor.db.get_own_pr_by_commit(
+            first_pr.repository_name, first_pr.number, first_pr.head_sha
+        )
+        second_entry = await monitor.db.get_own_pr_by_commit(
+            second_pr.repository_name, second_pr.number, second_pr.head_sha
+        )
+
+        assert first_entry is not None
+        assert first_entry["status"] == OWN_PR_STATUS_CLOSED
+        assert second_entry is not None
+        assert second_entry["status"] == OWN_PR_STATUS_MERGED
     finally:
         monitor.db.close()

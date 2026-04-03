@@ -1,4 +1,4 @@
-next_id: 19
+next_id: 20
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -246,3 +246,22 @@ entries:
   - src/code_reviewer/github_monitor.py
   - src/code_reviewer/web_server.py
   - tests/test_review_serialization.py
+- id: K-000019
+  title: Constructor-time asyncio locks can bind to the wrong loop in Python 3.9
+  type: gotcha
+  confidence: high
+  tags:
+  - asyncio
+  - lock
+  - event-loop
+  - python-3.9
+  - llm
+  - monitoring
+  - gotcha
+  sources:
+  - src/code_reviewer/llm_integration.py
+  - src/code_reviewer/github_monitor.py
+  - tests/test_review_serialization.py
+  links:
+  - K-000001
+  - K-000014

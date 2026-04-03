@@ -36,8 +36,10 @@ class GitHubMonitor:
         self.llm_integration = model_integration
         self.config = config
         self.running = True
-        self._review_monitor_loop_lock = asyncio.Lock()
-        self._own_pr_monitor_loop_lock = asyncio.Lock()
+        self._review_monitor_loop_lock: Optional[asyncio.Lock] = None
+        self._review_monitor_loop_lock_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._own_pr_monitor_loop_lock: Optional[asyncio.Lock] = None
+        self._own_pr_monitor_loop_lock_loop: Optional[asyncio.AbstractEventLoop] = None
         self.sound_notifier = SoundNotifier(
             enabled=config.sound_enabled,
             sound_file=config.sound_file,
@@ -56,13 +58,36 @@ class GitHubMonitor:
         )
         self.db = ReviewDatabase(config.database_path)
 
+    def _get_review_monitor_loop_lock(self) -> asyncio.Lock:
+        """Return the assigned-PR monitor lock for the current running loop."""
+        loop = asyncio.get_running_loop()
+        if (
+            self._review_monitor_loop_lock is None
+            or self._review_monitor_loop_lock_loop is not loop
+        ):
+            self._review_monitor_loop_lock = asyncio.Lock()
+            self._review_monitor_loop_lock_loop = loop
+        return self._review_monitor_loop_lock
+
+    def _get_own_pr_monitor_loop_lock(self) -> asyncio.Lock:
+        """Return the own-PR monitor lock for the current running loop."""
+        loop = asyncio.get_running_loop()
+        if (
+            self._own_pr_monitor_loop_lock is None
+            or self._own_pr_monitor_loop_lock_loop is not loop
+        ):
+            self._own_pr_monitor_loop_lock = asyncio.Lock()
+            self._own_pr_monitor_loop_lock_loop = loop
+        return self._own_pr_monitor_loop_lock
+
     async def start_monitoring(self):
         """Start monitoring for new PRs."""
-        if self._review_monitor_loop_lock.locked():
+        review_monitor_lock = self._get_review_monitor_loop_lock()
+        if review_monitor_lock.locked():
             logger.warning("Assigned PR monitoring loop is already running; skipping")
             return
 
-        async with self._review_monitor_loop_lock:
+        async with review_monitor_lock:
             mode = "DRY RUN" if self.config.dry_run else "LIVE"
             logger.info(f"Starting GitHub PR monitoring in {mode} mode...")
 
@@ -565,11 +590,12 @@ class GitHubMonitor:
             logger.info("Own PR monitoring is disabled")
             return
 
-        if self._own_pr_monitor_loop_lock.locked():
+        own_pr_monitor_lock = self._get_own_pr_monitor_loop_lock()
+        if own_pr_monitor_lock.locked():
             logger.warning("Own PR monitoring loop is already running; skipping")
             return
 
-        async with self._own_pr_monitor_loop_lock:
+        async with own_pr_monitor_lock:
             mode = "DRY RUN" if self.config.dry_run else "LIVE"
             logger.info(f"Starting own PR monitoring in {mode} mode...")
 

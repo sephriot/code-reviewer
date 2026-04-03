@@ -67,13 +67,22 @@ class LLMIntegration:
         self.show_thinking = show_thinking
         self.atlas_enabled = atlas_enabled
         self.agent_argv = agent_argv
-        self._review_lock = asyncio.Lock()
+        self._review_lock: Optional[asyncio.Lock] = None
+        self._review_lock_loop: Optional[asyncio.AbstractEventLoop] = None
         self._active_review_target: Optional[str] = None
+
+    def _get_review_lock(self) -> asyncio.Lock:
+        """Return a review lock bound to the current running event loop."""
+        loop = asyncio.get_running_loop()
+        if self._review_lock is None or self._review_lock_loop is not loop:
+            self._review_lock = asyncio.Lock()
+            self._review_lock_loop = loop
+        return self._review_lock
 
     @property
     def review_in_progress(self) -> bool:
         """Whether a review is currently executing."""
-        return self._review_lock.locked()
+        return self._review_lock.locked() if self._review_lock is not None else False
 
     @property
     def active_review_target(self) -> Optional[str]:
@@ -90,15 +99,16 @@ class LLMIntegration:
     ) -> ReviewResult:
         """Review a PR using the selected language model CLI."""
         review_target = f"{pr_info.repository_name}#{pr_info.number}"
+        review_lock = self._get_review_lock()
 
-        if self.review_in_progress:
+        if review_lock.locked():
             logger.info(
                 "Waiting for active review %s to finish before starting %s",
                 self.active_review_target or "unknown",
                 review_target,
             )
 
-        async with self._review_lock:
+        async with review_lock:
             self._active_review_target = review_target
             try:
                 run_coro = self._run_model_cli(
