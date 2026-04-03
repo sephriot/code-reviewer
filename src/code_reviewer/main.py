@@ -192,8 +192,20 @@ class CodeReviewer:
 )
 @click.option(
     "--sound-file",
-    type=click.Path(exists=True),
-    help="Custom sound file for notifications",
+    type=str,
+    help="Custom sound file for notifications (supports 'say:text' for TTS, 'path/to/file' for audio files)",
+)
+@click.option(
+    "--approval-sound-file",
+    envvar="APPROVAL_SOUND_FILE",
+    type=str,
+    help="Custom sound file for PR approval notifications (env: APPROVAL_SOUND_FILE)",
+)
+@click.option(
+    "--timeout-sound-file",
+    envvar="TIMEOUT_SOUND_FILE",
+    type=str,
+    help="Custom sound file for review timeout notifications (env: TIMEOUT_SOUND_FILE)",
 )
 @click.option(
     "--approval-sound-enabled/--no-approval-sound",
@@ -228,7 +240,7 @@ class CodeReviewer:
 @click.option(
     "--outdated-sound-file",
     envvar="OUTDATED_SOUND_FILE",
-    type=click.Path(exists=True),
+    type=str,
     help="Custom sound file for merged/closed pending approval notifications (env: MERGED_OR_CLOSED_SOUND_FILE or OUTDATED_SOUND_FILE)",
 )
 @click.option(
@@ -246,7 +258,7 @@ class CodeReviewer:
 @click.option(
     "--own-pr-ready-sound-file",
     envvar="OWN_PR_READY_SOUND_FILE",
-    type=click.Path(exists=True),
+    type=str,
     help="Custom sound file for own PR ready notifications (env: OWN_PR_READY_SOUND_FILE)",
 )
 @click.option(
@@ -258,7 +270,7 @@ class CodeReviewer:
 @click.option(
     "--own-pr-needs-attention-sound-file",
     envvar="OWN_PR_NEEDS_ATTENTION_SOUND_FILE",
-    type=click.Path(exists=True),
+    type=str,
     help="Custom sound file for own PR needs attention notifications (env: OWN_PR_NEEDS_ATTENTION_SOUND_FILE)",
 )
 @click.option(
