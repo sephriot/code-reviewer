@@ -201,18 +201,6 @@ class CodeReviewer:
     help="Custom sound file for notifications (supports 'say:text' for TTS, 'path/to/file' for audio files)",
 )
 @click.option(
-    "--approval-sound-file",
-    envvar="APPROVAL_SOUND_FILE",
-    type=str,
-    help="Custom sound file for PR approval notifications (env: APPROVAL_SOUND_FILE)",
-)
-@click.option(
-    "--timeout-sound-file",
-    envvar="TIMEOUT_SOUND_FILE",
-    type=str,
-    help="Custom sound file for review timeout notifications (env: TIMEOUT_SOUND_FILE)",
-)
-@click.option(
     "--approval-sound-enabled/--no-approval-sound",
     envvar="APPROVAL_SOUND_ENABLED",
     default=True,
@@ -221,8 +209,8 @@ class CodeReviewer:
 @click.option(
     "--approval-sound-file",
     envvar="APPROVAL_SOUND_FILE",
-    type=click.Path(exists=True),
-    help="Custom sound file for PR approval notifications (env: APPROVAL_SOUND_FILE)",
+    type=str,
+    help="Custom sound file for PR approval notifications (supports 'say:text' for TTS, 'path/to/file' for audio files)",
 )
 @click.option(
     "--timeout-sound-enabled/--no-timeout-sound",
@@ -233,8 +221,8 @@ class CodeReviewer:
 @click.option(
     "--timeout-sound-file",
     envvar="TIMEOUT_SOUND_FILE",
-    type=click.Path(exists=True),
-    help="Custom sound file for review timeout notifications (env: TIMEOUT_SOUND_FILE)",
+    type=str,
+    help="Custom sound file for review timeout notifications (supports 'say:text' for TTS, 'path/to/file' for audio files)",
 )
 @click.option(
     "--outdated-sound-enabled/--no-outdated-sound",

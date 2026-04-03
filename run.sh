@@ -1,1 +1,7 @@
-export $(grep -v ^# .env | xargs) && code-reviewer
+#!/bin/bash
+
+set -a
+. ./.env
+set +a
+
+exec code-reviewer

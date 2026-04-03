@@ -625,6 +625,23 @@ class GitHubMonitor:
         logger.info(f"Processing own PR #{pr_info.number} in {repo_name}")
 
         try:
+            if self.config.dry_run:
+                logger.info(
+                    f"[DRY RUN] Would play review started sound for own PR #{pr_info.number}"
+                )
+            else:
+                logger.debug(
+                    f"Playing review started sound for own PR #{pr_info.number}"
+                )
+                await self.sound_notifier.play_review_started_sound(
+                    {
+                        "repo": pr_info.repository_name,
+                        "pr_number": pr_info.number,
+                        "author": pr_info.author,
+                        "title": pr_info.title,
+                    }
+                )
+
             logger.debug(
                 f"Running {self.config.review_model.value} code review for own PR #{pr_info.number}"
             )
