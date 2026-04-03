@@ -177,11 +177,23 @@ class ReviewWebServer:
                             ReviewAction.APPROVE_WITH_COMMENT,
                         ):
                             if self.sound_notifier:
-                                await self.sound_notifier.play_pr_ready_sound()
+                                await self.sound_notifier.play_pr_ready_sound(
+                                    {
+                                        "repo": pr_info.repository_name,
+                                        "pr_number": pr_info.number,
+                                        "author": pr_info.author,
+                                        "title": pr_info.title,
+                                    }
+                                )
                         else:
                             if self.sound_notifier:
-                                await (
-                                    self.sound_notifier.play_pr_needs_attention_sound()
+                                await self.sound_notifier.play_pr_needs_attention_sound(
+                                    {
+                                        "repo": pr_info.repository_name,
+                                        "pr_number": pr_info.number,
+                                        "author": pr_info.author,
+                                        "title": pr_info.title,
+                                    }
                                 )
 
                     except Exception as e:
@@ -194,7 +206,14 @@ class ReviewWebServer:
                         )
                         await self.database.create_own_pr(pr_info, failure_result)
                         if self.sound_notifier:
-                            await self.sound_notifier.play_pr_needs_attention_sound()
+                            await self.sound_notifier.play_pr_needs_attention_sound(
+                                {
+                                    "repo": pr_info.repository_name,
+                                    "pr_number": pr_info.number,
+                                    "author": pr_info.author,
+                                    "title": pr_info.title,
+                                }
+                            )
 
                 asyncio.create_task(run_review())
 
@@ -318,7 +337,14 @@ class ReviewWebServer:
 
                     # Play approval sound
                     if self.sound_notifier:
-                        await self.sound_notifier.play_approval_sound()
+                        await self.sound_notifier.play_approval_sound(
+                            {
+                                "repo": pr_info.repository_name,
+                                "pr_number": pr_info.number,
+                                "author": pr_info.author,
+                                "title": pr_info.title,
+                            }
+                        )
 
                     logger.info(f"Successfully approved PR {approval_id}")
                     return JSONResponse(content={"status": "success"})
@@ -697,7 +723,9 @@ class ReviewWebServer:
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/api/analytics/repositories")
-        async def get_analytics_repositories(limit: int = 20, days: Optional[int] = None):
+        async def get_analytics_repositories(
+            limit: int = 20, days: Optional[int] = None
+        ):
             """Get per-repository analytics."""
             try:
                 data = await self.database.get_repository_stats(limit, days)

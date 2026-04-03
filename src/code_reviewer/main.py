@@ -69,6 +69,11 @@ class CodeReviewer:
                 f"Web UI enabled at http://{self.config.web_host}:{self.config.web_port}"
             )
 
+        templates = self.monitor.sound_notifier.get_available_templates()
+        click.echo("TTS templates available: " + ", ".join(t[0] for t in templates))
+        for placeholder, desc in templates:
+            click.echo(f"  {placeholder} - {desc}")
+
         await self.monitor.sound_notifier.play_all_enabled()
 
         try:

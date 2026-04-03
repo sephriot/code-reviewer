@@ -14,6 +14,13 @@ from .models import ReviewModel
 
 logger = logging.getLogger(__name__)
 
+SOUND_TEMPLATE_PLACEHOLDERS = [
+    ("{repo}", "Repository name (owner/repo)"),
+    ("{pr_number}", "PR number"),
+    ("{author}", "PR author username"),
+    ("{title}", "PR title"),
+]
+
 
 @dataclass
 class SoundFileConfig:
@@ -34,6 +41,15 @@ class SoundFileConfig:
     def get_text(self, default: str = "") -> str:
         """Get the text to speak, or default if not set."""
         return self.text if self.text else default
+
+    def apply_template(self, context: dict) -> "SoundFileConfig":
+        """Create a new config with template placeholders replaced."""
+        if self.text:
+            text = self.text
+            for key, desc in SOUND_TEMPLATE_PLACEHOLDERS:
+                text = text.replace(key, str(context.get(key[1:-1], key)))
+            return SoundFileConfig(tool=self.tool, text=text, path=self.path)
+        return self
 
 
 @dataclass

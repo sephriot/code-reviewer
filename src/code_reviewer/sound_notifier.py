@@ -83,13 +83,19 @@ class SoundNotifier:
             return Config._parse_sound_file(value)
         return value
 
-    async def _play_sound_config(self, sound_config, default_text: str = ""):
+    async def _play_sound_config(
+        self, sound_config, default_text: str = "", context: dict = None
+    ):
         """Play a sound based on SoundFileConfig - handles both file and TTS."""
         from .config import SoundFileConfig
 
         if sound_config is None:
             await self._play_system_sound()
             return
+
+        # Apply template if context provided
+        if context and sound_config.text:
+            sound_config = sound_config.apply_template(context)
 
         # Check if it's a TTS config (tool:text format)
         if sound_config.is_tts():
@@ -112,47 +118,49 @@ class SoundNotifier:
         except Exception as e:
             logger.warning(f"Failed to play notification sound: {e}")
 
-    async def play_approval_sound(self):
+    async def play_approval_sound(self, context: dict = None):
         """Play a sound when PR is approved."""
         if not self.approval_sound_enabled:
             logger.debug("Approval sound notifications are disabled")
             return
 
         try:
-            await self._play_sound_config(self.approval_sound_file, "Approved")
+            await self._play_sound_config(self.approval_sound_file, "Approved", context)
         except Exception as e:
             logger.warning(f"Failed to play approval sound: {e}")
 
-    async def play_timeout_sound(self):
+    async def play_timeout_sound(self, context: dict = None):
         """Play a sound when an automated review times out."""
         if not self.timeout_sound_enabled:
             logger.debug("Timeout sound notifications are disabled")
             return
 
         try:
-            await self._play_sound_config(self.timeout_sound_file, "Timeout")
+            await self._play_sound_config(self.timeout_sound_file, "Timeout", context)
         except Exception as e:
             logger.warning(f"Failed to play timeout sound: {e}")
 
-    async def play_merged_or_closed_sound(self):
+    async def play_merged_or_closed_sound(self, context: dict = None):
         """Play a sound when pending approvals become merged_or_closed."""
         if not self.merged_or_closed_sound_enabled:
             logger.debug("Merged/closed sound notifications are disabled")
             return
 
         try:
-            await self._play_sound_config(self.merged_or_closed_sound_file, "Outdated")
+            await self._play_sound_config(
+                self.merged_or_closed_sound_file, "Outdated", context
+            )
         except Exception as e:
             logger.warning(f"Failed to play merged/closed sound: {e}")
 
-    async def play_outdated_sound(self):
+    async def play_outdated_sound(self, context: dict = None):
         """Backward compatible alias for play_merged_or_closed_sound."""
         logger.debug(
             "play_outdated_sound is deprecated; forwarding to play_merged_or_closed_sound"
         )
-        await self.play_merged_or_closed_sound()
+        await self.play_merged_or_closed_sound(context)
 
-    async def play_pr_ready_sound(self):
+    async def play_pr_ready_sound(self, context: dict = None):
         """Play a sound when own PR is ready for merging."""
         if not self.own_pr_ready_sound_enabled:
             logger.debug("Own PR ready sound notifications are disabled")
@@ -160,12 +168,12 @@ class SoundNotifier:
 
         try:
             await self._play_sound_config(
-                self.own_pr_ready_sound_file, "Ready for merge"
+                self.own_pr_ready_sound_file, "Ready for merge", context
             )
         except Exception as e:
             logger.warning(f"Failed to play own PR ready sound: {e}")
 
-    async def play_pr_needs_attention_sound(self):
+    async def play_pr_needs_attention_sound(self, context: dict = None):
         """Play a sound when own PR needs attention."""
         if not self.own_pr_needs_attention_sound_enabled:
             logger.debug("Own PR needs attention sound notifications are disabled")
@@ -173,7 +181,7 @@ class SoundNotifier:
 
         try:
             await self._play_sound_config(
-                self.own_pr_needs_attention_sound_file, "Needs attention"
+                self.own_pr_needs_attention_sound_file, "Needs attention", context
             )
         except Exception as e:
             logger.warning(f"Failed to play own PR needs attention sound: {e}")
@@ -188,7 +196,7 @@ class SoundNotifier:
         await self.play_pr_needs_attention_sound()
         await self.play_review_started_sound()
 
-    async def play_review_started_sound(self):
+    async def play_review_started_sound(self, context: dict = None):
         """Play a sound when review process starts for a PR."""
         if not self.review_started_sound_enabled:
             logger.debug("Review started sound notifications are disabled")
@@ -196,7 +204,7 @@ class SoundNotifier:
 
         try:
             await self._play_sound_config(
-                self.review_started_sound_file, "Review started"
+                self.review_started_sound_file, "Review started", context
             )
         except Exception as e:
             logger.warning(f"Failed to play review started sound: {e}")
@@ -369,3 +377,10 @@ class SoundNotifier:
 
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             logger.warning(f"Failed to create default sound file: {e}")
+
+    @staticmethod
+    def get_available_templates() -> list[tuple]:
+        """Return list of available template placeholders for TTS sounds."""
+        from .config import SOUND_TEMPLATE_PLACEHOLDERS
+
+        return SOUND_TEMPLATE_PLACEHOLDERS

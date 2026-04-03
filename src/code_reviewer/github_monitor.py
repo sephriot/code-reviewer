@@ -212,7 +212,14 @@ class GitHubMonitor:
                 )
             else:
                 logger.debug(f"Playing review started sound for PR #{pr_info.number}")
-                await self.sound_notifier.play_review_started_sound()
+                await self.sound_notifier.play_review_started_sound(
+                    {
+                        "repo": pr_info.repository_name,
+                        "pr_number": pr_info.number,
+                        "author": pr_info.author,
+                        "title": pr_info.title,
+                    }
+                )
 
             # Run model-driven code review - the CLI will fetch all PR details
             logger.debug(
@@ -261,7 +268,14 @@ class GitHubMonitor:
                     reason=reason,
                 )
                 await self.db.record_review(pr_info, timeout_result)
-                await self.sound_notifier.play_timeout_sound()
+                await self.sound_notifier.play_timeout_sound(
+                    {
+                        "repo": pr_info.repository_name,
+                        "pr_number": pr_info.number,
+                        "author": pr_info.author,
+                        "title": pr_info.title,
+                    }
+                )
             return
 
         except LLMOutputParseError as e:
@@ -351,7 +365,14 @@ class GitHubMonitor:
                         f"Marked pending approval ID {ref['id']} for PR #{ref['pr_number']} in "
                         f"{ref['repository']} as MERGED_OR_CLOSED ({reason})"
                     )
-                    await self.sound_notifier.play_merged_or_closed_sound()
+                    await self.sound_notifier.play_merged_or_closed_sound(
+                        {
+                            "repo": ref["repository"],
+                            "pr_number": ref["pr_number"],
+                            "author": ref.get("author", ""),
+                            "title": ref.get("title", ""),
+                        }
+                    )
                 else:
                     logger.debug(
                         f"Pending approval ID {ref['id']} already processed when marking as MERGED_OR_CLOSED"
@@ -380,7 +401,14 @@ class GitHubMonitor:
             logger.info(f"Approved PR #{pr_info.number} without comment")
 
             # Play approval sound
-            await self.sound_notifier.play_approval_sound()
+            await self.sound_notifier.play_approval_sound(
+                {
+                    "repo": pr_info.repository_name,
+                    "pr_number": pr_info.number,
+                    "author": pr_info.author,
+                    "title": pr_info.title,
+                }
+            )
 
         elif action == ReviewAction.REQUEST_CHANGES:
             # Create pending approval instead of immediate change request
@@ -617,13 +645,27 @@ class GitHubMonitor:
                 await self.db.create_own_pr(pr_info, review_result)
                 logger.info(f"Own PR #{pr_info.number} is ready for merging")
                 if not self.config.dry_run:
-                    await self.sound_notifier.play_pr_ready_sound()
+                    await self.sound_notifier.play_pr_ready_sound(
+                        {
+                            "repo": pr_info.repository_name,
+                            "pr_number": pr_info.number,
+                            "author": pr_info.author,
+                            "title": pr_info.title,
+                        }
+                    )
             else:
                 status = OWN_PR_STATUS_NEEDS_ATTENTION
                 await self.db.create_own_pr(pr_info, review_result)
                 logger.info(f"Own PR #{pr_info.number} needs attention")
                 if not self.config.dry_run:
-                    await self.sound_notifier.play_pr_needs_attention_sound()
+                    await self.sound_notifier.play_pr_needs_attention_sound(
+                        {
+                            "repo": pr_info.repository_name,
+                            "pr_number": pr_info.number,
+                            "author": pr_info.author,
+                            "title": pr_info.title,
+                        }
+                    )
 
         except asyncio.TimeoutError:
             timeout_seconds = self.config.review_timeout
@@ -638,7 +680,14 @@ class GitHubMonitor:
                         reason=f"Review timed out after {timeout_seconds} seconds",
                     ),
                 )
-                await self.sound_notifier.play_pr_needs_attention_sound()
+                await self.sound_notifier.play_pr_needs_attention_sound(
+                    {
+                        "repo": pr_info.repository_name,
+                        "pr_number": pr_info.number,
+                        "author": pr_info.author,
+                        "title": pr_info.title,
+                    }
+                )
 
         except LLMOutputParseError as e:
             logger.error(
@@ -652,7 +701,14 @@ class GitHubMonitor:
                         reason=f"Review failed: invalid JSON output",
                     ),
                 )
-                await self.sound_notifier.play_pr_needs_attention_sound()
+                await self.sound_notifier.play_pr_needs_attention_sound(
+                    {
+                        "repo": pr_info.repository_name,
+                        "pr_number": pr_info.number,
+                        "author": pr_info.author,
+                        "title": pr_info.title,
+                    }
+                )
 
         except Exception as e:
             logger.error(f"Error processing own PR #{pr_info.number}: {e}")
@@ -664,7 +720,14 @@ class GitHubMonitor:
                         reason=f"Review failed with error: {e}",
                     ),
                 )
-                await self.sound_notifier.play_pr_needs_attention_sound()
+                await self.sound_notifier.play_pr_needs_attention_sound(
+                    {
+                        "repo": pr_info.repository_name,
+                        "pr_number": pr_info.number,
+                        "author": pr_info.author,
+                        "title": pr_info.title,
+                    }
+                )
 
     async def _expire_merged_or_closed_own_prs(self):
         """Mark own PRs as merged or closed if their PRs are merged or closed."""
