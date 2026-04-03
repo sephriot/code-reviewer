@@ -247,10 +247,54 @@ class GitHubMonitor:
                         f"[DRY RUN] Would post '👀' comment on PR #{pr_info.number}"
                     )
                 else:
-                    logger.debug(f"Posting '👀' comment on PR #{pr_info.number}")
-                    await self.github_client.add_review_comment(
-                        pr_info.repository, pr_info.number, "👀"
+                    can_post_review_started_comment = True
+                    previous_review_started_comment = (
+                        await self.db.get_review_started_comment(
+                            pr_info.repository_name,
+                            pr_info.number,
+                        )
                     )
+
+                    if previous_review_started_comment:
+                        previous_comment_id = previous_review_started_comment[
+                            "comment_id"
+                        ]
+                        logger.debug(
+                            "Deleting previous '👀' comment %s on PR #%s",
+                            previous_comment_id,
+                            pr_info.number,
+                        )
+                        deleted = await self.github_client.delete_issue_comment(
+                            pr_info.repository,
+                            previous_comment_id,
+                        )
+                        if deleted:
+                            await self.db.delete_review_started_comment(
+                                pr_info.repository_name,
+                                pr_info.number,
+                            )
+                        else:
+                            can_post_review_started_comment = False
+                            logger.warning(
+                                "Skipping new '👀' comment for PR #%s because previous comment %s could not be removed",
+                                pr_info.number,
+                                previous_comment_id,
+                            )
+
+                    if can_post_review_started_comment:
+                        logger.debug(f"Posting '👀' comment on PR #{pr_info.number}")
+                        comment_id = await self.github_client.add_issue_comment(
+                            pr_info.repository,
+                            pr_info.number,
+                            "👀",
+                        )
+                        if comment_id is not None:
+                            await self.db.upsert_review_started_comment(
+                                pr_info.repository_name,
+                                pr_info.number,
+                                comment_id,
+                                pr_info.head_sha,
+                            )
 
             if self.config.dry_run:
                 logger.info(

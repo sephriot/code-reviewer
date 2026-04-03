@@ -640,18 +640,20 @@ class GitHubClient:
             logger.error(f"Error requesting changes: {e}")
             return False
 
-    async def add_review_comment(
+    async def add_issue_comment(
         self, repository: List[str], pr_number: int, comment: str
-    ):
-        """Add a general comment to a PR without approving or requesting changes."""
+    ) -> Optional[int]:
+        """Add a plain issue comment to a PR timeline."""
         try:
             owner, repo_name = repository[0], repository[1]
 
             self._ensure_session()
 
-            url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}/reviews"
+            url = (
+                f"https://api.github.com/repos/{owner}/{repo_name}/issues/{pr_number}/comments"
+            )
 
-            data = {"event": "COMMENT", "body": comment}
+            data = {"body": comment}
 
             async with self.session.post(url, json=data) as response:
                 result = await response.json()
@@ -659,9 +661,48 @@ class GitHubClient:
                 if response.status not in [200, 201]:
                     raise Exception(f"GitHub API error: {result}")
 
-                logger.info(f"Successfully added comment to PR #{pr_number}")
-                return True
+                comment_id = result.get("id")
+                logger.info(
+                    "Successfully added issue comment %s to PR #%s",
+                    comment_id,
+                    pr_number,
+                )
+                return comment_id
 
         except Exception as e:
-            logger.error(f"Error adding review comment: {e}")
+            logger.error(f"Error adding issue comment: {e}")
+            return None
+
+    async def delete_issue_comment(
+        self, repository: List[str], comment_id: int
+    ) -> bool:
+        """Delete a plain issue comment from a PR timeline."""
+        try:
+            owner, repo_name = repository[0], repository[1]
+
+            self._ensure_session()
+
+            url = (
+                f"https://api.github.com/repos/{owner}/{repo_name}/issues/comments/{comment_id}"
+            )
+
+            async with self.session.delete(url) as response:
+                if response.status == 204:
+                    logger.info("Successfully deleted issue comment %s", comment_id)
+                    return True
+
+                if response.status == 404:
+                    logger.info(
+                        "Issue comment %s already absent on GitHub; treating as deleted",
+                        comment_id,
+                    )
+                    return True
+
+                error_text = await response.text()
+                raise Exception(
+                    f"GitHub API error deleting comment {comment_id}: {error_text}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error deleting issue comment: {e}")
             return False

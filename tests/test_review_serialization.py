@@ -152,6 +152,68 @@ async def test_check_for_new_prs_skips_poll_when_review_in_progress(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_review_started_comment_replaced_for_new_head_sha(tmp_path):
+    github_client = AsyncMock()
+    first_pr = _make_pr_info(9)
+    second_pr = PRInfo(
+        id=first_pr.id,
+        number=first_pr.number,
+        repository=first_pr.repository,
+        url=first_pr.url,
+        title=first_pr.title,
+        author=first_pr.author,
+        head_sha="feedface09",
+        base_sha=first_pr.base_sha,
+    )
+    github_client.get_review_requests.side_effect = [[first_pr], [second_pr]]
+    github_client.add_issue_comment.side_effect = [101, 202]
+    github_client.delete_issue_comment.return_value = True
+
+    llm_integration = AsyncMock()
+    llm_integration.review_in_progress = False
+    llm_integration.active_review_target = None
+    llm_integration.review_pr.side_effect = [
+        ReviewResult(action=ReviewAction.REQUIRES_HUMAN_REVIEW, reason="first"),
+        ReviewResult(action=ReviewAction.REQUIRES_HUMAN_REVIEW, reason="second"),
+    ]
+
+    config = _make_monitor_config(tmp_path)
+    config.review_started_comment_enabled = True
+    monitor = GitHubMonitor(github_client, llm_integration, config)
+    monitor.sound_notifier.play_review_started_sound = AsyncMock()
+    monitor.sound_notifier.play_notification = AsyncMock()
+
+    try:
+        await monitor._check_for_new_prs()
+
+        first_comment = await monitor.db.get_review_started_comment(
+            first_pr.repository_name,
+            first_pr.number,
+        )
+        assert first_comment is not None
+        assert first_comment["comment_id"] == 101
+        assert first_comment["head_sha"] == first_pr.head_sha
+
+        await monitor._check_for_new_prs()
+
+        github_client.delete_issue_comment.assert_awaited_once_with(
+            first_pr.repository,
+            101,
+        )
+        assert github_client.add_issue_comment.await_count == 2
+
+        latest_comment = await monitor.db.get_review_started_comment(
+            second_pr.repository_name,
+            second_pr.number,
+        )
+        assert latest_comment is not None
+        assert latest_comment["comment_id"] == 202
+        assert latest_comment["head_sha"] == second_pr.head_sha
+    finally:
+        monitor.db.close()
+
+
+@pytest.mark.asyncio
 async def test_check_for_own_prs_skips_same_head_sha_after_tracking(tmp_path):
     github_client = AsyncMock()
     pr_info = _make_pr_info(11)

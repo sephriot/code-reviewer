@@ -81,3 +81,66 @@ def test_format_dropped_inline_comments_output():
 
     assert "src/file.py:7" in message
     assert "Needs update" in message
+
+
+class _FakeResponse:
+    def __init__(self, status, payload=None, text=""):
+        self.status = status
+        self._payload = payload or {}
+        self._text = text
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        return self._payload
+
+    async def text(self):
+        return self._text
+
+
+class _FakeSession:
+    def __init__(self):
+        self.closed = False
+        self.post_calls = []
+        self.delete_calls = []
+
+    def post(self, url, json):
+        self.post_calls.append((url, json))
+        return _FakeResponse(201, payload={"id": 12345})
+
+    def delete(self, url):
+        self.delete_calls.append(url)
+        return _FakeResponse(204)
+
+
+@pytest.mark.asyncio
+async def test_add_issue_comment_uses_issue_comment_endpoint():
+    client = GitHubClient(token="dummytoken")
+    client.session = _FakeSession()
+
+    comment_id = await client.add_issue_comment(["owner", "repo"], 42, "👀")
+
+    assert comment_id == 12345
+    assert client.session.post_calls == [
+        (
+            "https://api.github.com/repos/owner/repo/issues/42/comments",
+            {"body": "👀"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_issue_comment_uses_issue_comment_delete_endpoint():
+    client = GitHubClient(token="dummytoken")
+    client.session = _FakeSession()
+
+    deleted = await client.delete_issue_comment(["owner", "repo"], 12345)
+
+    assert deleted is True
+    assert client.session.delete_calls == [
+        "https://api.github.com/repos/owner/repo/issues/comments/12345"
+    ]

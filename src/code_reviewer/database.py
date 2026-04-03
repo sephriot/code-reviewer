@@ -220,6 +220,19 @@ class ReviewDatabase:
             ON own_prs(status)
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS review_started_comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                repository TEXT NOT NULL,
+                pr_number INTEGER NOT NULL,
+                comment_id INTEGER NOT NULL,
+                head_sha TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(repository, pr_number)
+            )
+        """)
+
         conn.commit()
         logger.info(f"Database initialized at: {self.db_path}")
 
@@ -586,6 +599,104 @@ class ReviewDatabase:
         if row:
             return dict(row)
         return None
+
+    async def get_review_started_comment(
+        self, repository: str, pr_number: int
+    ) -> Optional[dict]:
+        """Get the latest tracked review-start comment for a PR."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None,
+            self._get_review_started_comment_sync,
+            repository,
+            pr_number,
+        )
+
+    def _get_review_started_comment_sync(
+        self, repository: str, pr_number: int
+    ) -> Optional[dict]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT * FROM review_started_comments
+            WHERE repository = ? AND pr_number = ?
+            LIMIT 1
+            """,
+            (repository, pr_number),
+        )
+
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    async def upsert_review_started_comment(
+        self,
+        repository: str,
+        pr_number: int,
+        comment_id: int,
+        head_sha: Optional[str],
+    ) -> None:
+        """Create or replace the tracked review-start comment for a PR."""
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            self._upsert_review_started_comment_sync,
+            repository,
+            pr_number,
+            comment_id,
+            head_sha,
+        )
+
+    def _upsert_review_started_comment_sync(
+        self,
+        repository: str,
+        pr_number: int,
+        comment_id: int,
+        head_sha: Optional[str],
+    ) -> None:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO review_started_comments (
+                repository, pr_number, comment_id, head_sha
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(repository, pr_number) DO UPDATE SET
+                comment_id = excluded.comment_id,
+                head_sha = excluded.head_sha,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (repository, pr_number, comment_id, head_sha),
+        )
+        conn.commit()
+
+    async def delete_review_started_comment(
+        self, repository: str, pr_number: int
+    ) -> None:
+        """Delete the tracked review-start comment reference for a PR."""
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            self._delete_review_started_comment_sync,
+            repository,
+            pr_number,
+        )
+
+    def _delete_review_started_comment_sync(
+        self, repository: str, pr_number: int
+    ) -> None:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            DELETE FROM review_started_comments
+            WHERE repository = ? AND pr_number = ?
+            """,
+            (repository, pr_number),
+        )
+        conn.commit()
 
     async def should_review_pr(self, pr_info: PRInfo) -> bool:
         """Determine if a PR should be reviewed based on commit SHA comparison."""
