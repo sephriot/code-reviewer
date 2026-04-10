@@ -308,9 +308,11 @@
                         </div>
                         ${approval.display_review_comment ? `
                             <div class="review-comment" id="comment-section-${approval.id}">
-                                <strong>Review Comment:</strong>
-                                <button class="btn-small edit-btn" onclick="editComment(${approval.id})">Edit</button>
-                                <button class="btn-small delete-btn" onclick="deleteComment(${approval.id})">Delete</button>
+                                <div class="review-section-header">
+                                    <strong>Review Comment:</strong>
+                                    <button class="btn-small edit-btn" onclick="editComment(${approval.id})">Edit</button>
+                                    <button class="btn-small delete-btn" onclick="deleteComment(${approval.id})">Delete</button>
+                                </div>
                                 <div id="comment-display-${approval.id}" class="comment-display">${approval.display_review_comment}</div>
                                 <textarea id="comment-edit-${approval.id}" class="comment-editor">${approval.display_review_comment}</textarea>
                                 <div id="comment-edit-buttons-${approval.id}" class="edit-actions">
@@ -320,9 +322,11 @@
                             </div>` : ''}
                         ${approval.display_review_summary ? `
                             <div class="review-summary" id="summary-section-${approval.id}">
-                                <strong>Review Summary:</strong>
-                                <button class="btn-small edit-btn" onclick="editSummary(${approval.id})">Edit</button>
-                                <button class="btn-small delete-btn" onclick="deleteSummary(${approval.id})">Delete</button>
+                                <div class="review-section-header">
+                                    <strong>Review Summary:</strong>
+                                    <button class="btn-small edit-btn" onclick="editSummary(${approval.id})">Edit</button>
+                                    <button class="btn-small delete-btn" onclick="deleteSummary(${approval.id})">Delete</button>
+                                </div>
                                 <div id="summary-display-${approval.id}" class="summary-display">${approval.display_review_summary}</div>
                                 <textarea id="summary-edit-${approval.id}" class="summary-editor">${approval.display_review_summary}</textarea>
                                 <div id="summary-edit-buttons-${approval.id}" class="edit-actions">
@@ -335,10 +339,11 @@
                                 <strong>Inline Comments (${approval.inline_comments.length}):</strong>
                                 ${approval.inline_comments.map((comment, index) => `
                                     <div class="inline-comment" id="inline-comment-section-${approval.id}-${index}">
-                                        <strong>${comment.file}:${comment.line}</strong>
-                                        <button class="btn-small edit-btn" onclick="editInlineComment(${approval.id}, ${index})">Edit</button>
-                                        <button class="btn-small delete-btn" onclick="deleteInlineComment(${approval.id}, ${index})">Delete</button>
-                                        <br>
+                                        <div class="inline-comment-header">
+                                            <strong>${comment.file}:${comment.line}</strong>
+                                            <button class="btn-small edit-btn" onclick="editInlineComment(${approval.id}, ${index})">Edit</button>
+                                            <button class="btn-small delete-btn" onclick="deleteInlineComment(${approval.id}, ${index})">Delete</button>
+                                        </div>
                                         <div id="inline-comment-display-${approval.id}-${index}" class="inline-comment-display">${comment.message}</div>
                                         <textarea id="inline-comment-edit-${approval.id}-${index}" class="inline-comment-editor">${comment.message}</textarea>
                                         <div id="inline-comment-edit-buttons-${approval.id}-${index}" class="edit-actions">

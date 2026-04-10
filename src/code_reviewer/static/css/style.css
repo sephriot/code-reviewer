@@ -1,15 +1,15 @@
 :root {
-  --color-ink-strong: #142033;
-  --color-ink: #243247;
-  --color-ink-soft: #5b6b80;
-  --color-ink-faint: #738196;
+  --color-ink-strong: #0f1a2b;
+  --color-ink: #1e2d42;
+  --color-ink-soft: #475569;
+  --color-ink-faint: #64748b;
   --color-paper: #f5f1e8;
   --color-canvas: #fbfaf7;
-  --color-surface: rgba(255, 255, 255, 0.9);
+  --color-surface: rgba(255, 255, 255, 0.92);
   --color-surface-strong: #ffffff;
-  --color-surface-muted: #f6f8fb;
-  --color-border: rgba(36, 50, 71, 0.12);
-  --color-border-strong: rgba(36, 50, 71, 0.2);
+  --color-surface-muted: #f1f5f9;
+  --color-border: rgba(36, 50, 71, 0.14);
+  --color-border-strong: rgba(36, 50, 71, 0.22);
   --color-shadow-sm: 0 10px 30px rgba(25, 35, 53, 0.06);
   --color-shadow-md: 0 18px 40px rgba(25, 35, 53, 0.12);
   --color-shadow-lg: 0 26px 70px rgba(25, 35, 53, 0.16);
@@ -360,7 +360,7 @@ input:focus-visible {
 }
 
 .pr-meta small {
-  color: var(--color-ink-faint);
+  color: var(--color-ink-soft);
   font-size: 0.82rem;
 }
 
@@ -372,7 +372,7 @@ input:focus-visible {
   padding: var(--space-4);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
-  background: var(--color-surface-muted);
+  background: linear-gradient(180deg, var(--color-surface-muted) 0%, #edf1f7 100%);
 }
 
 .review-comment strong,
@@ -382,8 +382,6 @@ input:focus-visible {
   color: var(--color-ink-strong);
 }
 
-.review-comment,
-.review-summary,
 .comment-display,
 .summary-display,
 .inline-comment-display,
@@ -391,6 +389,17 @@ input:focus-visible {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: var(--line-height-relaxed);
+}
+
+.review-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.review-section-header strong {
+  margin-right: auto;
 }
 
 .inline-comments {
@@ -409,6 +418,17 @@ input:focus-visible {
   border: 1px solid rgba(155, 95, 19, 0.16);
   background: linear-gradient(180deg, #fffaf0 0%, #f8f0dd 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.inline-comment-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.inline-comment-header strong {
+  margin-right: auto;
 }
 
 .history-section {
@@ -543,11 +563,9 @@ input:focus-visible {
 
 .btn-small {
   padding: 7px 11px;
-  margin-left: var(--space-2);
   background: rgba(255, 255, 255, 0.75);
   border-color: rgba(20, 32, 51, 0.1);
   color: var(--color-neutral-text);
-  vertical-align: middle;
 }
 
 .edit-btn:hover {
@@ -570,11 +588,12 @@ input:focus-visible {
   display: inline-flex;
   align-items: center;
   border-radius: var(--radius-pill);
-  padding: 5px 10px;
-  font-size: 0.72rem;
+  padding: 5px 12px;
+  font-size: 0.73rem;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
+  border: 1px solid transparent;
 }
 
 .status-approved,
@@ -582,6 +601,7 @@ input:focus-visible {
 .status-ready {
   color: var(--color-success);
   background: var(--color-success-soft);
+  border-color: rgba(33, 110, 79, 0.18);
 }
 
 .status-rejected,
@@ -589,6 +609,7 @@ input:focus-visible {
 .status-needs-attention {
   color: var(--color-danger);
   background: var(--color-danger-soft);
+  border-color: rgba(162, 65, 55, 0.18);
 }
 
 .status-merged-closed,
@@ -596,17 +617,20 @@ input:focus-visible {
 .status-closed {
   color: var(--color-neutral-text);
   background: var(--color-neutral-soft);
+  border-color: rgba(84, 98, 116, 0.14);
 }
 
 .status-expired,
 .rate-warning {
   color: var(--color-warning);
   background: var(--color-warning-soft);
+  border-color: rgba(155, 95, 19, 0.18);
 }
 
 .status-human-review {
   color: var(--color-warning);
   background: var(--color-warning-soft);
+  border-color: rgba(155, 95, 19, 0.18);
 }
 
 .status-neutral {
@@ -988,8 +1012,8 @@ td.empty-state {
     align-items: stretch;
   }
 
-  .btn,
-  .btn-small {
+  .buttons .btn,
+  .buttons .btn-small {
     width: 100%;
     justify-content: center;
     margin-left: 0;
