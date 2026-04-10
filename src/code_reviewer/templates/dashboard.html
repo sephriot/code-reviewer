@@ -4,161 +4,18 @@
     <title>Code Review Dashboard</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .section { margin-bottom: 30px; }
-        .pr-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
-        .pr-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
-        .pr-meta { color: #666; margin-bottom: 10px; }
-        .review-comment { background: #f8f9fa; padding: 10px; border-radius: 4px; margin: 10px 0; }
-        .original-review-comment { background: #e9ecef; padding: 10px; border-radius: 4px; margin: 10px 0; border-left: 3px solid #6c757d; }
-        .inline-comments { margin-top: 10px; }
-        .inline-comment { background: #fff3cd; padding: 8px; border-left: 3px solid #ffc107; margin: 5px 0; }
-        .history-section { margin: 15px 0; }
-        .history-title { font-weight: bold; color: #495057; margin-bottom: 8px; }
-        .comparison-container { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 10px 0; }
-        .original-content, .final-content { padding: 10px; border-radius: 4px; }
-        .original-content { background: #f8f9fa; border-left: 3px solid #6c757d; }
-        .final-content { background: #d1ecf1; border-left: 3px solid #bee5eb; }
-        .section-header { font-weight: bold; margin-bottom: 5px; color: #495057; }
-        .no-content { font-style: italic; color: #6c757d; }
-        .status-badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-        .status-approved { background: #d4edda; color: #155724; }
-        .status-rejected { background: #f8d7da; color: #721c24; }
-        .status-merged-closed { background: #e2e3e5; color: #495057; }
-        .status-expired { background: #fff3cd; color: #8a6d3b; }
-        .buttons { margin-top: 15px; }
-        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px; }
-        .btn-approve { background: #28a745; color: white; }
-        .btn-reject { background: #dc3545; color: white; }
-        .btn-view { background: #17a2b8; color: white; }
-        .btn-retry { background: #6c757d; color: white; }
-        .btn-retry:hover { background: #5a6268; }
-        .toast { position: fixed; bottom: 20px; right: 20px; background: #333; color: white; padding: 15px 25px; border-radius: 8px; z-index: 9999; display: none; animation: fadeIn 0.3s; }
-        .toast.show { display: block; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        .tabs { border-bottom: 1px solid #ddd; margin-bottom: 20px; }
-        .tab { display: inline-block; padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; }
-        .tab.active { border-bottom-color: #007bff; color: #007bff; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .dashboard-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-            flex-wrap: wrap;
-            margin-bottom: 16px;
-        }
-        .dashboard-header h1 { margin: 0; font-size: 1.75rem; line-height: 1.2; }
-        .sound-mute-bar {
-            display: none;
-            align-items: center;
-            gap: 10px;
-            flex-shrink: 0;
-            padding: 6px 10px;
-            border-radius: 8px;
-            border: 1px solid #e9ecef;
-            background: #f8f9fa;
-        }
-        .sound-mute-bar.muted {
-            background: #fff3cd;
-            border-color: #ffc107;
-        }
-        .sound-mute-hint {
-            font-size: 14px;
-            color: #495057;
-            user-select: none;
-        }
-        .sound-mute-bar.muted .sound-mute-hint { color: #856404; }
-        .sound-toggle {
-            position: relative;
-            display: inline-block;
-            width: 44px;
-            height: 24px;
-            flex-shrink: 0;
-            cursor: pointer;
-        }
-        .sound-toggle input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-            position: absolute;
-        }
-        .sound-toggle-track {
-            position: absolute;
-            cursor: pointer;
-            inset: 0;
-            background: #ced4da;
-            border-radius: 24px;
-            transition: background 0.2s;
-        }
-        .sound-toggle-track::after {
-            content: "";
-            position: absolute;
-            height: 18px;
-            width: 18px;
-            left: 3px;
-            bottom: 3px;
-            background: white;
-            border-radius: 50%;
-            transition: transform 0.2s;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-        }
-        .sound-toggle input:checked + .sound-toggle-track {
-            background: #f0ad4e;
-        }
-        .sound-toggle input:checked + .sound-toggle-track::after {
-            transform: translateX(20px);
-        }
-        .sound-toggle input:focus-visible + .sound-toggle-track {
-            outline: 2px solid #007bff;
-            outline-offset: 2px;
-        }
-        .merged-closed-note { background: #f1f3f5; padding: 10px; border-left: 3px solid #adb5bd; margin: 10px 0; border-radius: 4px; color: #495057; }
-        .expired-note { background: #fff8e1; padding: 10px; border-left: 3px solid #ffc107; margin: 10px 0; border-radius: 4px; color: #8a6d3b; }
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); }
-        .modal-content { background: white; margin: 5% auto; padding: 20px; width: 80%; max-width: 600px; border-radius: 8px; }
-        .close { float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
-        textarea { width: 100%; height: 100px; margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
-        /* Analytics styles */
-        .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }
-        .stat-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 12px; text-align: center; }
-        .stat-card.green { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
-        .stat-card.orange { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
-        .stat-card.blue { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
-        .stat-card .stat-value { font-size: 32px; font-weight: bold; margin-bottom: 5px; }
-        .stat-card .stat-label { font-size: 14px; opacity: 0.9; }
-        .chart-container { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin: 20px 0; }
-        .chart-title { font-size: 16px; font-weight: bold; margin-bottom: 15px; color: #333; }
-        .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        @media (max-width: 768px) { .charts-row { grid-template-columns: 1fr; } }
-        .analytics-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        .analytics-table th, .analytics-table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
-        .analytics-table th { background: #f8f9fa; font-weight: 600; }
-        .analytics-table tr:hover { background: #f8f9fa; }
-        .rate-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
-        .rate-good { background: #d4edda; color: #155724; }
-        .rate-warning { background: #fff3cd; color: #856404; }
-        .rate-danger { background: #f8d7da; color: #721c24; }
-        .status-ready { background: #d4edda; color: #155724; }
-        .status-needs-attention { background: #f8d7da; color: #721c24; }
-        .status-pending-review { background: #e2e3e5; color: #6c757d; }
-        .status-merged { background: #cce5ff; color: #004085; }
-        .status-closed { background: #e2e3e5; color: #6c757d; }
-        .own-pr-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 15px; }
-        .filter-btn { padding: 6px 14px; border-radius: 20px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-size: 13px; transition: all 0.2s; }
-        .filter-btn:hover { background: #f0f0f0; }
-        .filter-btn.active { background: #667eea; color: #fff; border-color: #667eea; }
-        .own-pr-context-area { margin-top: 10px; }
-        .own-pr-context-area textarea { width: 100%; height: 80px; margin: 5px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: inherit; resize: vertical; }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}">
 </head>
 <body>
     <div class="container">
         <div class="dashboard-header">
-            <h1>Code Review Dashboard</h1>
+            <div class="dashboard-heading">
+                <p class="eyebrow">Human-in-the-loop review operations</p>
+                <h1>Code Review Dashboard</h1>
+                <p class="dashboard-subtitle">
+                    Clearer queues, cleaner history views, and faster scanning for the decisions that still need a human eye.
+                </p>
+            </div>
             <div id="sound-mute-bar" class="sound-mute-bar" title="Temporary; overrides all sound settings in config">
                 <span class="sound-mute-hint">Mute all sounds</span>
                 <label class="sound-toggle" for="sound-mute-toggle">
@@ -168,21 +25,22 @@
             </div>
         </div>
 
-        <div class="tabs">
-            <div class="tab active" onclick="showTab('pending')">Pending Approvals</div>
-            <div class="tab" onclick="showTab('human-review')">Human Reviews</div>
-            <div class="tab" onclick="showTab('approved')">Approved History</div>
-            <div class="tab" onclick="showTab('rejected')">Rejected History</div>
-            <div class="tab" onclick="showTab('merged-closed')">Merged/Closed</div>
-            <div class="tab" onclick="showTab('expired')">Expired</div>
-            <div class="tab" onclick="showTab('completed-reviews')">Completed Reviews</div>
-            <div class="tab" onclick="showTab('own-prs')">My PRs</div>
-            <div class="tab" onclick="showTab('analytics')">📊 Analytics</div>
+        <div class="tabs" role="tablist" aria-label="Dashboard sections">
+            <button type="button" class="tab active" onclick="showTab('pending', this)">Pending Approvals</button>
+            <button type="button" class="tab" onclick="showTab('human-review', this)">Human Reviews</button>
+            <button type="button" class="tab" onclick="showTab('approved', this)">Approved History</button>
+            <button type="button" class="tab" onclick="showTab('rejected', this)">Rejected History</button>
+            <button type="button" class="tab" onclick="showTab('merged-closed', this)">Merged/Closed</button>
+            <button type="button" class="tab" onclick="showTab('expired', this)">Expired</button>
+            <button type="button" class="tab" onclick="showTab('completed-reviews', this)">Completed Reviews</button>
+            <button type="button" class="tab" onclick="showTab('own-prs', this)">My PRs</button>
+            <button type="button" class="tab" onclick="showTab('analytics', this)">Analytics</button>
         </div>
         
         <div id="pending" class="tab-content active">
             <div class="section">
                 <h2>PRs Awaiting Your Approval</h2>
+                <p class="section-description">Review what will be posted, trim wording if needed, then approve or reject without leaving the dashboard.</p>
                 <div id="pending-approvals"></div>
             </div>
         </div>
@@ -190,6 +48,7 @@
         <div id="human-review" class="tab-content">
             <div class="section">
                 <h2>PRs Requiring Human Review</h2>
+                <p class="section-description">These are the pull requests where the automated reviewer could not make a safe final call.</p>
                 <div id="human-reviews"></div>
             </div>
         </div>
@@ -197,6 +56,7 @@
         <div id="approved" class="tab-content">
             <div class="section">
                 <h2>Approved Approvals History</h2>
+                <p class="section-description">Compare the original automated suggestion with the final version that was actually posted to GitHub.</p>
                 <div id="approved-approvals"></div>
             </div>
         </div>
@@ -204,6 +64,7 @@
         <div id="rejected" class="tab-content">
             <div class="section">
                 <h2>Rejected Approvals History</h2>
+                <p class="section-description">Keep a readable record of what was suggested, what was edited, and what never got posted.</p>
                 <div id="rejected-approvals"></div>
             </div>
         </div>
@@ -211,6 +72,7 @@
         <div id="merged-closed" class="tab-content">
             <div class="section">
                 <h2>Merged or Closed Pending Approvals</h2>
+                <p class="section-description">Reference-only items that left the queue because the underlying pull request was no longer actionable.</p>
                 <div id="merged-closed-approvals"></div>
             </div>
         </div>
@@ -218,6 +80,7 @@
         <div id="expired" class="tab-content">
             <div class="section">
                 <h2>Expired Pending Approvals</h2>
+                <p class="section-description">Older pending reviews that were superseded by a newer commit and a newer review run.</p>
                 <div id="expired-approvals"></div>
             </div>
         </div>
@@ -225,6 +88,7 @@
         <div id="completed-reviews" class="tab-content">
             <div class="section">
                 <h2>Last 50 Completed PR Reviews</h2>
+                <p class="section-description">A compact history of final review outcomes, including comments, reasons, and SHA context.</p>
                 <div id="completed-reviews-list"></div>
             </div>
         </div>
@@ -232,6 +96,7 @@
         <div id="own-prs" class="tab-content">
             <div class="section">
                 <h2>My Pull Requests</h2>
+                <p class="section-description">Track your own PRs, filter by readiness, and trigger a fresh review with optional context.</p>
                 <div id="own-pr-filters"></div>
                 <div id="own-prs-list"></div>
             </div>
@@ -239,11 +104,14 @@
 
         <div id="analytics" class="tab-content">
             <div class="section">
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-                    <h2 style="margin: 0;">📊 Review Analytics Dashboard</h2>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <label for="analytics-period" style="font-size: 14px; color: #666;">Time period:</label>
-                        <select id="analytics-period" onchange="onAnalyticsPeriodChange()" style="padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; background: #fff; cursor: pointer;">
+                <div class="analytics-toolbar">
+                    <div>
+                        <h2>Review Analytics Dashboard</h2>
+                        <p class="section-description">Use the analytics tab as the system-wide baseline for spacing, grouping, and scannable visual hierarchy.</p>
+                    </div>
+                    <div class="analytics-controls">
+                        <label for="analytics-period">Time period</label>
+                        <select id="analytics-period" onchange="onAnalyticsPeriodChange()">
                             <option value="7">Last 7 days</option>
                             <option value="14">Last 14 days</option>
                             <option value="30" selected>Last 30 days</option>
@@ -310,7 +178,7 @@
                             </tr>
                         </thead>
                         <tbody id="authors-table-body">
-                            <tr><td colspan="6" style="text-align:center;">Loading...</td></tr>
+                            <tr><td colspan="6" class="empty-state">Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -381,14 +249,20 @@
             }
         }
 
-        function showTab(tabName) {
+        function renderEmptyState(message) {
+            return `<div class="empty-state">${message}</div>`;
+        }
+
+        function showTab(tabName, tabButton) {
             // Hide all tabs
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             
             // Show selected tab
             document.getElementById(tabName).classList.add('active');
-            event.target.classList.add('active');
+            if (tabButton) {
+                tabButton.classList.add('active');
+            }
             
             // Load data for the tab
             if (tabName === 'pending') {
@@ -419,7 +293,7 @@
                 const container = document.getElementById('pending-approvals');
                 
                 if (approvals.length === 0) {
-                    container.innerHTML = '<p>No pending approvals.</p>';
+                    container.innerHTML = renderEmptyState('No pending approvals.');
                     return;
                 }
                 
@@ -435,24 +309,24 @@
                         ${approval.display_review_comment ? `
                             <div class="review-comment" id="comment-section-${approval.id}">
                                 <strong>Review Comment:</strong>
-                                <button class="btn-small edit-btn" onclick="editComment(${approval.id})" style="margin-left: 10px; font-size: 12px; padding: 2px 6px;">Edit</button>
-                                <button class="btn-small delete-btn" onclick="deleteComment(${approval.id})" style="margin-left: 5px; font-size: 12px; padding: 2px 6px; background: #dc3545;">Delete</button>
+                                <button class="btn-small edit-btn" onclick="editComment(${approval.id})">Edit</button>
+                                <button class="btn-small delete-btn" onclick="deleteComment(${approval.id})">Delete</button>
                                 <div id="comment-display-${approval.id}" class="comment-display">${approval.display_review_comment}</div>
-                                <textarea id="comment-edit-${approval.id}" class="comment-editor" style="display: none; width: 100%; height: 100px; margin: 10px 0;">${approval.display_review_comment}</textarea>
-                                <div id="comment-edit-buttons-${approval.id}" style="display: none; margin-top: 5px;">
-                                    <button class="btn btn-approve" onclick="saveComment(${approval.id})" style="margin-right: 5px;">Save</button>
+                                <textarea id="comment-edit-${approval.id}" class="comment-editor">${approval.display_review_comment}</textarea>
+                                <div id="comment-edit-buttons-${approval.id}" class="edit-actions">
+                                    <button class="btn btn-approve" onclick="saveComment(${approval.id})">Save</button>
                                     <button class="btn" onclick="cancelEditComment(${approval.id})">Cancel</button>
                                 </div>
                             </div>` : ''}
                         ${approval.display_review_summary ? `
                             <div class="review-summary" id="summary-section-${approval.id}">
                                 <strong>Review Summary:</strong>
-                                <button class="btn-small edit-btn" onclick="editSummary(${approval.id})" style="margin-left: 10px; font-size: 12px; padding: 2px 6px;">Edit</button>
-                                <button class="btn-small delete-btn" onclick="deleteSummary(${approval.id})" style="margin-left: 5px; font-size: 12px; padding: 2px 6px; background: #dc3545;">Delete</button>
+                                <button class="btn-small edit-btn" onclick="editSummary(${approval.id})">Edit</button>
+                                <button class="btn-small delete-btn" onclick="deleteSummary(${approval.id})">Delete</button>
                                 <div id="summary-display-${approval.id}" class="summary-display">${approval.display_review_summary}</div>
-                                <textarea id="summary-edit-${approval.id}" class="summary-editor" style="display: none; width: 100%; height: 100px; margin: 10px 0;">${approval.display_review_summary}</textarea>
-                                <div id="summary-edit-buttons-${approval.id}" style="display: none; margin-top: 5px;">
-                                    <button class="btn btn-approve" onclick="saveSummary(${approval.id})" style="margin-right: 5px;">Save</button>
+                                <textarea id="summary-edit-${approval.id}" class="summary-editor">${approval.display_review_summary}</textarea>
+                                <div id="summary-edit-buttons-${approval.id}" class="edit-actions">
+                                    <button class="btn btn-approve" onclick="saveSummary(${approval.id})">Save</button>
                                     <button class="btn" onclick="cancelEditSummary(${approval.id})">Cancel</button>
                                 </div>
                             </div>` : ''}
@@ -462,13 +336,13 @@
                                 ${approval.inline_comments.map((comment, index) => `
                                     <div class="inline-comment" id="inline-comment-section-${approval.id}-${index}">
                                         <strong>${comment.file}:${comment.line}</strong>
-                                        <button class="btn-small edit-btn" onclick="editInlineComment(${approval.id}, ${index})" style="margin-left: 10px; font-size: 12px; padding: 2px 6px;">Edit</button>
-                                        <button class="btn-small delete-btn" onclick="deleteInlineComment(${approval.id}, ${index})" style="margin-left: 5px; font-size: 12px; padding: 2px 6px; background: #dc3545;">Delete</button>
+                                        <button class="btn-small edit-btn" onclick="editInlineComment(${approval.id}, ${index})">Edit</button>
+                                        <button class="btn-small delete-btn" onclick="deleteInlineComment(${approval.id}, ${index})">Delete</button>
                                         <br>
                                         <div id="inline-comment-display-${approval.id}-${index}" class="inline-comment-display">${comment.message}</div>
-                                        <textarea id="inline-comment-edit-${approval.id}-${index}" class="inline-comment-editor" style="display: none; width: 100%; height: 80px; margin: 10px 0;">${comment.message}</textarea>
-                                        <div id="inline-comment-edit-buttons-${approval.id}-${index}" style="display: none; margin-top: 5px;">
-                                            <button class="btn btn-approve" onclick="saveInlineComment(${approval.id}, ${index})" style="margin-right: 5px;">Save</button>
+                                        <textarea id="inline-comment-edit-${approval.id}-${index}" class="inline-comment-editor">${comment.message}</textarea>
+                                        <div id="inline-comment-edit-buttons-${approval.id}-${index}" class="edit-actions">
+                                            <button class="btn btn-approve" onclick="saveInlineComment(${approval.id}, ${index})">Save</button>
                                             <button class="btn" onclick="cancelEditInlineComment(${approval.id}, ${index})">Cancel</button>
                                         </div>
                                     </div>
@@ -497,7 +371,7 @@
                 const container = document.getElementById('human-reviews');
                 
                 if (reviews.length === 0) {
-                    container.innerHTML = '<p>No PRs marked for human review.</p>';
+                    container.innerHTML = renderEmptyState('No PRs marked for human review.');
                     return;
                 }
                 
@@ -870,7 +744,7 @@
                 const container = document.getElementById('approved-approvals');
                 
                 if (approvals.length === 0) {
-                    container.innerHTML = '<p>No approved approvals found.</p>';
+                    container.innerHTML = renderEmptyState('No approved approvals found.');
                     return;
                 }
                 
@@ -975,7 +849,7 @@
                 const container = document.getElementById('rejected-approvals');
                 
                 if (approvals.length === 0) {
-                    container.innerHTML = '<p>No rejected approvals found.</p>';
+                    container.innerHTML = renderEmptyState('No rejected approvals found.');
                     return;
                 }
                 
@@ -1081,7 +955,7 @@
                 const container = document.getElementById('merged-closed-approvals');
 
                 if (approvals.length === 0) {
-                    container.innerHTML = '<p>No merged or closed approvals.</p>';
+                    container.innerHTML = renderEmptyState('No merged or closed approvals.');
                     return;
                 }
 
@@ -1134,7 +1008,7 @@
                 const container = document.getElementById('expired-approvals');
 
                 if (approvals.length === 0) {
-                    container.innerHTML = '<p>No expired approvals.</p>';
+                    container.innerHTML = renderEmptyState('No expired approvals.');
                     return;
                 }
 
@@ -1187,7 +1061,7 @@
                 const container = document.getElementById('completed-reviews-list');
                 
                 if (reviews.length === 0) {
-                    container.innerHTML = '<p>No completed reviews found.</p>';
+                    container.innerHTML = renderEmptyState('No completed reviews found.');
                     return;
                 }
                 
@@ -1442,7 +1316,7 @@
             const tbody = document.getElementById('authors-table-body');
             
             if (authors.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No data available</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No data available</td></tr>';
                 return;
             }
 
@@ -1472,9 +1346,9 @@
                 case 'request_changes':
                     return '<span class="status-badge status-rejected">CHANGES REQUESTED</span>';
                 case 'requires_human_review':
-                    return '<span class="status-badge" style="background: #fff3cd; color: #856404;">HUMAN REVIEW</span>';
+                    return '<span class="status-badge status-human-review">HUMAN REVIEW</span>';
                 default:
-                    return `<span class="status-badge" style="background: #e2e3e5; color: #6c757d;">${action.replace('_', ' ').toUpperCase()}</span>`;
+                    return `<span class="status-badge status-neutral">${action.replace('_', ' ').toUpperCase()}</span>`;
             }
         }
 
@@ -1538,9 +1412,9 @@
                 case 'closed':
                     return '<span class="status-badge status-closed">CLOSED</span>';
                 case 'expired':
-                    return '<span class="status-badge" style="background: #e2e3e5; color: #6c757d;">EXPIRED</span>';
+                    return '<span class="status-badge status-expired">EXPIRED</span>';
                 default:
-                    return `<span class="status-badge" style="background: #e2e3e5; color: #6c757d;">${status.toUpperCase()}</span>`;
+                    return `<span class="status-badge status-neutral">${status.toUpperCase()}</span>`;
             }
         }
 
@@ -1551,7 +1425,7 @@
                 : ownPRsData.filter(pr => pr.status === ownPRsFilter);
 
             if (filtered.length === 0) {
-                container.innerHTML = '<p>No PRs found.</p>';
+                container.innerHTML = renderEmptyState('No PRs found.');
                 return;
             }
 
@@ -1572,8 +1446,8 @@
                     ${pr.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${pr.review_reason}</div>` : ''}
                     <div id="own-pr-context-${pr.id}" class="own-pr-context-area" style="display:none;">
                         <textarea id="own-pr-context-input-${pr.id}" placeholder="Optional: provide context for the re-review (e.g. what changed, what to focus on)..."></textarea>
-                        <div style="margin-top: 5px;">
-                            <button class="btn btn-approve" onclick="submitOwnPRReview(${pr.id})" style="margin-right: 5px;">Submit Review</button>
+                        <div class="buttons">
+                            <button class="btn btn-approve" onclick="submitOwnPRReview(${pr.id})">Submit Review</button>
                             <button class="btn" onclick="cancelOwnPRContext(${pr.id})">Cancel</button>
                         </div>
                     </div>

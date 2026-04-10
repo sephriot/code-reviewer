@@ -172,7 +172,7 @@ entries:
   links:
   - K-000005
 - id: K-000013
-  title: 'Web dashboard: FastAPI with Jinja2 templates, inline-created HTML'
+  title: 'Web dashboard: FastAPI with Jinja2 template and shared stylesheet'
   type: note
   confidence: high
   tags:
@@ -180,8 +180,12 @@ entries:
   - fastapi
   - jinja2
   - dashboard
-  - api
+  - css
+  - readability
+  - templates
   sources:
+  - src/code_reviewer/templates/dashboard.html
+  - src/code_reviewer/static/css/style.css
   - src/code_reviewer/web_server.py
 - id: K-000014
   title: Merged/closed PR detection for stale pending approvals
