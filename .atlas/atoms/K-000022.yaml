@@ -1,0 +1,17 @@
+id: K-000022
+title: Runtime mute-all for sounds (web UI and API)
+type: recipe
+confidence: high
+summary: SoundNotifier keeps runtime_mute_all; _skip_if_runtime_muted() runs before every play_* and play_all_enabled, overriding all SOUND_* config. GET /api/sound-mute returns muted and controllable; PUT accepts JSON muted boolean. Dashboard shows a switch beside the page title. State is in-memory only (restart clears).
+tags:
+- sound
+- web-ui
+- mute
+- api
+sources:
+- src/code_reviewer/sound_notifier.py
+- src/code_reviewer/web_server.py
+- src/code_reviewer/templates/dashboard.html
+links:
+- K-000011
+updated_at: 2026-04-10

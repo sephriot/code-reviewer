@@ -766,6 +766,46 @@ class ReviewWebServer:
                 logger.error(f"Failed to get stats: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
+        @self.app.get("/api/sound-mute")
+        async def get_sound_mute():
+            """Return whether runtime mute-all is active (overrides config)."""
+            if not self.sound_notifier:
+                return JSONResponse(
+                    content={"muted": True, "controllable": False}
+                )
+            return JSONResponse(
+                content={
+                    "muted": self.sound_notifier.is_runtime_mute_all(),
+                    "controllable": True,
+                }
+            )
+
+        @self.app.put("/api/sound-mute")
+        async def set_sound_mute(request: Request):
+            """Set runtime mute-all (silences every sound regardless of config)."""
+            if not self.sound_notifier:
+                raise HTTPException(
+                    status_code=503, detail="Sound notifier not available"
+                )
+            try:
+                body = await request.json()
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid JSON")
+            if not isinstance(body, dict) or "muted" not in body:
+                raise HTTPException(
+                    status_code=400,
+                    detail="JSON body must include 'muted' (boolean)",
+                )
+            muted = body.get("muted")
+            if not isinstance(muted, bool):
+                raise HTTPException(
+                    status_code=400, detail="'muted' must be a boolean"
+                )
+            self.sound_notifier.set_runtime_mute_all(muted)
+            return JSONResponse(
+                content={"muted": self.sound_notifier.is_runtime_mute_all()}
+            )
+
         # Analytics API endpoints
         @self.app.get("/api/analytics/overview")
         async def get_analytics_overview(days: Optional[int] = None):

@@ -1,0 +1,15 @@
+id: K-000021
+title: Human-review escalation uses dedicated sound (HUMAN_REVIEW_SOUND_*)
+type: note
+confidence: high
+summary: 'When a PR is marked requires_human_review, SoundNotifier.play_human_review_sound runs (not the generic play_notification). Config mirrors approval: HUMAN_REVIEW_SOUND_ENABLED (default true), HUMAN_REVIEW_SOUND_FILE (audio path or say:/espeak: TTS with {repo},{pr_number},{author},{title}). Wired in GitHubMonitor (including error escalations to human review), web_server re-review paths, CLI --human-review-sound-*, and startup play_all_enabled.'
+tags:
+- sound
+- human-review
+- config
+sources:
+- src/code_reviewer/sound_notifier.py
+- src/code_reviewer/config.py
+links:
+- K-000011
+updated_at: 2026-04-10

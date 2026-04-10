@@ -1,4 +1,4 @@
-next_id: 21
+next_id: 23
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -285,3 +285,31 @@ entries:
   - tests/test_sound_notifier.py
   links:
   - K-000017
+- id: K-000021
+  title: Human-review escalation uses dedicated sound (HUMAN_REVIEW_SOUND_*)
+  type: note
+  confidence: high
+  tags:
+  - sound
+  - human-review
+  - config
+  sources:
+  - src/code_reviewer/sound_notifier.py
+  - src/code_reviewer/config.py
+  links:
+  - K-000011
+- id: K-000022
+  title: Runtime mute-all for sounds (web UI and API)
+  type: recipe
+  confidence: high
+  tags:
+  - sound
+  - web-ui
+  - mute
+  - api
+  sources:
+  - src/code_reviewer/sound_notifier.py
+  - src/code_reviewer/web_server.py
+  - src/code_reviewer/templates/dashboard.html
+  links:
+  - K-000011

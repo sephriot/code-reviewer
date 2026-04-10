@@ -81,6 +81,7 @@ class SoundNotifier:
             review_started_sound_file
         )
         self.system = platform.system().lower()
+        self.runtime_mute_all = False
 
     def _normalize_sound_file(self, value):
         """Normalize sound file config to SoundFileConfig."""
@@ -95,6 +96,18 @@ class SoundNotifier:
         if isinstance(value, str):
             return Config._parse_sound_file(value)
         return value
+
+    def _skip_if_runtime_muted(self) -> bool:
+        if self.runtime_mute_all:
+            logger.debug("Sound playback skipped (runtime mute all)")
+            return True
+        return False
+
+    def is_runtime_mute_all(self) -> bool:
+        return self.runtime_mute_all
+
+    def set_runtime_mute_all(self, muted: bool) -> None:
+        self.runtime_mute_all = muted
 
     async def _play_sound_config(
         self, sound_config, default_text: str = "", context: dict = None
@@ -127,6 +140,8 @@ class SoundNotifier:
 
     async def play_notification(self, context: dict = None):
         """Play a notification sound."""
+        if self._skip_if_runtime_muted():
+            return
         if not self.enabled:
             logger.debug("Sound notifications are disabled")
             return
@@ -138,6 +153,8 @@ class SoundNotifier:
 
     async def play_approval_sound(self, context: dict = None):
         """Play a sound when PR is approved."""
+        if self._skip_if_runtime_muted():
+            return
         if not self.approval_sound_enabled:
             logger.debug("Approval sound notifications are disabled")
             return
@@ -149,6 +166,8 @@ class SoundNotifier:
 
     async def play_human_review_sound(self, context: dict = None):
         """Play a sound when a PR is marked as requiring human review."""
+        if self._skip_if_runtime_muted():
+            return
         if not self.human_review_sound_enabled:
             logger.debug("Human review sound notifications are disabled")
             return
@@ -164,6 +183,8 @@ class SoundNotifier:
 
     async def play_timeout_sound(self, context: dict = None):
         """Play a sound when an automated review times out."""
+        if self._skip_if_runtime_muted():
+            return
         if not self.timeout_sound_enabled:
             logger.debug("Timeout sound notifications are disabled")
             return
@@ -175,6 +196,8 @@ class SoundNotifier:
 
     async def play_merged_or_closed_sound(self, context: dict = None):
         """Play a sound when pending approvals become merged_or_closed."""
+        if self._skip_if_runtime_muted():
+            return
         if not self.merged_or_closed_sound_enabled:
             logger.debug("Merged/closed sound notifications are disabled")
             return
@@ -195,6 +218,8 @@ class SoundNotifier:
 
     async def play_pr_ready_sound(self, context: dict = None):
         """Play a sound when own PR is ready for merging."""
+        if self._skip_if_runtime_muted():
+            return
         if not self.own_pr_ready_sound_enabled:
             logger.debug("Own PR ready sound notifications are disabled")
             return
@@ -208,6 +233,8 @@ class SoundNotifier:
 
     async def play_pr_needs_attention_sound(self, context: dict = None):
         """Play a sound when own PR needs attention."""
+        if self._skip_if_runtime_muted():
+            return
         if not self.own_pr_needs_attention_sound_enabled:
             logger.debug("Own PR needs attention sound notifications are disabled")
             return
@@ -221,6 +248,8 @@ class SoundNotifier:
 
     async def play_all_enabled(self, context: dict = None):
         """Play all enabled sounds (used for startup notification)."""
+        if self._skip_if_runtime_muted():
+            return
         playback_context = context or self.get_demo_context()
         await self.play_notification(playback_context)
         await self.play_approval_sound(playback_context)
@@ -233,6 +262,8 @@ class SoundNotifier:
 
     async def play_review_started_sound(self, context: dict = None):
         """Play a sound when review process starts for a PR."""
+        if self._skip_if_runtime_muted():
+            return
         if not self.review_started_sound_enabled:
             logger.debug("Review started sound notifications are disabled")
             return
@@ -283,6 +314,8 @@ class SoundNotifier:
 
     async def _play_custom_sound(self):
         """Play a custom sound file."""
+        if self._skip_if_runtime_muted():
+            return
         if not self.enabled:
             logger.debug("Sound notifications are disabled; skipping custom sound")
             return

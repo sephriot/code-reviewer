@@ -99,6 +99,7 @@ async def test_play_merged_or_closed_sound_skips_when_disabled(monkeypatch):
 
     assert 'system' not in called
 
+
 @pytest.mark.asyncio
 async def test_play_human_review_sound_skips_when_disabled(monkeypatch):
     called = []
@@ -112,3 +113,43 @@ async def test_play_human_review_sound_skips_when_disabled(monkeypatch):
     await notifier.play_human_review_sound()
 
     assert called == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_mute_skips_all_playback(monkeypatch):
+    called = []
+
+    async def fake_play_system(self):
+        called.append("system")
+
+    monkeypatch.setattr(SoundNotifier, "_play_system_sound", fake_play_system)
+
+    notifier = SoundNotifier()
+    notifier.set_runtime_mute_all(True)
+
+    await notifier.play_notification()
+    await notifier.play_approval_sound()
+    await notifier.play_human_review_sound()
+
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_mute_cleared_allows_playback(monkeypatch):
+    called = []
+
+    async def fake_play_system(self):
+        called.append("system")
+
+    monkeypatch.setattr(SoundNotifier, "_play_system_sound", fake_play_system)
+
+    notifier = SoundNotifier(
+        approval_sound_enabled=False,
+        human_review_sound_enabled=False,
+    )
+    notifier.set_runtime_mute_all(True)
+    notifier.set_runtime_mute_all(False)
+
+    await notifier.play_notification()
+
+    assert called == ["system"]
