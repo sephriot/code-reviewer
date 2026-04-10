@@ -36,6 +36,8 @@ def _make_monitor_config(tmp_path: Path) -> SimpleNamespace:
         sound_file=None,
         approval_sound_enabled=False,
         approval_sound_file=None,
+        human_review_sound_enabled=False,
+        human_review_sound_file=None,
         timeout_sound_enabled=False,
         timeout_sound_file=None,
         merged_or_closed_sound_enabled=False,
@@ -182,6 +184,7 @@ async def test_review_started_comment_replaced_for_new_head_sha(tmp_path):
     monitor = GitHubMonitor(github_client, llm_integration, config)
     monitor.sound_notifier.play_review_started_sound = AsyncMock()
     monitor.sound_notifier.play_notification = AsyncMock()
+    monitor.sound_notifier.play_human_review_sound = AsyncMock()
 
     try:
         await monitor._check_for_new_prs()

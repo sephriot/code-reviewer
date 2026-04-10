@@ -502,7 +502,7 @@ class ReviewWebServer:
                         elif review_result.action == ReviewAction.REQUIRES_HUMAN_REVIEW:
                             await self.database.record_review(pr_info, review_result)
                             if self.sound_notifier:
-                                await self.sound_notifier.play_notification(
+                                await self.sound_notifier.play_human_review_sound(
                                     {
                                         "repo": pr_info.repository_name,
                                         "pr_number": pr_info.number,
@@ -630,7 +630,7 @@ class ReviewWebServer:
                         elif review_result.action == ReviewAction.REQUIRES_HUMAN_REVIEW:
                             await self.database.record_review(pr_info, review_result)
                             if self.sound_notifier:
-                                await self.sound_notifier.play_notification(
+                                await self.sound_notifier.play_human_review_sound(
                                     {
                                         "repo": pr_info.repository_name,
                                         "pr_number": pr_info.number,

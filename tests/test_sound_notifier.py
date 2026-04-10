@@ -47,6 +47,7 @@ async def test_play_all_enabled_uses_demo_context_for_templates(monkeypatch):
     notifier = SoundNotifier(
         sound_file="say:Review {title} in {repo} by {author} #{pr_number}",
         approval_sound_enabled=False,
+        human_review_sound_enabled=False,
         timeout_sound_enabled=False,
         merged_or_closed_sound_enabled=False,
         own_pr_ready_sound_enabled=False,
@@ -97,3 +98,17 @@ async def test_play_merged_or_closed_sound_skips_when_disabled(monkeypatch):
     await notifier.play_merged_or_closed_sound()
 
     assert 'system' not in called
+
+@pytest.mark.asyncio
+async def test_play_human_review_sound_skips_when_disabled(monkeypatch):
+    called = []
+
+    async def fake_play_system(self):
+        called.append("system")
+
+    monkeypatch.setattr(SoundNotifier, "_play_system_sound", fake_play_system)
+
+    notifier = SoundNotifier(human_review_sound_enabled=False)
+    await notifier.play_human_review_sound()
+
+    assert called == []

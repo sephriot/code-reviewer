@@ -71,6 +71,8 @@ class Config:
     sound_file: Optional[SoundFileConfig] = None
     approval_sound_enabled: bool = True
     approval_sound_file: Optional[SoundFileConfig] = None
+    human_review_sound_enabled: bool = True
+    human_review_sound_file: Optional[SoundFileConfig] = None
     timeout_sound_enabled: bool = True
     timeout_sound_file: Optional[SoundFileConfig] = None
     merged_or_closed_sound_enabled: bool = True
@@ -121,6 +123,8 @@ class Config:
             "SOUND_FILE": "sound_file",
             "APPROVAL_SOUND_ENABLED": "approval_sound_enabled",
             "APPROVAL_SOUND_FILE": "approval_sound_file",
+            "HUMAN_REVIEW_SOUND_ENABLED": "human_review_sound_enabled",
+            "HUMAN_REVIEW_SOUND_FILE": "human_review_sound_file",
             "TIMEOUT_SOUND_ENABLED": "timeout_sound_enabled",
             "TIMEOUT_SOUND_FILE": "timeout_sound_file",
             "MERGED_OR_CLOSED_SOUND_ENABLED": "merged_or_closed_sound_enabled",
@@ -151,6 +155,7 @@ class Config:
                 elif config_key in [
                     "sound_enabled",
                     "approval_sound_enabled",
+                    "human_review_sound_enabled",
                     "timeout_sound_enabled",
                     "merged_or_closed_sound_enabled",
                     "dry_run",
@@ -172,6 +177,7 @@ class Config:
                 elif config_key in [
                     "sound_file",
                     "approval_sound_file",
+                    "human_review_sound_file",
                     "timeout_sound_file",
                     "merged_or_closed_sound_file",
                     "own_pr_ready_sound_file",
@@ -271,6 +277,7 @@ class Config:
         sound_file_fields = [
             "sound_file",
             "approval_sound_file",
+            "human_review_sound_file",
             "timeout_sound_file",
             "merged_or_closed_sound_file",
             "own_pr_ready_sound_file",

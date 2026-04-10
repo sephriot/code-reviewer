@@ -215,6 +215,18 @@ class CodeReviewer:
     help="Custom sound file for PR approval notifications (supports 'say:text' for TTS, 'path/to/file' for audio files)",
 )
 @click.option(
+    "--human-review-sound-enabled/--no-human-review-sound",
+    envvar="HUMAN_REVIEW_SOUND_ENABLED",
+    default=True,
+    help="Enable/disable sound when a PR requires human review (default: enabled, env: HUMAN_REVIEW_SOUND_ENABLED)",
+)
+@click.option(
+    "--human-review-sound-file",
+    envvar="HUMAN_REVIEW_SOUND_FILE",
+    type=str,
+    help="Custom sound for PRs requiring human review (supports 'say:text' for TTS, 'path/to/file' for audio files; env: HUMAN_REVIEW_SOUND_FILE)",
+)
+@click.option(
     "--timeout-sound-enabled/--no-timeout-sound",
     envvar="TIMEOUT_SOUND_ENABLED",
     default=None,
@@ -319,6 +331,8 @@ def main(
     sound_file: Optional[str],
     approval_sound_enabled: bool,
     approval_sound_file: Optional[str],
+    human_review_sound_enabled: bool,
+    human_review_sound_file: Optional[str],
     timeout_sound_enabled: Optional[bool],
     timeout_sound_file: Optional[str],
     outdated_sound_enabled: Optional[bool],
@@ -373,6 +387,8 @@ def main(
             sound_file=sound_file,
             approval_sound_enabled=approval_sound_enabled,
             approval_sound_file=approval_sound_file,
+            human_review_sound_enabled=human_review_sound_enabled,
+            human_review_sound_file=human_review_sound_file,
             timeout_sound_enabled=timeout_sound_enabled,
             timeout_sound_file=timeout_sound_file,
             merged_or_closed_sound_enabled=outdated_sound_enabled,

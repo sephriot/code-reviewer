@@ -45,6 +45,8 @@ class GitHubMonitor:
             sound_file=config.sound_file,
             approval_sound_enabled=config.approval_sound_enabled,
             approval_sound_file=config.approval_sound_file,
+            human_review_sound_enabled=config.human_review_sound_enabled,
+            human_review_sound_file=config.human_review_sound_file,
             timeout_sound_enabled=config.timeout_sound_enabled,
             timeout_sound_file=config.timeout_sound_file,
             merged_or_closed_sound_enabled=config.merged_or_closed_sound_enabled,
@@ -394,7 +396,7 @@ class GitHubMonitor:
                     reason=reason,
                 )
                 await self.db.record_review(pr_info, failure_result)
-                await self.sound_notifier.play_notification(
+                await self.sound_notifier.play_human_review_sound(
                     {
                         "repo": pr_info.repository_name,
                         "pr_number": pr_info.number,
@@ -416,7 +418,7 @@ class GitHubMonitor:
                     reason=reason,
                 )
                 await self.db.record_review(pr_info, failure_result)
-                await self.sound_notifier.play_notification(
+                await self.sound_notifier.play_human_review_sound(
                     {
                         "repo": pr_info.repository_name,
                         "pr_number": pr_info.number,
@@ -542,8 +544,8 @@ class GitHubMonitor:
             reason = review_result.reason or "PR requires human review"
             logger.info(f"PR #{pr_info.number} requires human review: {reason}")
 
-            # Play notification sound
-            await self.sound_notifier.play_notification(
+            # Play human review sound (voice/TTS or custom file)
+            await self.sound_notifier.play_human_review_sound(
                 {
                     "repo": pr_info.repository_name,
                     "pr_number": pr_info.number,

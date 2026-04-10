@@ -27,6 +27,8 @@ class SoundNotifier:
         sound_file: Optional[Union["SoundFileConfig", Path]] = None,
         approval_sound_enabled: bool = True,
         approval_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
+        human_review_sound_enabled: bool = True,
+        human_review_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
         timeout_sound_enabled: bool = True,
         timeout_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
         merged_or_closed_sound_enabled: bool = True,
@@ -49,6 +51,10 @@ class SoundNotifier:
         self.sound_file = self._normalize_sound_file(sound_file)
         self.approval_sound_enabled = approval_sound_enabled
         self.approval_sound_file = self._normalize_sound_file(approval_sound_file)
+        self.human_review_sound_enabled = human_review_sound_enabled
+        self.human_review_sound_file = self._normalize_sound_file(
+            human_review_sound_file
+        )
         self.timeout_sound_enabled = timeout_sound_enabled
         self.timeout_sound_file = self._normalize_sound_file(timeout_sound_file)
         if outdated_sound_enabled is not None:
@@ -141,6 +147,21 @@ class SoundNotifier:
         except Exception as e:
             logger.warning(f"Failed to play approval sound: {e}")
 
+    async def play_human_review_sound(self, context: dict = None):
+        """Play a sound when a PR is marked as requiring human review."""
+        if not self.human_review_sound_enabled:
+            logger.debug("Human review sound notifications are disabled")
+            return
+
+        try:
+            await self._play_sound_config(
+                self.human_review_sound_file,
+                "PR requires human review",
+                context,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to play human review sound: {e}")
+
     async def play_timeout_sound(self, context: dict = None):
         """Play a sound when an automated review times out."""
         if not self.timeout_sound_enabled:
@@ -203,6 +224,7 @@ class SoundNotifier:
         playback_context = context or self.get_demo_context()
         await self.play_notification(playback_context)
         await self.play_approval_sound(playback_context)
+        await self.play_human_review_sound(playback_context)
         await self.play_timeout_sound(playback_context)
         await self.play_merged_or_closed_sound(playback_context)
         await self.play_pr_ready_sound(playback_context)
