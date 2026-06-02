@@ -61,6 +61,7 @@ class Config:
     prompt_file: Path
     output_format_file: Optional[Path] = None
     review_model: ReviewModel = ReviewModel.CLAUDE
+    review_effort: Optional[str] = None
     review_agent_argv: Optional[List[str]] = None
     poll_interval: int = 60
     review_timeout: int = 600
@@ -114,6 +115,7 @@ class Config:
             "PROMPT_FILE": "prompt_file",
             "OUTPUT_FORMAT_FILE": "output_format_file",
             "REVIEW_MODEL": "review_model",
+            "REVIEW_EFFORT": "review_effort",
             "REVIEW_TIMEOUT": "review_timeout",
             "POLL_INTERVAL": "poll_interval",
             "LOG_LEVEL": "log_level",
@@ -234,6 +236,12 @@ class Config:
             config_data.get("review_model", ReviewModel.CLAUDE)
         )
 
+        # Normalize effort selection (compatibility with the selected model is
+        # validated downstream in LLMIntegration, which logs and falls back).
+        config_data["review_effort"] = cls._normalize_effort(
+            config_data.get("review_effort")
+        )
+
         if (
             "review_agent_argv" in config_data
             and config_data["review_agent_argv"] is not None
@@ -314,6 +322,19 @@ class Config:
             return SoundFileConfig(tool=tool, text=text)
         else:
             return SoundFileConfig(tool=None, text=None, path=Path(value))
+
+    @staticmethod
+    def _normalize_effort(value) -> Optional[str]:
+        """Normalize the requested effort to a lowercase string or None.
+
+        Does not validate against the selected model; compatibility is resolved
+        (and logged) in LLMIntegration so invalid values fall back to the default
+        instead of raising.
+        """
+        if value is None:
+            return None
+        normalized = str(value).strip().lower()
+        return normalized or None
 
     @staticmethod
     def _normalize_review_model(value) -> ReviewModel:

@@ -314,8 +314,9 @@ class GitHubMonitor:
                 )
 
             # Run model-driven code review - the CLI will fetch all PR details
+            effort = self.llm_integration.effort or "default"
             logger.debug(
-                f"Running {self.config.review_model.value} code review for PR #{pr_info.number}"
+                f"Running {self.config.review_model.value} code review (effort: {effort}) for PR #{pr_info.number}"
             )
             review_result = await self.llm_integration.review_pr(
                 pr_info,
@@ -798,8 +799,9 @@ class GitHubMonitor:
                     }
                 )
 
+            effort = self.llm_integration.effort or "default"
             logger.debug(
-                f"Running {self.config.review_model.value} code review for own PR #{pr_info.number}"
+                f"Running {self.config.review_model.value} code review (effort: {effort}) for own PR #{pr_info.number}"
             )
             review_result = await self.llm_integration.review_pr(
                 pr_info,

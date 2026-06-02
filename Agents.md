@@ -251,6 +251,7 @@ GitHubMonitor -> ReviewDatabase.should_review_pr
 - Dry run mode (`--dry-run` or `DRY_RUN=true`) exercises the full pipeline without mutating GitHub or the database.
 - Sound notifications can be toggled or customized with `SOUND_ENABLED`, `SOUND_FILE`, `APPROVAL_SOUND_ENABLED`, and `APPROVAL_SOUND_FILE`.
 - Set `REVIEW_MODEL` to `CLAUDE` or `CODEX`, or use the `--model` CLI flag, to choose the review CLI.
+- Set `REVIEW_EFFORT` (or `--effort`) to tune Claude's reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`). It applies only to the Claude CLI; for other models or invalid values it is logged at startup and ignored (the tool default is used). The effective effort is also logged in the per-PR review startup log.
 
 ## Troubleshooting
 

@@ -8,7 +8,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TextIO
+from typing import Any, Dict, List, Optional, TextIO, Tuple
 
 from .models import PRInfo, ReviewResult, ReviewAction, ReviewModel
 
@@ -39,6 +39,10 @@ class LLMIntegration:
         "--trust",
     ]
 
+    # Effort levels accepted by the Claude CLI's --effort flag. Other models do
+    # not support an effort flag, so any effort is ignored for them.
+    _CLAUDE_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
     _CLI_COMMANDS = {
         ReviewModel.CLAUDE: ["claude", "--print"],
         ReviewModel.CODEX: [
@@ -60,6 +64,7 @@ class LLMIntegration:
         show_thinking: bool = False,
         atlas_enabled: bool = False,
         agent_argv: Optional[List[str]] = None,
+        effort: Optional[str] = None,
     ):
         self.prompt_file = prompt_file
         self.output_format_file = output_format_file
@@ -67,9 +72,40 @@ class LLMIntegration:
         self.show_thinking = show_thinking
         self.atlas_enabled = atlas_enabled
         self.agent_argv = agent_argv
+        # effort: value to pass via --effort (None = use the tool default).
+        # effort_message: startup log line describing the outcome (None = nothing to log).
+        self.effort, self.effort_message = self.resolve_effort(model, effort)
         self._review_lock: Optional[asyncio.Lock] = None
         self._review_lock_loop: Optional[asyncio.AbstractEventLoop] = None
         self._active_review_target: Optional[str] = None
+
+    @classmethod
+    def resolve_effort(
+        cls, model: ReviewModel, effort: Optional[str]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Validate a requested effort against the selected CLI.
+
+        Returns ``(effective_effort, log_message)``. ``effective_effort`` is the
+        value to pass via ``--effort``, or ``None`` when no flag should be passed
+        (unset, unsupported model, or invalid value) so the tool's own default is
+        used. ``log_message`` is a human-readable startup line, or ``None`` when
+        nothing should be logged (effort unset).
+        """
+        if not effort:
+            return None, None
+        normalized = effort.strip().lower()
+        if model is not ReviewModel.CLAUDE:
+            return None, (
+                f"Effort '{effort}' is not supported by the {model.value} CLI; "
+                "ignoring it and using the tool default."
+            )
+        if normalized not in cls._CLAUDE_EFFORT_LEVELS:
+            valid = ", ".join(cls._CLAUDE_EFFORT_LEVELS)
+            return None, (
+                f"Effort '{effort}' is not a valid Claude effort level "
+                f"(choose from: {valid}); using the tool default."
+            )
+        return normalized, f"Using effort: {normalized}"
 
     def _get_review_lock(self) -> asyncio.Lock:
         """Return a review lock bound to the current running event loop."""
@@ -280,6 +316,9 @@ class LLMIntegration:
 
         if self.model is ReviewModel.CLAUDE and self.show_thinking:
             command.extend(["--output-format", "stream-json", "--verbose"])
+
+        if self.model is ReviewModel.CLAUDE and self.effort:
+            command.extend(["--effort", self.effort])
 
         if self.model is ReviewModel.CLAUDE and self.atlas_enabled and pr_info is not None:
             atlas_prompt = self._build_atlas_system_prompt(pr_info)

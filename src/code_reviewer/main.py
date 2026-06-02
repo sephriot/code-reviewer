@@ -32,6 +32,7 @@ class CodeReviewer:
             show_thinking=config.show_thinking,
             atlas_enabled=config.atlas_enabled,
             agent_argv=config.review_agent_argv,
+            effort=config.review_effort,
         )
         self.monitor = GitHubMonitor(self.github_client, self.model_integration, config)
         self.web_server = None
@@ -60,6 +61,8 @@ class CodeReviewer:
         if self.config.output_format_file:
             click.echo(f"Using output format file: {self.config.output_format_file}")
         click.echo(f"Using review model: {self.config.review_model.value}")
+        if self.model_integration.effort_message:
+            click.echo(self.model_integration.effort_message)
         click.echo(
             f"Atlas knowledge injection: {'enabled' if self.config.atlas_enabled else 'disabled'}"
         )
@@ -160,6 +163,18 @@ class CodeReviewer:
     envvar="REVIEW_MODEL",
     default="CLAUDE",
     help="Language model CLI to use for reviews (env: REVIEW_MODEL)",
+)
+@click.option(
+    "--effort",
+    "review_effort",
+    type=str,
+    default=None,
+    envvar="REVIEW_EFFORT",
+    help=(
+        "Reasoning effort for the review CLI. Only the Claude CLI supports this "
+        "(low, medium, high, xhigh, max); other models or invalid values are logged "
+        "and ignored. Env: REVIEW_EFFORT"
+    ),
 )
 @click.option(
     "--review-agent-argv",
@@ -322,6 +337,7 @@ def main(
     prompt: Optional[str],
     output_format: Optional[str],
     review_model: str,
+    review_effort: Optional[str],
     review_agent_argv_json: Optional[str],
     github_token: Optional[str],
     github_username: Optional[str],
@@ -379,6 +395,7 @@ def main(
             prompt_file=prompt,
             output_format_file=output_format,
             review_model=review_model,
+            review_effort=review_effort,
             github_token=github_token,
             github_username=github_username,
             poll_interval=poll_interval,

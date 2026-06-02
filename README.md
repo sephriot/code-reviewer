@@ -64,6 +64,8 @@ GITHUB_TOKEN=your_github_personal_access_token
 GITHUB_USERNAME=your_github_username
 PROMPT_FILE=prompts/review_prompt.txt
 REVIEW_MODEL=CLAUDE  # options: CLAUDE or CODEX
+# REVIEW_EFFORT=high  # Claude CLI only: low, medium, high, xhigh, max.
+#                     # Ignored (with a startup log line) for other models or invalid values.
 POLL_INTERVAL=60
 REVIEW_TIMEOUT=600
 # Set to 0 to disable the timeout
@@ -196,6 +198,7 @@ code-reviewer --web-enabled --web-host 0.0.0.0 --web-port 8080
 - `--github-username`: GitHub username to monitor
 - `--poll-interval`: Polling interval in seconds (default: 60)
 - `--review-timeout`: Maximum seconds allowed for an automated review before marking it for human attention (default: 600, use 0 to disable)
+- `--effort`: Reasoning effort for the review CLI (env: `REVIEW_EFFORT`). Claude CLI only — `low`, `medium`, `high`, `xhigh`, `max`. Other models or invalid values are logged at startup and ignored (tool default used).
 - `--sound-enabled/--no-sound`: Enable/disable sound notifications
 - `--sound-file`: Custom sound file for notifications
 - `--web-enabled/--no-web`: Enable/disable web UI dashboard
