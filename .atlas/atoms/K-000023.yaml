@@ -1,0 +1,14 @@
+id: K-000023
+title: Agents.md is canonical; CLAUDE.md is a symlink
+type: decision
+confidence: high
+summary: In code-reviewer, keep `Agents.md` as the canonical project instruction document. `CLAUDE.md` is a compatibility symlink to `Agents.md`, so update `Agents.md` only when changing agent/development guidance.
+tags:
+- agents-md
+- claude-md
+- documentation
+- repo-governance
+sources:
+- Agents.md
+- CLAUDE.md
+updated_at: 2026-06-02

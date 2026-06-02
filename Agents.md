@@ -1,7 +1,7 @@
 # Agents
 
 ## Overview
-The code reviewer is an asynchronous service that watches GitHub pull requests and coordinates several focused agents to triage, review, and surface decisions. The orchestration follows the architecture documented in `README.md`, the engineering guidelines in `CLAUDE.md`, and the web workflow described in `WEB_UI_README.md`.
+The code reviewer is an asynchronous service that watches GitHub pull requests and coordinates focused agents to triage, review, and surface decisions. The orchestration follows the architecture documented in `README.md` and the web workflow described in `WEB_UI_README.md`.
 
 Core behaviors:
 - Poll GitHub for review requests using minimal metadata and avoid reprocessing the same commit.
@@ -9,107 +9,294 @@ Core behaviors:
 - Store review decisions and pending approvals in SQLite.
 - Surface actions through optional web dashboard and sound notifications.
 
-All Python execution should use the project virtual environment (`./venv/bin/python ...`).
+All Python execution must use the project virtual environment:
+```bash
+./venv/bin/python -m src.code_reviewer.main
+./venv/bin/python tests/test_something.py
+```
+
+Do not use system Python (`python` or `python3`) for project commands.
+
+## Architecture Principles
+- **Asynchronous design**: The application uses asyncio for non-blocking operations.
+- **Modular structure**: GitHub API access, LLM integration, monitoring, web UI, notifications, and persistence are separated.
+- **Configuration-driven runtime**: Environment variables, YAML config files, and CLI flags are supported.
+- **Graceful shutdown**: Signal handlers manage SIGTERM/SIGINT cleanup.
+- **Smart tracking**: SQLite prevents duplicate reviews using commit SHA comparison and tracks history.
+- **Human-in-the-loop actions**: Review outcomes support direct approvals, pending approvals, change requests, and human escalation.
+- **Minimal data fetching**: `GitHubClient` fetches only PR identification metadata and commit SHAs; the configured LLM CLI fetches detailed PR data.
+- **Optional web dashboard**: FastAPI surfaces pending approvals, human-review queues, and history.
+- **Cross-platform notifications**: Sound alerts work on macOS, Linux, and Windows with graceful fallbacks.
+- **Comprehensive logging**: Debug and info logs should include enough context for diagnosis without leaking secrets.
 
 ## Runtime Flow
-1. **Startup**: `src/code_reviewer/main.py` loads configuration (`Config.load`), wires dependencies, handles signals, and (optionally) starts the FastAPI dashboard alongside the monitor (per `README.md`).
-2. **Monitoring Loop**: `GitHubMonitor.start_monitoring` (in `src/code_reviewer/github_monitor.py`) polls GitHub on a fixed interval, notifies users, and routes each PR through the review pipeline while respecting dry-run mode and repository/author filters.
-3. **Review Execution**: `LLMIntegration.review_pr` (in `src/code_reviewer/llm_integration.py`) runs the configured CLI (Claude or Codex) with the selected prompt, forces JSON-only responses, and converts them into `ReviewResult` instances. Errors propagate as `LLMOutputParseError` for retry handling (see `tests/test_json_failure_handling.py`).
-4. **Action Handling**: Based on `ReviewResult.action`, the monitor either posts an approval/change request via `GitHubClient`, inserts a pending approval for human confirmation, or escalates with a human-review flag. All decisions are persisted with commit-SHA awareness (per `ReviewDatabase.should_review_pr`).
-5. **Human Oversight**: The optional FastAPI server (`ReviewWebServer` in `src/code_reviewer/web_server.py`) exposes dashboards and REST endpoints for pending approvals, human review queues, and history views, aligning with the workflows laid out in `WEB_UI_README.md`.
+1. **Startup**: `src/code_reviewer/main.py` loads configuration (`Config.load`), wires dependencies, handles signals, and optionally starts the FastAPI dashboard alongside the monitor.
+2. **Monitoring loop**: `GitHubMonitor.start_monitoring` polls GitHub on a fixed interval, notifies users, and routes each PR through the review pipeline while respecting dry-run mode and repository/author filters.
+3. **Review execution**: `LLMIntegration.review_pr` runs the configured CLI (Claude or Codex) with the selected prompt, forces JSON-only responses, and converts them into `ReviewResult` instances. Parsing failures raise `LLMOutputParseError` for retry handling.
+4. **Action handling**: Based on `ReviewResult.action`, the monitor posts direct approvals, stores pending human approvals, requests changes, or escalates for human review. Decisions are persisted with commit-SHA awareness.
+5. **Human oversight**: `ReviewWebServer` exposes dashboards and REST endpoints for pending approvals, human review queues, and history views.
 
 ## Agent Catalog
 
-### Code Orchestration Agent – `CodeReviewer`
+### Code Orchestration Agent - `CodeReviewer`
 - **Location**: `src/code_reviewer/main.py` (`CodeReviewer` class, `main` CLI entry).
-- **Role**: Application bootstrapper; loads configuration, wires clients (`GitHubClient`, `LLMIntegration`, `GitHubMonitor`, optional `ReviewWebServer`), and manages signal-based shutdown (`SIGTERM`/`SIGINT`).
-- **Key behaviors**: concurrent execution of monitor and web server via `asyncio.gather`; ensures synchronous cleanup (`monitor.cleanup_sync`) before exit.
-- **Configuration inputs**: CLI flags, environment variables, or YAML file as detailed in `README.md` and `CLAUDE.md`.
+- **Role**: Application bootstrapper; loads configuration, wires clients (`GitHubClient`, `LLMIntegration`, `GitHubMonitor`, optional `ReviewWebServer`), and manages shutdown.
+- **Key behaviors**: Runs monitor and web server concurrently via `asyncio.gather`; ensures synchronous cleanup (`monitor.cleanup_sync`) before exit.
+- **Configuration inputs**: CLI flags, environment variables, or YAML file as detailed in `README.md`.
 
-### Monitoring Agent – `GitHubMonitor`
+### Monitoring Agent - `GitHubMonitor`
 - **Location**: `src/code_reviewer/github_monitor.py`.
 - **Role**: Main event loop that discovers PRs, gates reviews using commit SHA checks, and orchestrates downstream actions.
 - **Notable features**:
-  - Uses `ReviewDatabase.should_review_pr` to avoid duplicate processing and to respect pending approvals.
-  - Differentiates actions: direct approval (`APPROVE_WITHOUT_COMMENT`), human-gated approvals/change requests (stored as pending approvals), and human-review escalations with sound alerts.
-  - Automatically reclassifies pending approvals as **OUTDATED** when the PR is merged or closed, keeping the queue focused on actionable work.
-  - Supports dry-run logging and fine-grained repository/author filters.
+  - Uses `ReviewDatabase.should_review_pr` to avoid duplicate processing and respect pending approvals.
+  - Differentiates direct approval (`APPROVE_WITHOUT_COMMENT`), human-gated approvals/change requests, and human-review escalations.
+  - Automatically reclassifies pending approvals as outdated when the PR is merged or closed.
+  - Supports dry-run logging and repository/author filters.
   - Plays startup, notification, and approval sounds through `SoundNotifier`.
 
-### LLM Review Agent – `LLMIntegration`
+### LLM Review Agent - `LLMIntegration`
 - **Location**: `src/code_reviewer/llm_integration.py`.
 - **Role**: Invokes the selected CLI (Claude or Codex) with contextual prompt templates and enforces JSON output parsing into strongly typed `ReviewResult` objects.
 - **Safeguards**:
-  - Extracts JSON using pattern matching, validating required fields and action enum values.
-   - Raises `LLMOutputParseError` when parsing fails, triggering retry logic in the monitor and logging truncated output for diagnosis (see `CLAUDE.md` guidelines and `tests/test_json_failure_handling.py`).
-- **Prompt sourcing**: Uses `Config.prompt_file`, defaulting to `prompts/review_prompt.txt` or user-selected prompt packs (`prompts/adaptive_review_prompt.md`, `...fast...`, `...world_class...`, etc.).
+  - Extracts JSON using pattern matching.
+  - Validates required fields and action enum values.
+  - Raises `LLMOutputParseError` when parsing fails, triggering retry logic in the monitor and logging truncated output for diagnosis.
+- **Prompt sourcing**: Uses `Config.prompt_file`, defaulting to `prompts/review_prompt.txt` or user-selected prompt packs.
 - **Model selection**: Controlled by `Config.review_model` (`REVIEW_MODEL` env or `--model` flag) to switch between CLAUDE and CODEX CLIs.
 
-### GitHub API Agent – `GitHubClient`
+### GitHub API Agent - `GitHubClient`
 - **Location**: `src/code_reviewer/github_client.py`.
-- **Role**: Thin async wrapper around GitHub’s REST API for PR discovery and review actions.
+- **Role**: Thin async wrapper around GitHub's REST API for PR discovery and review actions.
 - **Capabilities**:
   - Searches for open PRs requesting the configured reviewer and fetches detailed head/base commit SHAs.
   - Posts approvals, change requests, or general comments with optional inline annotations.
   - Manages an aiohttp session lazily and integrates with PyGithub for extended needs.
-- **Error handling**: Logs API failures with response payloads; returns boolean success flags so callers can decide on retries/escalations.
+- **Error handling**: Logs API failures with response payloads and returns boolean success flags so callers can decide on retries/escalations.
 
-### State Management Agent – `ReviewDatabase`
+### State Management Agent - `ReviewDatabase`
 - **Location**: `src/code_reviewer/database.py`.
 - **Role**: SQLite-backed persistence for completed reviews, pending approvals, and reporting stats.
 - **Highlights**:
-  - Thread-safe connections via thread-local storage, auto-migrating schema for edited pending approvals and commit-tracking columns.
-  - `should_review_pr` prevents duplicate reviews by checking stored `pr_reviews` and `pending_approvals` against the current head SHA.
-  - Provides CRUD helpers for pending approval editing, status transitions, and history queries used by the web UI.
-  - Exposes lightweight selectors for pending approval metadata and enforces status transitions (`pending`, `approved`, `rejected`, `merged_or_closed`, `expired`).
-  - Exposes analytics such as action counts and per-repository history used in dashboards.
+  - Thread-safe connections via thread-local storage.
+  - Auto-migrates schema for edited pending approvals and commit-tracking columns.
+  - `should_review_pr` prevents duplicate reviews by checking `pr_reviews` and `pending_approvals` against the current head SHA.
+  - `create_pending_approval` stores human-gated review results with conditional overwrite logic.
+  - Approved/rejected reviews are preserved while new commits can overwrite still-pending approvals.
+  - Provides CRUD helpers, history queries, action counts, and per-repository reporting.
 
-### Human Review Agent – `ReviewWebServer`
+### Human Review Agent - `ReviewWebServer`
 - **Location**: `src/code_reviewer/web_server.py`.
 - **Role**: FastAPI application serving HTML dashboard and REST APIs for managing pending approvals, human-review queues, and review history.
-- **Key workflows** (documented in `WEB_UI_README.md`):
+- **Key workflows**:
   - Pending approvals tab for editing comments/summaries, approving, or rejecting automated suggestions.
   - Human review tab capturing `REQUIRES_HUMAN_REVIEW` results with direct GitHub links.
   - Approved/Rejected history tabs showing side-by-side comparisons of original vs edited content.
   - Outdated tab surfaces pending approvals that were auto-expired after PR merge/closure.
-  - REST endpoints (`/api/pending-approvals`, `/api/merged-or-closed-approvals`, `/api/expired-approvals`, `/api/approvals/{id}/approve`, etc.) enabling automation or alternate clients.
+  - REST endpoints such as `/api/pending-approvals`, `/api/merged-or-closed-approvals`, `/api/expired-approvals`, and `/api/approvals/{id}/approve`.
 
-### Notification Agent – `SoundNotifier`
+### Notification Agent - `SoundNotifier`
 - **Location**: `src/code_reviewer/sound_notifier.py`.
 - **Role**: Cross-platform async sound playback for new reviews, approvals, and human attention signals.
 - **Behavior**:
-  - Prefers custom sound files when provided; otherwise falls back to system beeps/output.
-  - Distinguishes between general notification and approval sounds, mirroring guidance in `README.md` and `CLAUDE.md`.
-  - Gracefully degrades if audio binaries are unavailable, logging warnings instead of raising.
+  - Prefers custom sound files when provided.
+  - Falls back gracefully if audio binaries are unavailable.
+  - Distinguishes startup, new PR, human review, and pending approval sounds.
+  - Can be disabled through configuration.
 
-### Configuration Agent – `Config`
+### Configuration Agent - `Config`
 - **Location**: `src/code_reviewer/config.py`.
-- **Role**: Centralizes configuration loading from YAML, environment variables, and CLI overrides. Ensures prompt file existence (creating a default template when missing) and configures global logging.
-- **Relevant docs**: `README.md` (environment variables, CLI flags) and `CLAUDE.md` (development guidance).
+- **Role**: Centralizes configuration loading from YAML, environment variables, and CLI overrides. Ensures prompt file existence and configures global logging.
+- **Relevant docs**: `README.md` for environment variables and CLI flags.
 
 ### Prompt Packs
 - **Location**: `prompts/*.md`.
-- **Purpose**: Pre-built prompt strategies (adaptive, exemplary, fast, world-class). Each file encodes different review depth and decision frameworks, as referenced in `README.md` and `CLAUDE.md`. Update `PROMPT_FILE` or CLI `--prompt` flag to switch behavior.
+- **Purpose**: Pre-built prompt strategies (adaptive, exemplary, fast, world-class). Update `PROMPT_FILE` or the `--prompt` flag to switch behavior.
 
 ## Data & Decision Flow
+```text
+GitHubMonitor -> ReviewDatabase.should_review_pr
+    -> LLMIntegration.review_pr -> ReviewResult
+        -> (dry run) log only
+        -> APPROVE_WITHOUT_COMMENT -> GitHubClient.approve_pr -> ReviewDatabase.record_review
+        -> APPROVE_WITH_COMMENT / REQUEST_CHANGES -> ReviewDatabase.create_pending_approval
+            -> ReviewWebServer for human action -> GitHubClient + ReviewDatabase.record_review on approval
+        -> REQUIRES_HUMAN_REVIEW -> SoundNotifier + ReviewWebServer human queue
 ```
-GitHubMonitor → ReviewDatabase.should_review_pr
-    ↳ LLMIntegration.review_pr → ReviewResult
-        ↳ (dry run) log only
-        ↳ APPROVE_WITHOUT_COMMENT → GitHubClient.approve_pr → ReviewDatabase.record_review
-        ↳ APPROVE_WITH_COMMENT / REQUEST_CHANGES → ReviewDatabase.create_pending_approval → (optional) SoundNotifier → ReviewWebServer for human action → GitHubClient + ReviewDatabase.record_review on approval
-        ↳ REQUIRES_HUMAN_REVIEW → SoundNotifier + ReviewWebServer human queue
-```
+
+## Development Guidelines
+
+### Code Style
+- Follow PEP 8 conventions.
+- Use type hints throughout.
+- Prefer async/await over callbacks.
+- Use structured logging with appropriate levels.
+
+### Error Handling
+- Handle GitHub API rate limits gracefully.
+- Log errors with context information.
+- Implement retries for transient failures.
+- Never expose GitHub tokens or sensitive data in logs.
+
+### Testing Approach
+- Unit tests for individual components.
+- Integration tests for GitHub API interactions.
+- Mock external dependencies such as GitHub API and Claude/Codex CLI.
+- Test configuration loading and validation.
+- Test database operations with temporary SQLite files.
+- Test sound notification behavior across platforms where practical.
+
+### Security Considerations
+- Never log GitHub tokens or sensitive data.
+- Validate inputs from the GitHub API.
+- Sanitize file paths when creating temporary files.
+- Use secure temporary directories for LLM CLI execution.
+- Protect database files with appropriate permissions.
+- Validate commit SHAs and PR metadata before storage.
+
+## Common Tasks
+
+### Adding New Review Actions
+1. Extend `ReviewAction` in `llm_integration.py`.
+2. Update `GitHubMonitor._act_on_review`.
+3. Add the corresponding method in `GitHubClient`.
+4. Update prompt templates to support the new action.
+5. Update pending approval and web UI handling if the action needs human confirmation.
+
+### Customizing GitHub API Interactions
+- Keep API calls async using aiohttp.
+- Fetch only minimal PR identification info: ID, number, repository, URL, and head/base commit SHAs.
+- Handle rate limiting, including 429 responses.
+- Use appropriate GitHub API endpoints for PR discovery.
+- Validate response data before processing.
+- Preserve commit SHA tracking; it is essential for review state.
+
+### Modifying LLM Integration
+- Ensure the selected CLI (Claude or Codex) is available in `PATH`.
+- Pass PR URLs directly to the CLI for data fetching.
+- Let the CLI handle PR information retrieval: files, diffs, and metadata.
+- Prefer JSON output and parse it robustly.
+- Validate review results before acting.
+
+### Configuration Changes
+- Update the `Config` dataclass with new fields.
+- Add environment variable mappings.
+- Update validation logic.
+- Handle `Path` objects for file configurations.
+- Document new options in `README.md`.
+
+### Database Operations
+- Keep database operations async and thread-safe.
+- Use `should_review_pr()` before processing PRs.
+- Call `record_review()` after successful review completion, except for pending approvals.
+- Preserve duplicate prevention through unique constraints on `(repository, pr_number, head_sha)`.
+- Use `create_pending_approval()` for human-gated review actions.
+- Use `get_review_stats()` for monitoring and analytics.
+- Keep web UI selectors and history methods aligned with schema changes.
+
+### Sound Notification System
+- Support custom sound files via configuration.
+- Keep graceful fallbacks when audio systems are unavailable.
+- Preserve separate startup, new PR, human review, and pending approval sounds.
+- Respect configuration toggles for disabling sound.
+
+### Web UI Dashboard System
+- The dashboard is a FastAPI REST API with HTML templates.
+- Pending approvals let users review and approve/reject comments before GitHub posting.
+- Human review tracking displays PRs marked as `requires_human_review`.
+- Approval history preserves approved and rejected reviews with before/after comparison.
+- The JavaScript interface uses async API calls for updates.
+- The UI should remain mobile responsive.
+- The server runs on localhost by default and has no built-in authentication; it is designed for a single user.
+- The `pending_approvals` table stores inline comments as JSON and tracks commit SHAs.
+
+#### Web UI Workflow
+1. Monitor detects PR.
+2. LLM reviews PR and returns `approve_with_comments` or another human-gated action.
+3. Monitor creates pending approval, stores it in the database, and plays notification sound.
+4. Human reviews proposed comment and inline feedback in the web UI.
+5. Approval posts the review to GitHub and records it in the main reviews table.
+6. Rejection updates status without taking GitHub action.
+
+## Dependencies
+
+### Core Dependencies
+- `aiohttp`: Async HTTP client for GitHub API.
+- `click`: Command-line interface.
+- `pyyaml`: Configuration file parsing.
+- `python-dotenv`: Environment variable management.
+- `pygithub`: GitHub API wrapper, used minimally.
+- `fastapi`: Web API framework for dashboard.
+- `uvicorn`: ASGI server for web interface.
+- `jinja2`: HTML templating for web UI.
+
+### Development Dependencies
+- `pytest`: Testing framework.
+- `pytest-asyncio`: Async test support.
+- `black`: Code formatting.
+- `flake8`: Linting.
+- `mypy`: Type checking.
+
+## Deployment Notes
+- The application is designed to run as a long-running service.
+- It supports graceful shutdown via signal handlers.
+- It can run as a systemd service or directly with the virtual environment.
+- The database file requires persistent storage.
+- Monitor logs for GitHub API rate limit warnings.
+- Dry run mode is available for safe production-like testing.
+- The web UI runs alongside the monitor in the same process using `asyncio.gather`.
+- Default web UI port is 8000 and is configurable via environment variables.
 
 ## Operational Notes
-- Follow the virtual environment rule (`./venv/bin/python`) for all scripting and testing to avoid dependency drift (per `CLAUDE.md`).
-- Enable the web UI (`WEB_ENABLED=true` or `--web-enabled`) when working with pending approvals; otherwise, approvals remain in the database awaiting manual processing (`WEB_UI_README.md`).
-- Dry run mode (`--dry-run` or `DRY_RUN=true`) exercises the full pipeline without mutating GitHub or the database, useful for prompt tuning and demos.
-- Sound notifications can be toggled or customized with env vars (`SOUND_ENABLED`, `SOUND_FILE`, `APPROVAL_SOUND_ENABLED`, `APPROVAL_SOUND_FILE`).
+- Enable the web UI (`WEB_ENABLED=true` or `--web-enabled`) when working with pending approvals; otherwise, approvals remain in the database awaiting manual processing.
+- Dry run mode (`--dry-run` or `DRY_RUN=true`) exercises the full pipeline without mutating GitHub or the database.
+- Sound notifications can be toggled or customized with `SOUND_ENABLED`, `SOUND_FILE`, `APPROVAL_SOUND_ENABLED`, and `APPROVAL_SOUND_FILE`.
+- Set `REVIEW_MODEL` to `CLAUDE` or `CODEX`, or use the `--model` CLI flag, to choose the review CLI.
 
-## Extensibility Checklist
-- Adding new review actions: update `ReviewAction` enum, `GitHubMonitor._act_on_review`, `GitHubClient`, prompt templates, and any pending approval handling (see “Common Tasks” in `CLAUDE.md`).
-- Extending dashboard behavior: modify templates or add API routes in `ReviewWebServer`, coordinate with new database fields/migrations.
-- Integrating alternative LLMs: add a new integration agent or extend `LLMIntegration` and adjust `GitHubMonitor` wiring in `main.py`.
+## Troubleshooting
 
-Maintaining alignment across `Agents.md`, `README.md`, `CLAUDE.md`, and `WEB_UI_README.md` ensures contributors understand how automated and human-in-the-loop agents interact throughout the review lifecycle.
+### Common Issues
+- **Rate limiting**: Increase poll interval and check token scopes.
+- **LLM CLI errors**: Verify CLI installation and `PATH`.
+- **Permission errors**: Check GitHub token permissions.
+- **Parsing errors**: Review prompt template format.
+- **Database issues**: Check write permissions for the database directory.
+- **Sound issues**: Verify audio system availability and file permissions.
+- **Web UI issues**: Check port availability and FastAPI dependencies.
+- **Pending approvals**: Ensure the web UI is enabled when using approval workflows.
+
+### Debugging Tips
+- Enable DEBUG logging for detailed information.
+- Use dry run mode to test configuration without GitHub actions.
+- Check GitHub API response codes and messages.
+- Verify model output format matches expectations.
+- Test with a simple PR first.
+- Inspect database content with SQLite tools for review history.
+- Test sound notifications independently of PR processing.
+- Use `gh auth token` to get a GitHub token from GitHub CLI.
+- Test graceful shutdown with SIGTERM/SIGINT.
+- Verify repository filters use the `owner/repo` format.
+- Create sample pending approvals manually or via database queries when testing the web UI.
+- Check the `pending_approvals` table for stuck approvals.
+
+## Future Enhancements
+- Webhook-based monitoring instead of polling.
+- Support for multiple GitHub organizations.
+- Custom review rules per repository.
+- Integration with other AI models.
+- Review analytics and reporting features.
+- Slack/Teams integration for notifications.
+- Advanced prompt templating system.
+- Web UI authentication, batch operations, and review templates.
+- Native mobile interface for approval management.
+- Webhook endpoints for external integrations.
+
+## Documentation Maintenance
+Update this file whenever significant project changes are made:
+- New features or components.
+- API changes or new endpoints.
+- Database schema modifications.
+- Configuration options.
+- Workflow changes.
+- New dependencies.
+
+Maintain alignment across `Agents.md`, `README.md`, and `WEB_UI_README.md` so contributors understand how automated and human-in-the-loop agents interact throughout the review lifecycle.

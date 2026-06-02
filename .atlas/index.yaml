@@ -1,4 +1,4 @@
-next_id: 23
+next_id: 24
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -317,3 +317,15 @@ entries:
   - src/code_reviewer/templates/dashboard.html
   links:
   - K-000011
+- id: K-000023
+  title: Agents.md is canonical; CLAUDE.md is a symlink
+  type: decision
+  confidence: high
+  tags:
+  - agents-md
+  - claude-md
+  - documentation
+  - repo-governance
+  sources:
+  - Agents.md
+  - CLAUDE.md
