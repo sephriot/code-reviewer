@@ -934,7 +934,7 @@ select:focus {
   box-shadow: 0 8px 18px rgba(31, 79, 136, 0.16);
 }
 
-.own-pr-context-area {
+.re-review-context-area {
   margin-top: var(--space-4);
   padding: var(--space-4);
   border: 1px solid rgba(20, 32, 51, 0.08);
@@ -942,7 +942,7 @@ select:focus {
   background: rgba(246, 248, 251, 0.9);
 }
 
-.own-pr-context-area textarea {
+.re-review-context-area textarea {
   min-height: 92px;
   margin-top: var(--space-2);
 }

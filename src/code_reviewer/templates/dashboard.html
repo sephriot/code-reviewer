@@ -354,12 +354,19 @@
                                 `).join('')}
                             </div>
                         ` : ''}
+                        <div id="approval-context-${approval.id}" class="re-review-context-area" style="display:none;">
+                            <textarea id="approval-context-input-${approval.id}" placeholder="Optional: provide context for the re-review (e.g. what changed, what to focus on)..."></textarea>
+                            <div class="buttons">
+                                <button class="btn btn-approve" onclick="submitApprovalReview(${approval.id})">Submit Review</button>
+                                <button class="btn" onclick="cancelApprovalContext(${approval.id})">Cancel</button>
+                            </div>
+                        </div>
                         <div class="buttons">
                             <button class="btn btn-approve" onclick="approveDirectly(${approval.id})">
                                 Approve & Post Review
                             </button>
                             <button class="btn btn-reject" onclick="rejectPR(${approval.id})">Reject</button>
-                            <button class="btn btn-retry" onclick="reviewAgain(${approval.id})">Review Again</button>
+                            <button class="btn btn-retry" onclick="toggleApprovalContext(${approval.id})">Review Again</button>
                             <a href="${approval.pr_url}" target="_blank" class="btn btn-view">View PR</a>
                         </div>
                     </div>
@@ -388,9 +395,16 @@
                             <br><small>Reviewed: ${new Date(review.reviewed_at).toLocaleString()}</small>
                         </div>
                         ${review.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${review.review_reason}</div>` : ''}
+                        <div id="human-review-context-${review.id}" class="re-review-context-area" style="display:none;">
+                            <textarea id="human-review-context-input-${review.id}" placeholder="Optional: provide context for the re-review (e.g. what changed, what to focus on)..."></textarea>
+                            <div class="buttons">
+                                <button class="btn btn-approve" onclick="submitHumanReviewAgain(${review.id})">Submit Review</button>
+                                <button class="btn" onclick="cancelHumanReviewContext(${review.id})">Cancel</button>
+                            </div>
+                        </div>
                         <div class="buttons">
                             <a href="https://github.com/${review.repository}/pull/${review.pr_number}" target="_blank" class="btn btn-view">View PR</a>
-                            <button class="btn btn-retry" onclick="reviewHumanReviewAgain(${review.id})">Review Again</button>
+                            <button class="btn btn-retry" onclick="toggleHumanReviewContext(${review.id})">Review Again</button>
                         </div>
                     </div>
                 `).join('');
@@ -698,12 +712,12 @@
             }, duration);
         }
 
-        async function reviewAgain(id) {
-            if (!confirm('Discard this review and trigger a fresh one?')) return;
-
+        async function submitReviewAgain(url, userContext) {
             try {
-                const response = await fetch(`/api/approvals/${id}/review-again`, {
-                    method: 'POST'
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_context: userContext || '' })
                 });
 
                 if (response.ok) {
@@ -720,26 +734,32 @@
             }
         }
 
-        async function reviewHumanReviewAgain(id) {
-            if (!confirm('Discard this human review record and trigger a fresh LLM review?')) return;
+        function toggleApprovalContext(id) {
+            document.getElementById(`approval-context-${id}`).style.display = 'block';
+        }
 
-            try {
-                const response = await fetch(`/api/reviews/${id}/review-again`, {
-                    method: 'POST'
-                });
+        function cancelApprovalContext(id) {
+            document.getElementById(`approval-context-${id}`).style.display = 'none';
+            document.getElementById(`approval-context-input-${id}`).value = '';
+        }
 
-                if (response.ok) {
-                    const result = await response.json();
-                    showToast(result.message || 'Review triggered. Refresh to see results.');
-                    refreshCurrentView();
-                } else {
-                    const errorText = await response.text();
-                    alert('Failed to trigger re-review: ' + errorText);
-                }
-            } catch (error) {
-                console.error('Failed to trigger re-review:', error);
-                alert('Failed to trigger re-review: ' + error.message);
-            }
+        async function submitApprovalReview(id) {
+            const userContext = document.getElementById(`approval-context-input-${id}`).value;
+            await submitReviewAgain(`/api/approvals/${id}/review-again`, userContext);
+        }
+
+        function toggleHumanReviewContext(id) {
+            document.getElementById(`human-review-context-${id}`).style.display = 'block';
+        }
+
+        function cancelHumanReviewContext(id) {
+            document.getElementById(`human-review-context-${id}`).style.display = 'none';
+            document.getElementById(`human-review-context-input-${id}`).value = '';
+        }
+
+        async function submitHumanReviewAgain(id) {
+            const userContext = document.getElementById(`human-review-context-input-${id}`).value;
+            await submitReviewAgain(`/api/reviews/${id}/review-again`, userContext);
         }
 
         async function loadApprovedHistory() {
@@ -1449,7 +1469,7 @@
                     ${pr.review_summary ? `<div class="review-comment"><strong>Summary:</strong><br>${pr.review_summary}</div>` : ''}
                     ${pr.review_comment ? `<div class="review-comment"><strong>Comment:</strong><br>${pr.review_comment}</div>` : ''}
                     ${pr.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${pr.review_reason}</div>` : ''}
-                    <div id="own-pr-context-${pr.id}" class="own-pr-context-area" style="display:none;">
+                    <div id="own-pr-context-${pr.id}" class="re-review-context-area" style="display:none;">
                         <textarea id="own-pr-context-input-${pr.id}" placeholder="Optional: provide context for the re-review (e.g. what changed, what to focus on)..."></textarea>
                         <div class="buttons">
                             <button class="btn btn-approve" onclick="submitOwnPRReview(${pr.id})">Submit Review</button>

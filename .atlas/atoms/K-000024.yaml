@@ -1,0 +1,50 @@
+id: K-000024
+title: 'Re-review with user context: one shared backend contract, per-tab frontend collection'
+type: recipe
+confidence: high
+summary: All three dashboard re-review endpoints (own-prs, approvals, reviews) accept optional user_context in the POST JSON body and inject it into the LLM prompt as an 'Additional context from the reviewer' block. The frontend collects it per tab via an inline toggle textarea (class .re-review-context-area) rather than confirm()/prompt() dialogs.
+details: |-
+  ## Backend contract (identical across endpoints)
+
+  - `POST /api/own-prs/{id}/review-again`, `POST /api/approvals/{id}/review-again`,
+    `POST /api/reviews/{id}/review-again` all parse `{"user_context": "..."}` from the
+    JSON body (blank/missing -> None) and pass it to `LLMIntegration.review_pr(pr_info, user_context=...)`.
+  - `_run_model_cli` appends a block "Additional context from the reviewer for this
+    follow-up review: <text>" to the prompt only when user_context is non-empty
+    (llm_integration.py ~192-197). The startup log line gains a "with user context"
+    suffix (grep-able verification signal).
+
+  ## Frontend pattern (per tab, no shared component)
+
+  - Each card has a hidden `<div class="re-review-context-area">` with a textarea and
+    Submit Review / Cancel buttons; "Review Again" toggles it visible.
+  - IDs are tab-prefixed: `own-pr-context-${id}`, `approval-context-${id}`,
+    `human-review-context-${id}`. The two newer tabs share `submitReviewAgain(url, userContext)`
+    helper; Own PRs keeps its own submit function.
+  - Cancel hides AND clears the textarea; submit posts JSON with Content-Type header.
+  - No confirm() dialog: the explicit Submit/Cancel step is the confirmation, and empty
+    input behaves identically to the old plain re-review.
+
+  ## Gotchas
+
+  - CSS class was renamed from .own-pr-context-area to .re-review-context-area when it
+    became shared by three tabs; only the class changed, element IDs kept tab prefixes.
+  - `user_context` prompt injection has NO automated test coverage: all tests override
+    `_run_model_cli`, bypassing real prompt assembly. tests/test_review_prompt_context.py
+    covers only previous_pending context. Verify manually via the "with user context"
+    log line or by capturing the prompt with a fake CLI on PATH.
+tags:
+- re-review
+- user-context
+- web-ui
+- dashboard
+- prompts
+sources:
+- src/code_reviewer/web_server.py
+- src/code_reviewer/llm_integration.py
+- src/code_reviewer/templates/dashboard.html
+- src/code_reviewer/static/css/style.css
+links:
+- K-000005
+- K-000018
+updated_at: 2026-06-03

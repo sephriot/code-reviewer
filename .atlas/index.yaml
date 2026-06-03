@@ -1,4 +1,4 @@
-next_id: 24
+next_id: 25
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -329,3 +329,21 @@ entries:
   sources:
   - Agents.md
   - CLAUDE.md
+- id: K-000024
+  title: 'Re-review with user context: one shared backend contract, per-tab frontend collection'
+  type: recipe
+  confidence: high
+  tags:
+  - re-review
+  - user-context
+  - web-ui
+  - dashboard
+  - prompts
+  sources:
+  - src/code_reviewer/web_server.py
+  - src/code_reviewer/llm_integration.py
+  - src/code_reviewer/templates/dashboard.html
+  - src/code_reviewer/static/css/style.css
+  links:
+  - K-000005
+  - K-000018
