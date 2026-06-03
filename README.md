@@ -80,7 +80,9 @@ TIMEOUT_SOUND_ENABLED=true
 # TIMEOUT_SOUND_FILE=sounds/review_timeout.wav
 
 # Own PRs monitoring
-OWN_PR_ENABLED=true
+OWN_PR_MODE=auto  # off (default), auto (review automatically), or manual
+#                 # (track in the web UI; review only when explicitly requested)
+# OWN_PR_ENABLED=true  # Legacy boolean: true=auto, false=off. Ignored when OWN_PR_MODE is set.
 # REPOSITORIES=owner/repo1,owner/repo2  # Same filter as regular PR monitoring
 
 # Own PR sound notifications

@@ -12,6 +12,13 @@ class ReviewModel(Enum):
     AGENT = "AGENT"  # Cursor Agent CLI (`agent --print`, etc.)
 
 
+class OwnPRMode(Enum):
+    """How own PRs are handled by the monitor."""
+    OFF = "OFF"  # Own PRs are not monitored
+    AUTO = "AUTO"  # Own PRs are reviewed automatically when detected
+    MANUAL = "MANUAL"  # Own PRs are tracked; reviews are requested via the web UI
+
+
 class ReviewAction(Enum):
     """Possible actions for a PR review."""
     APPROVE_WITH_COMMENT = "approve_with_comment"

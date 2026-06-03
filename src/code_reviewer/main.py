@@ -17,7 +17,7 @@ from .github_monitor import GitHubMonitor
 from .llm_integration import LLMIntegration
 from .github_client import GitHubClient
 from .web_server import ReviewWebServer
-from .models import ReviewModel
+from .models import OwnPRMode, ReviewModel
 
 
 class CodeReviewer:
@@ -82,8 +82,9 @@ class CodeReviewer:
         )
 
         try:
+            own_prs_monitored = self.config.own_pr_mode != OwnPRMode.OFF
             if self.config.web_enabled:
-                if self.config.own_pr_enabled:
+                if own_prs_monitored:
                     await asyncio.gather(
                         self.monitor.start_monitoring(),
                         self.monitor.start_own_prs_monitoring(),
@@ -94,7 +95,7 @@ class CodeReviewer:
                         self.monitor.start_monitoring(), self._run_web_server()
                     )
             else:
-                if self.config.own_pr_enabled:
+                if own_prs_monitored:
                     await asyncio.gather(
                         self.monitor.start_monitoring(),
                         self.monitor.start_own_prs_monitoring(),
@@ -266,10 +267,21 @@ class CodeReviewer:
     help="Custom sound file for merged/closed pending approval notifications (env: MERGED_OR_CLOSED_SOUND_FILE or OUTDATED_SOUND_FILE)",
 )
 @click.option(
+    "--own-pr-mode",
+    envvar="OWN_PR_MODE",
+    type=click.Choice(["off", "auto", "manual"], case_sensitive=False),
+    default=None,
+    help=(
+        "How to handle your own PRs: 'off' disables monitoring, 'auto' reviews "
+        "them automatically, 'manual' tracks them in the web UI and reviews only "
+        "on explicit request (default: off, env: OWN_PR_MODE)"
+    ),
+)
+@click.option(
     "--own-pr-enabled/--no-own-pr",
     envvar="OWN_PR_ENABLED",
-    default=False,
-    help="Enable monitoring of your own PRs (default: disabled, env: OWN_PR_ENABLED)",
+    default=None,
+    help="[Legacy] Enable monitoring of your own PRs; equivalent to --own-pr-mode auto/off. Ignored when --own-pr-mode is set (env: OWN_PR_ENABLED)",
 )
 @click.option(
     "--own-pr-ready-sound-enabled/--no-own-pr-ready-sound",
@@ -353,7 +365,8 @@ def main(
     timeout_sound_file: Optional[str],
     outdated_sound_enabled: Optional[bool],
     outdated_sound_file: Optional[str],
-    own_pr_enabled: bool,
+    own_pr_mode: Optional[str],
+    own_pr_enabled: Optional[bool],
     own_pr_ready_sound_enabled: bool,
     own_pr_ready_sound_file: Optional[str],
     own_pr_needs_attention_sound_enabled: bool,
@@ -410,6 +423,7 @@ def main(
             timeout_sound_file=timeout_sound_file,
             merged_or_closed_sound_enabled=outdated_sound_enabled,
             merged_or_closed_sound_file=outdated_sound_file,
+            own_pr_mode=own_pr_mode,
             own_pr_enabled=own_pr_enabled,
             own_pr_ready_sound_enabled=own_pr_ready_sound_enabled,
             own_pr_ready_sound_file=own_pr_ready_sound_file,

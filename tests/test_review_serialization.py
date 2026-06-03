@@ -10,11 +10,18 @@ from code_reviewer.database import (
     OWN_PR_STATUS_EXPIRED,
     OWN_PR_STATUS_MERGED,
     OWN_PR_STATUS_NEEDS_ATTENTION,
+    OWN_PR_STATUS_PENDING,
     OWN_PR_STATUS_READY_FOR_MERGING,
 )
 from code_reviewer.github_monitor import GitHubMonitor
 from code_reviewer.llm_integration import LLMIntegration
-from code_reviewer.models import PRInfo, ReviewAction, ReviewModel, ReviewResult
+from code_reviewer.models import (
+    OwnPRMode,
+    PRInfo,
+    ReviewAction,
+    ReviewModel,
+    ReviewResult,
+)
 
 
 def _make_pr_info(number: int) -> PRInfo:
@@ -53,7 +60,7 @@ def _make_monitor_config(tmp_path: Path) -> SimpleNamespace:
         repositories=[],
         pr_authors=[],
         poll_interval=1,
-        own_pr_enabled=False,
+        own_pr_mode=OwnPRMode.OFF,
         review_started_comment_enabled=False,
         review_timeout=None,
         review_model=ReviewModel.CLAUDE,
@@ -310,6 +317,103 @@ async def test_check_for_own_prs_reviews_new_head_sha_and_expires_old_one(tmp_pa
         monitor.db.close()
 
 
+@pytest.mark.asyncio
+async def test_check_for_own_prs_manual_mode_tracks_pending_without_review(tmp_path):
+    github_client = AsyncMock()
+    pr_info = _make_pr_info(15)
+    github_client.get_own_prs.return_value = [pr_info]
+    github_client.get_pr_status.return_value = {"state": "open", "merged": False}
+
+    llm_integration = AsyncMock()
+    llm_integration.review_in_progress = False
+    llm_integration.active_review_target = None
+
+    config = _make_monitor_config(tmp_path)
+    config.own_pr_mode = OwnPRMode.MANUAL
+    monitor = GitHubMonitor(github_client, llm_integration, config)
+    monitor.sound_notifier.play_review_started_sound = AsyncMock()
+    monitor.sound_notifier.play_pr_ready_sound = AsyncMock()
+    monitor.sound_notifier.play_pr_needs_attention_sound = AsyncMock()
+
+    try:
+        await monitor._check_for_own_prs()
+        await monitor._check_for_own_prs()
+
+        llm_integration.review_pr.assert_not_awaited()
+        monitor.sound_notifier.play_review_started_sound.assert_not_awaited()
+
+        tracked = await monitor.db.get_own_pr_by_commit(
+            pr_info.repository_name, pr_info.number, pr_info.head_sha
+        )
+        assert tracked is not None
+        assert tracked["status"] == OWN_PR_STATUS_PENDING
+        assert tracked["review_action"] is None
+
+        all_entries = await monitor.db.get_own_prs()
+        assert len(all_entries) == 1
+    finally:
+        monitor.db.close()
+
+
+@pytest.mark.asyncio
+async def test_check_for_own_prs_manual_mode_new_head_resets_to_pending(tmp_path):
+    github_client = AsyncMock()
+    first_pr = _make_pr_info(17)
+    second_pr = PRInfo(
+        id=first_pr.id,
+        number=first_pr.number,
+        repository=first_pr.repository,
+        url=first_pr.url,
+        title=first_pr.title,
+        author=first_pr.author,
+        head_sha="feedface17",
+        base_sha=first_pr.base_sha,
+    )
+    github_client.get_own_prs.side_effect = [[first_pr], [second_pr]]
+    github_client.get_pr_status.return_value = {"state": "open", "merged": False}
+
+    llm_integration = AsyncMock()
+    llm_integration.review_in_progress = False
+    llm_integration.active_review_target = None
+
+    config = _make_monitor_config(tmp_path)
+    config.own_pr_mode = OwnPRMode.MANUAL
+    monitor = GitHubMonitor(github_client, llm_integration, config)
+    monitor.sound_notifier.play_review_started_sound = AsyncMock()
+    monitor.sound_notifier.play_pr_ready_sound = AsyncMock()
+    monitor.sound_notifier.play_pr_needs_attention_sound = AsyncMock()
+
+    try:
+        await monitor._check_for_own_prs()
+
+        # Simulate the user requesting a review for the first head SHA
+        await monitor.db.delete_own_pr_by_commit(
+            first_pr.repository_name, first_pr.number, first_pr.head_sha
+        )
+        await monitor.db.create_own_pr(
+            first_pr,
+            ReviewResult(action=ReviewAction.APPROVE_WITHOUT_COMMENT, reason="ok"),
+        )
+
+        await monitor._check_for_own_prs()
+
+        llm_integration.review_pr.assert_not_awaited()
+
+        old_entry = await monitor.db.get_own_pr_by_commit(
+            first_pr.repository_name, first_pr.number, first_pr.head_sha
+        )
+        new_entry = await monitor.db.get_own_pr_by_commit(
+            second_pr.repository_name, second_pr.number, second_pr.head_sha
+        )
+
+        assert old_entry is not None
+        assert old_entry["status"] == OWN_PR_STATUS_EXPIRED
+        assert new_entry is not None
+        assert new_entry["status"] == OWN_PR_STATUS_PENDING
+    finally:
+        monitor.db.close()
+
+
 def test_monitor_loops_bind_locks_to_running_loop_when_constructed_before_loop(
     tmp_path,
 ):
@@ -335,7 +439,7 @@ def test_monitor_loops_bind_locks_to_running_loop_when_constructed_before_loop(
 
         monitor._check_for_new_prs = stop_after_one_review_poll
         monitor._check_for_own_prs = stop_after_one_own_pr_poll
-        monitor.config.own_pr_enabled = True
+        monitor.config.own_pr_mode = OwnPRMode.AUTO
 
         await asyncio.gather(
             monitor.start_monitoring(),

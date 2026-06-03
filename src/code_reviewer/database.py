@@ -2050,26 +2050,33 @@ class ReviewDatabase:
             "unique_authors": unique_authors,
         }
 
-    async def create_own_pr(self, pr_info: PRInfo, review_result: ReviewResult) -> int:
-        """Create a new own_pr entry for tracking."""
+    async def create_own_pr(
+        self, pr_info: PRInfo, review_result: Optional[ReviewResult]
+    ) -> int:
+        """Create a new own_pr entry for tracking.
+
+        With review_result=None the PR is tracked as pending review (manual mode).
+        """
         return await asyncio.get_event_loop().run_in_executor(
             None, self._create_own_pr_sync, pr_info, review_result
         )
 
-    def _create_own_pr_sync(self, pr_info: PRInfo, review_result: ReviewResult) -> int:
+    def _create_own_pr_sync(
+        self, pr_info: PRInfo, review_result: Optional[ReviewResult]
+    ) -> int:
         """Synchronous implementation of create_own_pr."""
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        status = (
-            OWN_PR_STATUS_READY_FOR_MERGING
-            if review_result.action
-            in (
-                ReviewAction.APPROVE_WITHOUT_COMMENT,
-                ReviewAction.APPROVE_WITH_COMMENT,
-            )
-            else OWN_PR_STATUS_NEEDS_ATTENTION
-        )
+        if review_result is None:
+            status = OWN_PR_STATUS_PENDING
+        elif review_result.action in (
+            ReviewAction.APPROVE_WITHOUT_COMMENT,
+            ReviewAction.APPROVE_WITH_COMMENT,
+        ):
+            status = OWN_PR_STATUS_READY_FOR_MERGING
+        else:
+            status = OWN_PR_STATUS_NEEDS_ATTENTION
 
         try:
             cursor.execute(
@@ -2089,10 +2096,10 @@ class ReviewDatabase:
                     pr_info.head_sha,
                     pr_info.base_sha,
                     status,
-                    review_result.action.value,
-                    review_result.comment,
-                    review_result.summary,
-                    review_result.reason,
+                    review_result.action.value if review_result else None,
+                    review_result.comment if review_result else None,
+                    review_result.summary if review_result else None,
+                    review_result.reason if review_result else None,
                 ),
             )
             conn.commit()

@@ -19,7 +19,7 @@ from .database import (
     OWN_PR_STATUS_CLOSED,
     OWN_PR_STATUS_EXPIRED,
 )
-from .models import PRInfo, ReviewResult, ReviewAction
+from .models import OwnPRMode, PRInfo, ReviewResult, ReviewAction
 
 
 logger = logging.getLogger(__name__)
@@ -675,7 +675,7 @@ class GitHubMonitor:
 
     async def start_own_prs_monitoring(self):
         """Start monitoring own PRs for review."""
-        if not self.config.own_pr_enabled:
+        if self.config.own_pr_mode == OwnPRMode.OFF:
             logger.info("Own PR monitoring is disabled")
             return
 
@@ -686,7 +686,10 @@ class GitHubMonitor:
 
         async with own_pr_monitor_lock:
             mode = "DRY RUN" if self.config.dry_run else "LIVE"
-            logger.info(f"Starting own PR monitoring in {mode} mode...")
+            logger.info(
+                f"Starting own PR monitoring in {mode} mode "
+                f"({self.config.own_pr_mode.value} review mode)..."
+            )
 
             if self.config.repositories:
                 logger.info(
@@ -773,8 +776,28 @@ class GitHubMonitor:
                 )
                 await self.db.expire_own_prs_for_pr(repo_name, pr_info.number)
 
+            if self.config.own_pr_mode == OwnPRMode.MANUAL:
+                await self._track_own_pr_pending(pr_info)
+                continue
+
             logger.info(f"Found own PR to review: #{pr_info.number} in {repo_name}")
             await self._process_own_pr(pr_info)
+
+    async def _track_own_pr_pending(self, pr_info: PRInfo):
+        """Track an own PR as pending without reviewing (manual mode)."""
+        repo_name = pr_info.repository_name
+        if self.config.dry_run:
+            logger.info(
+                f"[DRY RUN] Would track own PR #{pr_info.number} in {repo_name} "
+                "as pending review"
+            )
+            return
+
+        await self.db.create_own_pr(pr_info, review_result=None)
+        logger.info(
+            f"Tracking own PR #{pr_info.number} in {repo_name} as pending review "
+            "(manual mode; request review via the web UI)"
+        )
 
     async def _process_own_pr(self, pr_info: PRInfo):
         """Process a single own PR for review."""

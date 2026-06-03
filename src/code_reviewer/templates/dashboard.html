@@ -1470,7 +1470,7 @@
                     ${pr.review_comment ? `<div class="review-comment"><strong>Comment:</strong><br>${pr.review_comment}</div>` : ''}
                     ${pr.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${pr.review_reason}</div>` : ''}
                     <div id="own-pr-context-${pr.id}" class="re-review-context-area" style="display:none;">
-                        <textarea id="own-pr-context-input-${pr.id}" placeholder="Optional: provide context for the re-review (e.g. what changed, what to focus on)..."></textarea>
+                        <textarea id="own-pr-context-input-${pr.id}" placeholder="${pr.status === 'pending' ? 'Optional: provide context for the review (e.g. what to focus on)...' : 'Optional: provide context for the re-review (e.g. what changed, what to focus on)...'}"></textarea>
                         <div class="buttons">
                             <button class="btn btn-approve" onclick="submitOwnPRReview(${pr.id})">Submit Review</button>
                             <button class="btn" onclick="cancelOwnPRContext(${pr.id})">Cancel</button>
@@ -1478,7 +1478,7 @@
                     </div>
                     <div class="buttons" id="own-pr-buttons-${pr.id}">
                         <a href="${pr.pr_url}" target="_blank" class="btn btn-view">View PR</a>
-                        <button class="btn btn-retry" onclick="toggleOwnPRContext(${pr.id})">Review Again</button>
+                        <button class="btn btn-retry" onclick="toggleOwnPRContext(${pr.id})">${pr.status === 'pending' ? 'Request Review' : 'Review Again'}</button>
                         <button class="btn btn-reject" onclick="deleteOwnPR(${pr.id})">Remove</button>
                     </div>
                 </div>

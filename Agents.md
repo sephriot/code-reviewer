@@ -252,6 +252,7 @@ GitHubMonitor -> ReviewDatabase.should_review_pr
 - Sound notifications can be toggled or customized with `SOUND_ENABLED`, `SOUND_FILE`, `APPROVAL_SOUND_ENABLED`, and `APPROVAL_SOUND_FILE`.
 - Set `REVIEW_MODEL` to `CLAUDE` or `CODEX`, or use the `--model` CLI flag, to choose the review CLI.
 - Set `REVIEW_EFFORT` (or `--effort`) to tune Claude's reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`). It applies only to the Claude CLI; for other models or invalid values it is logged at startup and ignored (the tool default is used). The effective effort is also logged in the per-PR review startup log.
+- Set `OWN_PR_MODE` (or `--own-pr-mode`) to `off`, `auto`, or `manual` to control own PR handling. `auto` reviews own PRs automatically when detected; `manual` tracks them as `pending` in the My PRs tab without reviewing, and a review runs only when explicitly requested via the web UI ("Request Review"). New commits to a manually reviewed PR reset it to `pending`. The legacy `OWN_PR_ENABLED` boolean maps to `auto`/`off` and is ignored when `OWN_PR_MODE` is set. Manual mode requires the web UI to be useful.
 
 ## Troubleshooting
 

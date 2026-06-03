@@ -9,7 +9,7 @@ from typing import List, Optional, Union
 
 import yaml
 
-from .models import ReviewModel
+from .models import OwnPRMode, ReviewModel
 
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ class Config:
     web_port: int = 8000
     show_thinking: bool = False
     atlas_enabled: bool = False
-    own_pr_enabled: bool = False
+    own_pr_mode: OwnPRMode = OwnPRMode.OFF
     own_pr_ready_sound_enabled: bool = True
     own_pr_ready_sound_file: Optional[SoundFileConfig] = None
     own_pr_needs_attention_sound_enabled: bool = True
@@ -138,6 +138,7 @@ class Config:
             "WEB_PORT": "web_port",
             "SHOW_THINKING": "show_thinking",
             "ATLAS_ENABLED": "atlas_enabled",
+            "OWN_PR_MODE": "own_pr_mode",
             "OWN_PR_ENABLED": "own_pr_enabled",
             "OWN_PR_READY_SOUND_ENABLED": "own_pr_ready_sound_enabled",
             "OWN_PR_READY_SOUND_FILE": "own_pr_ready_sound_file",
@@ -219,6 +220,26 @@ class Config:
         for key, value in overrides.items():
             if value is not None:
                 config_data[key] = value
+
+        # Translate legacy own_pr_enabled (YAML/env/CLI) into own_pr_mode.
+        # An explicit own_pr_mode always wins over the legacy boolean.
+        if "own_pr_enabled" in config_data:
+            legacy_enabled = config_data.pop("own_pr_enabled")
+            if isinstance(legacy_enabled, str):
+                legacy_enabled = legacy_enabled.lower() in ("true", "1", "yes", "on")
+            if "own_pr_mode" not in config_data:
+                config_data["own_pr_mode"] = (
+                    OwnPRMode.AUTO if legacy_enabled else OwnPRMode.OFF
+                )
+            else:
+                logger.info(
+                    "Both own_pr_mode and legacy own_pr_enabled are set; using own_pr_mode"
+                )
+
+        # Normalize own PR mode selection
+        config_data["own_pr_mode"] = cls._normalize_own_pr_mode(
+            config_data.get("own_pr_mode", OwnPRMode.OFF)
+        )
 
         if "review_timeout" in config_data:
             timeout_value = config_data["review_timeout"]
@@ -335,6 +356,22 @@ class Config:
             return None
         normalized = str(value).strip().lower()
         return normalized or None
+
+    @staticmethod
+    def _normalize_own_pr_mode(value) -> OwnPRMode:
+        """Convert string or enum input into OwnPRMode."""
+        if value is None:
+            return OwnPRMode.OFF
+        if isinstance(value, OwnPRMode):
+            return value
+        if isinstance(value, str):
+            candidate = value.strip().upper()
+            try:
+                return OwnPRMode[candidate]
+            except KeyError:
+                pass
+        valid = ", ".join(mode.value.lower() for mode in OwnPRMode)
+        raise ValueError(f"Unsupported own PR mode '{value}'. Choose from: {valid}.")
 
     @staticmethod
     def _normalize_review_model(value) -> ReviewModel:
