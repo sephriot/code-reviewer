@@ -187,8 +187,7 @@ class CodeReviewer:
     default=None,
     envvar="CLAUDE_MODEL",
     help=(
-        "Claude CLI model alias for reviews (opus, sonnet, fable). "
-        "Env: CLAUDE_MODEL"
+        "Claude CLI model alias for reviews (opus, sonnet, fable). " "Env: CLAUDE_MODEL"
     ),
 )
 @click.option(
@@ -226,6 +225,14 @@ class CodeReviewer:
     "--sound-enabled/--no-sound",
     default=True,
     help="Enable/disable sound notifications (default: enabled)",
+)
+@click.option(
+    "--speech-rate",
+    "-r",
+    envvar="SPEECH_RATE",
+    default=None,
+    type=int,
+    help="Speech rate for macOS say TTS in words per minute (default: 200, env: SPEECH_RATE)",
 )
 @click.option(
     "--sound-file",
@@ -371,6 +378,7 @@ def main(
     poll_interval: int,
     review_timeout: Optional[int],
     sound_enabled: bool,
+    speech_rate: Optional[int],
     sound_file: Optional[str],
     approval_sound_enabled: bool,
     approval_sound_file: Optional[str],
@@ -430,6 +438,7 @@ def main(
             poll_interval=poll_interval,
             review_timeout=review_timeout,
             sound_enabled=sound_enabled,
+            speech_rate=speech_rate,
             sound_file=sound_file,
             approval_sound_enabled=approval_sound_enabled,
             approval_sound_file=approval_sound_file,

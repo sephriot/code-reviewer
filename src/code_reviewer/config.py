@@ -70,6 +70,7 @@ class Config:
     repositories: Optional[list] = None
     pr_authors: Optional[list] = None
     sound_enabled: bool = True
+    speech_rate: int = 200
     sound_file: Optional[SoundFileConfig] = None
     approval_sound_enabled: bool = True
     approval_sound_file: Optional[SoundFileConfig] = None
@@ -124,6 +125,7 @@ class Config:
             "REPOSITORIES": "repositories",
             "PR_AUTHORS": "pr_authors",
             "SOUND_ENABLED": "sound_enabled",
+            "SPEECH_RATE": "speech_rate",
             "SOUND_FILE": "sound_file",
             "APPROVAL_SOUND_ENABLED": "approval_sound_enabled",
             "APPROVAL_SOUND_FILE": "approval_sound_file",
@@ -155,8 +157,16 @@ class Config:
         for env_var, config_key in env_mappings.items():
             value = os.getenv(env_var)
             if value:
-                if config_key in ["poll_interval", "web_port", "review_timeout"]:
-                    config_data[config_key] = int(value)
+                if config_key in [
+                    "poll_interval",
+                    "web_port",
+                    "review_timeout",
+                    "speech_rate",
+                ]:
+                    try:
+                        config_data[config_key] = int(value)
+                    except ValueError as exc:
+                        raise ValueError(f"{config_key} must be an integer") from exc
                 elif config_key in [
                     "sound_enabled",
                     "approval_sound_enabled",
@@ -253,6 +263,18 @@ class Config:
                 raise ValueError("review_timeout must be non-negative")
             # A value of 0 disables the timeout
             config_data["review_timeout"] = timeout_int
+
+        if "speech_rate" in config_data:
+            speech_rate_value = config_data["speech_rate"]
+            try:
+                speech_rate = int(speech_rate_value)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "speech_rate must be an integer words-per-minute value"
+                )
+            if speech_rate <= 0:
+                raise ValueError("speech_rate must be greater than zero")
+            config_data["speech_rate"] = speech_rate
 
         # Normalize review model selection
         config_data["review_model"] = cls._normalize_review_model(

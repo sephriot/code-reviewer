@@ -41,13 +41,18 @@ class SoundNotifier:
         ] = None,
         review_started_sound_enabled: bool = True,
         review_started_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
+        speech_rate: int = 200,
         *,
         outdated_sound_enabled: Optional[bool] = None,
         outdated_sound_file: Optional[Union["SoundFileConfig", Path]] = None,
     ):
         from .config import SoundFileConfig
 
+        if speech_rate <= 0:
+            raise ValueError("speech_rate must be greater than zero")
+
         self.enabled = enabled
+        self.speech_rate = speech_rate
         self.sound_file = self._normalize_sound_file(sound_file)
         self.approval_sound_enabled = approval_sound_enabled
         self.approval_sound_file = self._normalize_sound_file(approval_sound_file)
@@ -282,7 +287,7 @@ class SoundNotifier:
 
         try:
             if self.system == "darwin":
-                cmd = ["say", text]
+                cmd = ["say", "-r", str(self.speech_rate), text]
             elif self.system == "linux":
                 for tts in ["espeak", "festival"]:
                     if await self._command_exists(tts):

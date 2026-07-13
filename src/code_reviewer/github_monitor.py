@@ -57,6 +57,7 @@ class GitHubMonitor:
             own_pr_needs_attention_sound_file=config.own_pr_needs_attention_sound_file,
             review_started_sound_enabled=config.review_started_sound_enabled,
             review_started_sound_file=config.review_started_sound_file,
+            speech_rate=config.speech_rate,
         )
         self.db = ReviewDatabase(config.database_path)
 
@@ -320,9 +321,9 @@ class GitHubMonitor:
             )
             review_result = await self.llm_integration.review_pr(
                 pr_info,
-                timeout=self.config.review_timeout
-                if self.config.review_timeout
-                else None,
+                timeout=(
+                    self.config.review_timeout if self.config.review_timeout else None
+                ),
                 previous_pending=previous_pending_context,
             )
 
@@ -828,9 +829,9 @@ class GitHubMonitor:
             )
             review_result = await self.llm_integration.review_pr(
                 pr_info,
-                timeout=self.config.review_timeout
-                if self.config.review_timeout
-                else None,
+                timeout=(
+                    self.config.review_timeout if self.config.review_timeout else None
+                ),
             )
 
             await self._log_review_output(pr_info, review_result)

@@ -74,6 +74,7 @@ LOG_LEVEL=INFO
 
 # Sound notifications
 SOUND_ENABLED=true
+SPEECH_RATE=200  # macOS say speech rate in words per minute
 # SOUND_FILE=sounds/notification.wav
 
 # Timeout notifications
@@ -145,6 +146,7 @@ log_level: "DEBUG"
 
 # Sound notifications
 sound_enabled: true
+speech_rate: 200  # macOS say speech rate in words per minute
 # sound_file: "sounds/notification.wav"
 
 # Review timeout notifications
@@ -205,6 +207,7 @@ code-reviewer --web-enabled --web-host 0.0.0.0 --web-port 8080
 - `--claude-model`: Claude CLI model alias for reviews (env: `CLAUDE_MODEL`): `opus`, `sonnet`, or `fable`
 - `--effort`: Reasoning effort for the review CLI (env: `REVIEW_EFFORT`). Claude CLI only — `low`, `medium`, `high`, `xhigh`, `max`. Other models or invalid values are logged at startup and ignored (tool default used).
 - `--sound-enabled/--no-sound`: Enable/disable sound notifications
+- `--speech-rate, -r`: Speech rate for macOS `say` TTS in words per minute (env: `SPEECH_RATE`, config: `speech_rate`; default: `200`)
 - `--sound-file`: Custom sound file for notifications
 - `--web-enabled/--no-web`: Enable/disable web UI dashboard
 - `--timeout-sound-enabled/--no-timeout-sound`: Enable/disable timeout notification sounds
@@ -295,6 +298,7 @@ Instead of audio files, you can use text-to-speech tools (like `say` on macOS or
 # macOS: Use 'say' command with custom message
 REVIEW_STARTED_SOUND_FILE="say:Review started for PR"
 APPROVAL_SOUND_FILE="say:PR approved!"
+SPEECH_RATE=175
 
 # Linux: Use 'espeak' command
 REVIEW_STARTED_SOUND_FILE="espeak:Review started"

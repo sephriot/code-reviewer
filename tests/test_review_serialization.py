@@ -40,6 +40,7 @@ def _make_pr_info(number: int) -> PRInfo:
 def _make_monitor_config(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         sound_enabled=False,
+        speech_rate=200,
         sound_file=None,
         approval_sound_enabled=False,
         approval_sound_file=None,
@@ -251,9 +252,7 @@ async def test_check_for_own_prs_skips_same_head_sha_after_tracking(tmp_path):
         await monitor._check_for_own_prs()
         await monitor._check_for_own_prs()
 
-        llm_integration.review_pr.assert_awaited_once_with(
-            pr_info, timeout=None
-        )
+        llm_integration.review_pr.assert_awaited_once_with(pr_info, timeout=None)
         tracked = await monitor.db.get_own_pr_by_commit(
             pr_info.repository_name, pr_info.number, pr_info.head_sha
         )
