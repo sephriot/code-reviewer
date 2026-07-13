@@ -25,7 +25,14 @@ from .database import (
     OWN_PR_STATUS_CLOSED,
 )
 from .github_client import GitHubClient
-from .models import ReviewRecord, ReviewResult, ReviewAction, InlineComment, PRInfo
+from .models import (
+    ReviewRecord,
+    ReviewResult,
+    ReviewAction,
+    InlineComment,
+    PRInfo,
+    ReviewModel,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -146,11 +153,33 @@ class ReviewWebServer:
                     )
 
                 user_context = None
+                claude_model = None
                 try:
                     body = await request.json()
-                    user_context = body.get("user_context", "").strip() or None
                 except Exception:
-                    pass
+                    body = {}
+                if not isinstance(body, dict):
+                    body = {}
+                user_context_value = body.get("user_context", "")
+                if not isinstance(user_context_value, str):
+                    user_context_value = ""
+                user_context = user_context_value.strip() or None
+                requested_claude_model = body.get("claude_model", "")
+                if not isinstance(requested_claude_model, str):
+                    requested_claude_model = ""
+                requested_claude_model = requested_claude_model.strip()
+                if requested_claude_model:
+                    try:
+                        claude_model = self.llm_integration.resolve_claude_model(
+                            requested_claude_model
+                        )
+                    except ValueError as exc:
+                        raise HTTPException(status_code=400, detail=str(exc)) from exc
+                    if self.llm_integration.model is not ReviewModel.CLAUDE:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Claude model overrides require REVIEW_MODEL=CLAUDE",
+                        )
 
                 own_pr = await self.database.get_own_pr_by_id(pr_id)
                 if not own_pr:
@@ -185,9 +214,16 @@ class ReviewWebServer:
                         logger.info(
                             f"Starting re-review for own PR {pr_info.repository_name}#{pr_info.number}"
                             + (f" with user context" if user_context else "")
+                            + (
+                                f" using Claude model {claude_model}"
+                                if claude_model
+                                else ""
+                            )
                         )
                         review_result = await self.llm_integration.review_pr(
-                            pr_info, user_context=user_context
+                            pr_info,
+                            user_context=user_context,
+                            claude_model=claude_model,
                         )
                         logger.info(
                             f"Re-review complete for own PR {pr_info.repository_name}#{pr_info.number}: "

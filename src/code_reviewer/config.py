@@ -62,6 +62,7 @@ class Config:
     output_format_file: Optional[Path] = None
     review_model: ReviewModel = ReviewModel.CLAUDE
     review_effort: Optional[str] = None
+    claude_model: Optional[str] = None
     review_agent_argv: Optional[List[str]] = None
     poll_interval: int = 60
     review_timeout: int = 600
@@ -116,6 +117,7 @@ class Config:
             "OUTPUT_FORMAT_FILE": "output_format_file",
             "REVIEW_MODEL": "review_model",
             "REVIEW_EFFORT": "review_effort",
+            "CLAUDE_MODEL": "claude_model",
             "REVIEW_TIMEOUT": "review_timeout",
             "POLL_INTERVAL": "poll_interval",
             "LOG_LEVEL": "log_level",
@@ -263,6 +265,10 @@ class Config:
             config_data.get("review_effort")
         )
 
+        config_data["claude_model"] = cls._normalize_claude_model(
+            config_data.get("claude_model")
+        )
+
         if (
             "review_agent_argv" in config_data
             and config_data["review_agent_argv"] is not None
@@ -394,6 +400,24 @@ class Config:
                     ) from exc
         valid = ", ".join(model.value for model in ReviewModel)
         raise ValueError(f"Unsupported review model '{value}'. Choose from: {valid}.")
+
+    @staticmethod
+    def _normalize_claude_model(value) -> Optional[str]:
+        """Validate the Claude CLI model alias."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("claude_model must be a string")
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        valid_models = ("opus", "sonnet", "fable")
+        if normalized not in valid_models:
+            valid = ", ".join(valid_models)
+            raise ValueError(
+                f"Unsupported Claude model '{value}'. Choose from: {valid}."
+            )
+        return normalized
 
     @staticmethod
     def _create_default_prompt(prompt_file: Path):

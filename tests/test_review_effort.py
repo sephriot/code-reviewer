@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from code_reviewer.config import Config
 from code_reviewer.llm_integration import LLMIntegration
 from code_reviewer.models import ReviewModel
@@ -58,3 +60,40 @@ def test_config_loads_review_effort_from_env(monkeypatch):
 
     c = Config.load()
     assert c.review_effort == "high"
+
+
+def test_claude_model_in_command():
+    integration = LLMIntegration(PROMPT, ReviewModel.CLAUDE, claude_model="Sonnet")
+    cmd = integration._build_command()
+
+    assert "--model" in cmd
+    assert cmd[cmd.index("--model") + 1] == "sonnet"
+    assert integration.claude_model == "sonnet"
+
+
+def test_claude_model_override_in_command():
+    integration = LLMIntegration(PROMPT, ReviewModel.CLAUDE, claude_model="opus")
+    cmd = integration._build_command(claude_model_override="fable")
+
+    assert cmd[cmd.index("--model") + 1] == "fable"
+
+
+def test_non_claude_model_does_not_get_claude_model_flag():
+    integration = LLMIntegration(PROMPT, ReviewModel.CODEX, claude_model="opus")
+    cmd = integration._build_command()
+
+    assert "--model" not in cmd
+
+
+def test_invalid_claude_model_raises():
+    with pytest.raises(ValueError, match="Unsupported Claude model"):
+        LLMIntegration(PROMPT, ReviewModel.CLAUDE, claude_model="haiku")
+
+
+def test_config_loads_claude_model_from_env(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_USERNAME", "u")
+    monkeypatch.setenv("CLAUDE_MODEL", "Opus")
+
+    c = Config.load()
+    assert c.claude_model == "opus"

@@ -1,7 +1,7 @@
 """Tests for requesting a review on a pending own PR via the web endpoint."""
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -11,14 +11,18 @@ from code_reviewer.database import (
     ReviewDatabase,
 )
 from code_reviewer.models import PRInfo, ReviewAction, ReviewResult
+from code_reviewer.models import ReviewModel
 from code_reviewer.web_server import ReviewWebServer
 
 
 class _StubRequest:
     """Minimal stand-in for fastapi.Request exposing only json()."""
 
+    def __init__(self, body=None):
+        self.body = body or {"user_context": ""}
+
     async def json(self):
-        return {"user_context": ""}
+        return self.body
 
 
 def _route_endpoint(app, path: str, method: str):
@@ -45,8 +49,10 @@ async def test_request_review_transitions_pending_own_pr(tmp_path):
     )
 
     llm_integration = AsyncMock()
+    llm_integration.model = ReviewModel.CLAUDE
     llm_integration.review_in_progress = False
     llm_integration.active_review_target = None
+    llm_integration.resolve_claude_model = Mock(return_value="sonnet")
     llm_integration.review_pr.return_value = ReviewResult(
         action=ReviewAction.APPROVE_WITHOUT_COMMENT,
         reason="ok",
@@ -58,9 +64,7 @@ async def test_request_review_transitions_pending_own_pr(tmp_path):
         sound_notifier=None,
         llm_integration=llm_integration,
     )
-    endpoint = _route_endpoint(
-        server.app, "/api/own-prs/{pr_id}/review-again", "POST"
-    )
+    endpoint = _route_endpoint(server.app, "/api/own-prs/{pr_id}/review-again", "POST")
 
     try:
         # Manual mode tracked the PR as pending without a review
@@ -68,7 +72,10 @@ async def test_request_review_transitions_pending_own_pr(tmp_path):
         tracked = await db.get_own_pr_by_id(pending_id)
         assert tracked["status"] == OWN_PR_STATUS_PENDING
 
-        response = await endpoint(pending_id, _StubRequest())
+        response = await endpoint(
+            pending_id,
+            _StubRequest({"user_context": "focus tests", "claude_model": "sonnet"}),
+        )
         assert response.status_code == 200
 
         # Let the background review task created by the endpoint finish
@@ -78,6 +85,9 @@ async def test_request_review_transitions_pending_own_pr(tmp_path):
         await asyncio.gather(*background)
 
         llm_integration.review_pr.assert_awaited_once()
+        review_call = llm_integration.review_pr.await_args
+        assert review_call.kwargs["user_context"] == "focus tests"
+        assert review_call.kwargs["claude_model"] == "sonnet"
         entries = await db.get_own_prs()
         assert len(entries) == 1
         assert entries[0]["status"] == OWN_PR_STATUS_READY_FOR_MERGING

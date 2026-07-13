@@ -33,6 +33,7 @@ class CodeReviewer:
             atlas_enabled=config.atlas_enabled,
             agent_argv=config.review_agent_argv,
             effort=config.review_effort,
+            claude_model=config.claude_model,
         )
         self.monitor = GitHubMonitor(self.github_client, self.model_integration, config)
         self.web_server = None
@@ -61,6 +62,8 @@ class CodeReviewer:
         if self.config.output_format_file:
             click.echo(f"Using output format file: {self.config.output_format_file}")
         click.echo(f"Using review model: {self.config.review_model.value}")
+        if self.config.claude_model:
+            click.echo(f"Using Claude model: {self.config.claude_model}")
         if self.model_integration.effort_message:
             click.echo(self.model_integration.effort_message)
         click.echo(
@@ -175,6 +178,17 @@ class CodeReviewer:
         "Reasoning effort for the review CLI. Only the Claude CLI supports this "
         "(low, medium, high, xhigh, max); other models or invalid values are logged "
         "and ignored. Env: REVIEW_EFFORT"
+    ),
+)
+@click.option(
+    "--claude-model",
+    "claude_model",
+    type=click.Choice(["opus", "sonnet", "fable"], case_sensitive=False),
+    default=None,
+    envvar="CLAUDE_MODEL",
+    help=(
+        "Claude CLI model alias for reviews (opus, sonnet, fable). "
+        "Env: CLAUDE_MODEL"
     ),
 )
 @click.option(
@@ -350,6 +364,7 @@ def main(
     output_format: Optional[str],
     review_model: str,
     review_effort: Optional[str],
+    claude_model: Optional[str],
     review_agent_argv_json: Optional[str],
     github_token: Optional[str],
     github_username: Optional[str],
@@ -409,6 +424,7 @@ def main(
             output_format_file=output_format,
             review_model=review_model,
             review_effort=review_effort,
+            claude_model=claude_model,
             github_token=github_token,
             github_username=github_username,
             poll_interval=poll_interval,

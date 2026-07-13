@@ -65,6 +65,7 @@ class LLMIntegration:
         atlas_enabled: bool = False,
         agent_argv: Optional[List[str]] = None,
         effort: Optional[str] = None,
+        claude_model: Optional[str] = None,
     ):
         self.prompt_file = prompt_file
         self.output_format_file = output_format_file
@@ -75,6 +76,7 @@ class LLMIntegration:
         # effort: value to pass via --effort (None = use the tool default).
         # effort_message: startup log line describing the outcome (None = nothing to log).
         self.effort, self.effort_message = self.resolve_effort(model, effort)
+        self.claude_model = self.resolve_claude_model(claude_model)
         self._review_lock: Optional[asyncio.Lock] = None
         self._review_lock_loop: Optional[asyncio.AbstractEventLoop] = None
         self._active_review_target: Optional[str] = None
@@ -107,6 +109,20 @@ class LLMIntegration:
             )
         return normalized, f"Using effort: {normalized}"
 
+    @classmethod
+    def resolve_claude_model(cls, claude_model: Optional[str]) -> Optional[str]:
+        """Validate a Claude CLI model alias."""
+        if not claude_model:
+            return None
+        normalized = claude_model.strip().lower()
+        valid_models = ("opus", "sonnet", "fable")
+        if normalized not in valid_models:
+            valid = ", ".join(valid_models)
+            raise ValueError(
+                f"Unsupported Claude model '{claude_model}'. Choose from: {valid}."
+            )
+        return normalized
+
     def _get_review_lock(self) -> asyncio.Lock:
         """Return a review lock bound to the current running event loop."""
         loop = asyncio.get_running_loop()
@@ -132,6 +148,7 @@ class LLMIntegration:
         timeout: Optional[int] = None,
         previous_pending: Optional[Dict[str, Any]] = None,
         user_context: Optional[str] = None,
+        claude_model: Optional[str] = None,
     ) -> ReviewResult:
         """Review a PR using the selected language model CLI."""
         review_target = f"{pr_info.repository_name}#{pr_info.number}"
@@ -147,8 +164,13 @@ class LLMIntegration:
         async with review_lock:
             self._active_review_target = review_target
             try:
+                run_kwargs: Dict[str, Optional[str]] = {"user_context": user_context}
+                if claude_model is not None:
+                    run_kwargs["claude_model"] = claude_model
                 run_coro = self._run_model_cli(
-                    pr_info, previous_pending, user_context=user_context
+                    pr_info,
+                    previous_pending,
+                    **run_kwargs,
                 )
                 if timeout and timeout > 0:
                     result = await asyncio.wait_for(run_coro, timeout=timeout)
@@ -170,7 +192,14 @@ class LLMIntegration:
             finally:
                 self._active_review_target = None
 
-    async def _run_model_cli(self, pr_info: PRInfo, previous_pending: Optional[Dict[str, Any]], *, user_context: Optional[str] = None) -> str:
+    async def _run_model_cli(
+        self,
+        pr_info: PRInfo,
+        previous_pending: Optional[Dict[str, Any]],
+        *,
+        user_context: Optional[str] = None,
+        claude_model: Optional[str] = None,
+    ) -> str:
         """Execute the configured CLI and return raw output."""
         prompt_template = self.prompt_file.read_text(encoding="utf-8")
         if self.output_format_file:
@@ -210,7 +239,11 @@ class LLMIntegration:
         if self.model is ReviewModel.CODEX:
             codex_output_path = self._prepare_codex_output_path()
 
-        cmd = self._build_command(codex_output_path, pr_info)
+        cmd = self._build_command(
+            codex_output_path,
+            pr_info,
+            claude_model_override=claude_model,
+        )
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -300,7 +333,13 @@ class LLMIntegration:
 
         return raw_output
 
-    def _build_command(self, codex_output_path: Optional[Path] = None, pr_info: Optional[PRInfo] = None) -> List[str]:
+    def _build_command(
+        self,
+        codex_output_path: Optional[Path] = None,
+        pr_info: Optional[PRInfo] = None,
+        *,
+        claude_model_override: Optional[str] = None,
+    ) -> List[str]:
         """Resolve the CLI command for the configured model."""
         if self.model is ReviewModel.AGENT:
             command = (
@@ -316,6 +355,12 @@ class LLMIntegration:
 
         if self.model is ReviewModel.CLAUDE and self.show_thinking:
             command.extend(["--output-format", "stream-json", "--verbose"])
+
+        claude_model = self.resolve_claude_model(claude_model_override)
+        if self.model is ReviewModel.CLAUDE and not claude_model:
+            claude_model = self.claude_model
+        if self.model is ReviewModel.CLAUDE and claude_model:
+            command.extend(["--model", claude_model])
 
         if self.model is ReviewModel.CLAUDE and self.effort:
             command.extend(["--effort", self.effort])

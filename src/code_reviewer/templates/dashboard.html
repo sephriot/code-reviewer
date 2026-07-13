@@ -1471,6 +1471,13 @@
                     ${pr.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${pr.review_reason}</div>` : ''}
                     <div id="own-pr-context-${pr.id}" class="re-review-context-area" style="display:none;">
                         <textarea id="own-pr-context-input-${pr.id}" placeholder="${pr.status === 'pending' ? 'Optional: provide context for the review (e.g. what to focus on)...' : 'Optional: provide context for the re-review (e.g. what changed, what to focus on)...'}"></textarea>
+                        <label for="own-pr-model-${pr.id}">Claude model</label>
+                        <select id="own-pr-model-${pr.id}">
+                            <option value="">Config default</option>
+                            <option value="opus">Opus</option>
+                            <option value="sonnet">Sonnet</option>
+                            <option value="fable">Fable</option>
+                        </select>
                         <div class="buttons">
                             <button class="btn btn-approve" onclick="submitOwnPRReview(${pr.id})">Submit Review</button>
                             <button class="btn" onclick="cancelOwnPRContext(${pr.id})">Cancel</button>
@@ -1492,15 +1499,20 @@
         function cancelOwnPRContext(id) {
             document.getElementById(`own-pr-context-${id}`).style.display = 'none';
             document.getElementById(`own-pr-context-input-${id}`).value = '';
+            document.getElementById(`own-pr-model-${id}`).value = '';
         }
 
         async function submitOwnPRReview(id) {
             const userContext = document.getElementById(`own-pr-context-input-${id}`).value;
+            const claudeModel = document.getElementById(`own-pr-model-${id}`).value;
             try {
                 const response = await fetch(`/api/own-prs/${id}/review-again`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ user_context: userContext || '' })
+                    body: JSON.stringify({
+                        user_context: userContext || '',
+                        claude_model: claudeModel || ''
+                    })
                 });
 
                 if (response.ok) {

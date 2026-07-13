@@ -64,6 +64,7 @@ GITHUB_TOKEN=your_github_personal_access_token
 GITHUB_USERNAME=your_github_username
 PROMPT_FILE=prompts/review_prompt.txt
 REVIEW_MODEL=CLAUDE  # options: CLAUDE or CODEX
+# CLAUDE_MODEL=sonnet  # Claude CLI --model alias: opus, sonnet, or fable.
 # REVIEW_EFFORT=high  # Claude CLI only: low, medium, high, xhigh, max.
 #                     # Ignored (with a startup log line) for other models or invalid values.
 POLL_INTERVAL=60
@@ -137,6 +138,7 @@ github_token: "your_token_here"
 github_username: "your_username"
 prompt_file: "prompts/custom_prompt.txt"
 review_model: "CLAUDE"  # options: CLAUDE or CODEX
+claude_model: "sonnet"  # optional Claude CLI --model alias: opus, sonnet, or fable
 poll_interval: 30
 review_timeout: 600
 log_level: "DEBUG"
@@ -200,6 +202,7 @@ code-reviewer --web-enabled --web-host 0.0.0.0 --web-port 8080
 - `--github-username`: GitHub username to monitor
 - `--poll-interval`: Polling interval in seconds (default: 60)
 - `--review-timeout`: Maximum seconds allowed for an automated review before marking it for human attention (default: 600, use 0 to disable)
+- `--claude-model`: Claude CLI model alias for reviews (env: `CLAUDE_MODEL`): `opus`, `sonnet`, or `fable`
 - `--effort`: Reasoning effort for the review CLI (env: `REVIEW_EFFORT`). Claude CLI only — `low`, `medium`, `high`, `xhigh`, `max`. Other models or invalid values are logged at startup and ignored (tool default used).
 - `--sound-enabled/--no-sound`: Enable/disable sound notifications
 - `--sound-file`: Custom sound file for notifications
