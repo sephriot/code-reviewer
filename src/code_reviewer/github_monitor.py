@@ -218,7 +218,12 @@ class GitHubMonitor:
         except Exception as e:
             logger.error(f"Error checking for PRs: {e}")
 
-    async def _process_pr(self, pr_info: PRInfo) -> None:
+    async def _process_pr(
+        self,
+        pr_info: PRInfo,
+        user_context: Optional[str] = None,
+        claude_model: Optional[str] = None,
+    ) -> None:
         """Process a single PR for review."""
         repo_name = pr_info.repository_name
         logger.info(f"Processing PR #{pr_info.number} in {repo_name}")
@@ -325,6 +330,8 @@ class GitHubMonitor:
                     self.config.review_timeout if self.config.review_timeout else None
                 ),
                 previous_pending=previous_pending_context,
+                user_context=user_context,
+                claude_model=claude_model,
             )
 
             # Log the review output
@@ -428,6 +435,19 @@ class GitHubMonitor:
                         "title": pr_info.title,
                     }
                 )
+
+    async def review_pr_on_demand(
+        self,
+        pr_info: PRInfo,
+        user_context: Optional[str] = None,
+        claude_model: Optional[str] = None,
+    ) -> None:
+        """Run a user-requested review through the assigned-PR pipeline."""
+        await self._process_pr(
+            pr_info,
+            user_context=user_context,
+            claude_model=claude_model,
+        )
 
     async def _expire_merged_or_closed_pending_approvals(self) -> None:
         """Mark pending approvals as merged_or_closed if their PRs are merged or closed."""

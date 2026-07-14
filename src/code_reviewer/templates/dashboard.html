@@ -26,18 +26,28 @@
         </div>
 
         <div class="tabs" role="tablist" aria-label="Dashboard sections">
-            <button type="button" class="tab active" onclick="showTab('pending', this)">Pending Approvals</button>
+            <button type="button" class="tab active" onclick="showTab('review-requests', this)">Review Requests</button>
+            <button type="button" class="tab" onclick="showTab('pending', this)">Pending Decisions</button>
             <button type="button" class="tab" onclick="showTab('human-review', this)">Human Reviews</button>
-            <button type="button" class="tab" onclick="showTab('approved', this)">Approved History</button>
-            <button type="button" class="tab" onclick="showTab('rejected', this)">Rejected History</button>
-            <button type="button" class="tab" onclick="showTab('merged-closed', this)">Merged/Closed</button>
-            <button type="button" class="tab" onclick="showTab('expired', this)">Expired</button>
-            <button type="button" class="tab" onclick="showTab('completed-reviews', this)">Completed Reviews</button>
             <button type="button" class="tab" onclick="showTab('own-prs', this)">My PRs</button>
+            <button type="button" class="tab" onclick="showTab('history', this)">History</button>
             <button type="button" class="tab" onclick="showTab('analytics', this)">Analytics</button>
         </div>
-        
-        <div id="pending" class="tab-content active">
+
+        <div id="review-requests" class="tab-content active">
+            <div class="section">
+                <div class="section-heading-row">
+                    <div>
+                        <h2>Review Requests</h2>
+                        <p class="section-description">Every open PR currently requesting your review, including repositories and authors outside automatic review filters.</p>
+                    </div>
+                    <button type="button" class="btn btn-view" onclick="loadReviewRequests()">Refresh</button>
+                </div>
+                <div id="review-requests-list"></div>
+            </div>
+        </div>
+
+        <div id="pending" class="tab-content">
             <div class="section">
                 <h2>PRs Awaiting Your Approval</h2>
                 <p class="section-description">Review what will be posted, trim wording if needed, then approve or reject without leaving the dashboard.</p>
@@ -53,43 +63,38 @@
             </div>
         </div>
 
-        <div id="approved" class="tab-content">
+        <div id="history" class="tab-content">
             <div class="section">
-                <h2>Approved Approvals History</h2>
-                <p class="section-description">Compare the original automated suggestion with the final version that was actually posted to GitHub.</p>
-                <div id="approved-approvals"></div>
-            </div>
-        </div>
+                <h2>Review History</h2>
+                <p class="section-description">Completed reviews and archived decisions in one searchable workflow.</p>
+                <div class="history-filters" role="tablist" aria-label="History views">
+                    <button type="button" class="filter-btn active" onclick="showHistoryPanel('completed-reviews', this)">Completed</button>
+                    <button type="button" class="filter-btn" onclick="showHistoryPanel('approved', this)">Approved</button>
+                    <button type="button" class="filter-btn" onclick="showHistoryPanel('rejected', this)">Rejected</button>
+                    <button type="button" class="filter-btn" onclick="showHistoryPanel('merged-closed', this)">Merged / Closed</button>
+                    <button type="button" class="filter-btn" onclick="showHistoryPanel('expired', this)">Expired</button>
+                </div>
 
-        <div id="rejected" class="tab-content">
-            <div class="section">
-                <h2>Rejected Approvals History</h2>
-                <p class="section-description">Keep a readable record of what was suggested, what was edited, and what never got posted.</p>
-                <div id="rejected-approvals"></div>
-            </div>
-        </div>
-
-        <div id="merged-closed" class="tab-content">
-            <div class="section">
-                <h2>Merged or Closed Pending Approvals</h2>
-                <p class="section-description">Reference-only items that left the queue because the underlying pull request was no longer actionable.</p>
-                <div id="merged-closed-approvals"></div>
-            </div>
-        </div>
-
-        <div id="expired" class="tab-content">
-            <div class="section">
-                <h2>Expired Pending Approvals</h2>
-                <p class="section-description">Older pending reviews that were superseded by a newer commit and a newer review run.</p>
-                <div id="expired-approvals"></div>
-            </div>
-        </div>
-
-        <div id="completed-reviews" class="tab-content">
-            <div class="section">
-                <h2>Last 50 Completed PR Reviews</h2>
-                <p class="section-description">A compact history of final review outcomes, including comments, reasons, and SHA context.</p>
-                <div id="completed-reviews-list"></div>
+                <div id="completed-reviews" class="history-panel active">
+                    <h3>Last 50 Completed PR Reviews</h3>
+                    <div id="completed-reviews-list"></div>
+                </div>
+                <div id="approved" class="history-panel">
+                    <h3>Approved Decisions</h3>
+                    <div id="approved-approvals"></div>
+                </div>
+                <div id="rejected" class="history-panel">
+                    <h3>Rejected Decisions</h3>
+                    <div id="rejected-approvals"></div>
+                </div>
+                <div id="merged-closed" class="history-panel">
+                    <h3>Merged or Closed</h3>
+                    <div id="merged-closed-approvals"></div>
+                </div>
+                <div id="expired" class="history-panel">
+                    <h3>Expired Decisions</h3>
+                    <div id="expired-approvals"></div>
+                </div>
             </div>
         </div>
 
@@ -166,21 +171,23 @@
                 <!-- Top Authors Table -->
                 <div class="chart-container">
                     <div class="chart-title">👥 Top PR Authors</div>
-                    <table class="analytics-table">
-                        <thead>
-                            <tr>
-                                <th>Author</th>
-                                <th>PRs Reviewed</th>
-                                <th>Approval Rate</th>
-                                <th>Human Review %</th>
-                                <th>Change Request %</th>
-                                <th>Avg Comments</th>
-                            </tr>
-                        </thead>
-                        <tbody id="authors-table-body">
-                            <tr><td colspan="6" class="empty-state">Loading...</td></tr>
-                        </tbody>
-                    </table>
+                    <div class="analytics-table-scroll">
+                        <table class="analytics-table">
+                            <thead>
+                                <tr>
+                                    <th>Author</th>
+                                    <th>PRs Reviewed</th>
+                                    <th>Approval Rate</th>
+                                    <th>Human Review %</th>
+                                    <th>Change Request %</th>
+                                    <th>Avg Comments</th>
+                                </tr>
+                            </thead>
+                            <tbody id="authors-table-body">
+                                <tr><td colspan="6" class="empty-state">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -217,26 +224,17 @@
                 if (activeTabContent) {
                     const tabId = activeTabContent.id;
                     switch (tabId) {
+                        case 'review-requests':
+                            loadReviewRequests();
+                            break;
                         case 'pending':
                             loadPendingApprovals();
                             break;
                         case 'human-review':
                             loadHumanReviews();
                             break;
-                        case 'approved':
-                            loadApprovedHistory();
-                            break;
-                        case 'rejected':
-                            loadRejectedHistory();
-                            break;
-                        case 'merged-closed':
-                            loadMergedClosedApprovals();
-                            break;
-                        case 'expired':
-                            loadExpiredApprovals();
-                            break;
-                        case 'completed-reviews':
-                            loadCompletedReviews();
+                        case 'history':
+                            loadHistoryPanel(activeHistoryPanel);
                             break;
                         case 'own-prs':
                             loadOwnPRs();
@@ -265,24 +263,149 @@
             }
             
             // Load data for the tab
-            if (tabName === 'pending') {
+            if (tabName === 'review-requests') {
+                loadReviewRequests();
+            } else if (tabName === 'pending') {
                 loadPendingApprovals();
             } else if (tabName === 'human-review') {
                 loadHumanReviews();
-            } else if (tabName === 'approved') {
-                loadApprovedHistory();
-            } else if (tabName === 'rejected') {
-                loadRejectedHistory();
-            } else if (tabName === 'merged-closed') {
-                loadMergedClosedApprovals();
-            } else if (tabName === 'expired') {
-                loadExpiredApprovals();
-            } else if (tabName === 'completed-reviews') {
-                loadCompletedReviews();
+            } else if (tabName === 'history') {
+                loadHistoryPanel(activeHistoryPanel);
             } else if (tabName === 'own-prs') {
                 loadOwnPRs();
             } else if (tabName === 'analytics') {
                 loadAnalytics();
+            }
+        }
+
+        let activeHistoryPanel = 'completed-reviews';
+
+        function showHistoryPanel(panelName, button) {
+            activeHistoryPanel = panelName;
+            document.querySelectorAll('.history-panel').forEach(panel => panel.classList.remove('active'));
+            document.querySelectorAll('.history-filters .filter-btn').forEach(filter => filter.classList.remove('active'));
+            document.getElementById(panelName).classList.add('active');
+            if (button) button.classList.add('active');
+            loadHistoryPanel(panelName);
+        }
+
+        function loadHistoryPanel(panelName) {
+            switch (panelName) {
+                case 'approved':
+                    loadApprovedHistory();
+                    break;
+                case 'rejected':
+                    loadRejectedHistory();
+                    break;
+                case 'merged-closed':
+                    loadMergedClosedApprovals();
+                    break;
+                case 'expired':
+                    loadExpiredApprovals();
+                    break;
+                default:
+                    loadCompletedReviews();
+            }
+        }
+
+        let reviewRequestsData = [];
+
+        function getReviewRequestStateBadge(state) {
+            switch (state) {
+                case 'awaiting_decision':
+                    return '<span class="status-badge status-pending-review">AWAITING DECISION</span>';
+                case 'reviewed':
+                    return '<span class="status-badge status-approved">REVIEWED</span>';
+                case 'running':
+                    return '<span class="status-badge status-neutral">REVIEW RUNNING</span>';
+                default:
+                    return '<span class="status-badge status-needs-attention">NEEDS REVIEW</span>';
+            }
+        }
+
+        async function loadReviewRequests() {
+            const container = document.getElementById('review-requests-list');
+            container.innerHTML = renderEmptyState('Loading review requests...');
+            try {
+                const response = await fetch('/api/review-requests');
+                if (!response.ok) throw new Error(await response.text());
+                reviewRequestsData = await response.json();
+                renderReviewRequests();
+            } catch (error) {
+                console.error('Failed to load review requests:', error);
+                container.innerHTML = renderEmptyState('Review requests could not be loaded.');
+            }
+        }
+
+        function renderReviewRequests() {
+            const container = document.getElementById('review-requests-list');
+            if (reviewRequestsData.length === 0) {
+                container.innerHTML = renderEmptyState('No pull requests currently require your review.');
+                return;
+            }
+
+            container.innerHTML = reviewRequestsData.map(pr => `
+                <div class="pr-card">
+                    <div class="pr-title">
+                        ${pr.title || 'Untitled PR'}
+                        ${getReviewRequestStateBadge(pr.review_state)}
+                    </div>
+                    <div class="pr-meta">
+                        ${pr.repository} #${pr.number} by ${pr.author || 'unknown'}
+                        <br><small>Head SHA: ${pr.head_sha ? pr.head_sha.substring(0, 8) : 'N/A'}</small>
+                    </div>
+                    <div id="review-request-context-${pr.id}" class="re-review-context-area" style="display:none;">
+                        <textarea id="review-request-context-input-${pr.id}" placeholder="Optional: provide context for the review (e.g. what to focus on)..."></textarea>
+                        <label for="review-request-model-${pr.id}">Claude model</label>
+                        <select id="review-request-model-${pr.id}">
+                            <option value="">Config default</option>
+                            <option value="opus">Opus</option>
+                            <option value="sonnet">Sonnet</option>
+                            <option value="fable">Fable</option>
+                        </select>
+                        <div class="buttons">
+                            <button class="btn btn-approve" onclick="submitRequestedReview(${pr.id})">Start Review</button>
+                            <button class="btn" onclick="toggleRequestedReviewContext(${pr.id}, false)">Cancel</button>
+                        </div>
+                    </div>
+                    <div class="buttons">
+                        <a href="${pr.url}" target="_blank" rel="noopener" class="btn btn-view">View PR</a>
+                        <button class="btn btn-retry" onclick="toggleRequestedReviewContext(${pr.id}, true)" ${pr.review_state === 'running' ? 'disabled' : ''}>
+                            ${pr.review_state === 'not_reviewed' ? 'Review' : 'Review Again'}
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function toggleRequestedReviewContext(id, visible) {
+            document.getElementById(`review-request-context-${id}`).style.display = visible ? 'block' : 'none';
+        }
+
+        async function submitRequestedReview(id) {
+            const pr = reviewRequestsData.find(item => item.id === id);
+            if (!pr) return;
+            const userContext = document.getElementById(`review-request-context-input-${id}`).value;
+            const claudeModel = document.getElementById(`review-request-model-${id}`).value;
+            try {
+                const response = await fetch('/api/review-requests/review', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        repository: pr.repository,
+                        pr_number: pr.number,
+                        user_context: userContext,
+                        claude_model: claudeModel
+                    })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.detail || result.message || 'Review could not be started');
+                pr.review_state = 'running';
+                renderReviewRequests();
+                showToast(result.message);
+            } catch (error) {
+                console.error('Failed to start review:', error);
+                alert(error.message);
             }
         }
 
@@ -1591,7 +1714,7 @@
 
         // Load initial data
         refreshSoundMuteState();
-        loadPendingApprovals();
+        loadReviewRequests();
     </script>
 </body>
 </html>

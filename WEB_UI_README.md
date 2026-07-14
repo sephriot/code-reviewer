@@ -4,6 +4,12 @@ The code reviewer now includes an optional web UI that provides a dashboard for 
 
 ## Features
 
+### **Complete Review Request Queue**
+- Lists every open PR currently requesting the configured user's review
+- Ignores repository and author filters when listing attention items; those filters continue to control automatic reviews
+- Starts a review on demand with optional context and Claude model override
+- Shows whether the current commit is unreviewed, already reviewed, or awaiting a dashboard decision
+
 ### 🎯 **Human Review Dashboard**
 - View all PRs marked as `requires_human_review` with reasons
 - See timestamp and PR details for each human review requirement
@@ -23,7 +29,7 @@ The code reviewer now includes an optional web UI that provides a dashboard for 
 ### 📊 **Centralized Management**
 - Single dashboard to manage all review activities
 - Real-time updates of pending approvals and human reviews
-- Complete approval history with before/after comparisons
+- Unified history for completed, approved, rejected, merged/closed, and expired items
 - Clean, responsive interface that works on desktop and mobile
 
 ### 📚 **Approval History Tracking**
@@ -77,10 +83,15 @@ When the system processes PRs:
 
 - **`approve_with_comments`** → Creates pending approval (requires your review)
 - **`approve_without_comment`** → Automatically approves (no web UI interaction)
-- **`request_changes`** → Automatically posts changes (no web UI interaction)  
+- **`request_changes`** → Creates a pending decision before posting changes
 - **`requires_human_review`** → Logged for your attention (visible in web UI)
 
 ### 3. Web Dashboard Actions
+
+#### **Review Requests Tab**
+- Lists all current GitHub review requests, independently of automatic-review filters
+- Starts a review or re-runs an existing review with optional context
+- Links directly to the pull request on GitHub
 
 #### **Pending Approvals Tab**
 - **Review & Approve**: Edit proposed comment and post review to GitHub
@@ -92,7 +103,8 @@ When the system processes PRs:
 - See reason why human review was required
 - Direct links to GitHub PRs
 
-#### **Approved History Tab**
+#### **History Tab**
+- Switch between completed, approved, rejected, merged/closed, and expired records
 - Complete history of all approved reviews
 - Side-by-side comparison of original vs final content:
   - Review comments (what Claude suggested vs what you posted)
@@ -101,14 +113,14 @@ When the system processes PRs:
 - Status badges showing approval status
 - Direct links to GitHub PRs
 
-#### **Rejected History Tab**
+The Rejected history view:
 - Complete history of all rejected reviews
 - Shows what would have been posted if approved
 - Side-by-side comparison of original vs edited content (before rejection)
 - Rejection reasons when provided
 - Direct links to GitHub PRs
 
-#### **Outdated Tab**
+The Merged / Closed history view:
 - Lists pending approvals that were cleared automatically because the PR closed or merged
 - Preserves original comments and inline feedback for reference
 - Direct links to the original PR for context

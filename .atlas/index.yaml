@@ -1,4 +1,4 @@
-next_id: 25
+next_id: 26
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -347,3 +347,20 @@ entries:
   links:
   - K-000005
   - K-000018
+- id: K-000025
+  title: Review request queue is live and independent of automatic-review filters
+  type: decision
+  confidence: high
+  tags:
+  - review-requests
+  - web-ui
+  - filters
+  - on-demand-review
+  - github
+  sources:
+  - src/code_reviewer/web_server.py
+  - src/code_reviewer/github_monitor.py
+  - src/code_reviewer/templates/dashboard.html
+  links:
+  - K-000018
+  - K-000024

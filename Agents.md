@@ -88,11 +88,11 @@ Do not use system Python (`python` or `python3`) for project commands.
 - **Location**: `src/code_reviewer/web_server.py`.
 - **Role**: FastAPI application serving HTML dashboard and REST APIs for managing pending approvals, human-review queues, and review history.
 - **Key workflows**:
+  - Review Requests tab fetches every live GitHub review request without automatic-review repository/author filters and can trigger an on-demand review through `GitHubMonitor.review_pr_on_demand`.
   - Pending approvals tab for editing comments/summaries, approving, or rejecting automated suggestions.
   - Human review tab capturing `REQUIRES_HUMAN_REVIEW` results with direct GitHub links.
-  - Approved/Rejected history tabs showing side-by-side comparisons of original vs edited content.
-  - Outdated tab surfaces pending approvals that were auto-expired after PR merge/closure.
-  - REST endpoints such as `/api/pending-approvals`, `/api/merged-or-closed-approvals`, `/api/expired-approvals`, and `/api/approvals/{id}/approve`.
+  - Unified History tab groups completed, approved, rejected, merged/closed, and expired views.
+  - REST endpoints include `/api/review-requests`, `/api/review-requests/review`, `/api/pending-approvals`, and `/api/approvals/{id}/approve`.
 
 ### Notification Agent - `SoundNotifier`
 - **Location**: `src/code_reviewer/sound_notifier.py`.
@@ -201,9 +201,12 @@ GitHubMonitor -> ReviewDatabase.should_review_pr
 
 ### Web UI Dashboard System
 - The dashboard is a FastAPI REST API with HTML templates.
+- The Review Requests tab always lists the configured user's live GitHub review requests; repository and author filters only control automatic review selection.
+- Review requests can be reviewed on demand through the same assigned-PR pipeline, with optional user context and Claude model override.
 - Pending approvals let users review and approve/reject comments before GitHub posting.
 - Human review tracking displays PRs marked as `requires_human_review`.
 - Approval history preserves approved and rejected reviews with before/after comparison.
+- History states are grouped under one History tab; analytics remains a separate top-level view.
 - The JavaScript interface uses async API calls for updates.
 - The UI should remain mobile responsive.
 - The server runs on localhost by default and has no built-in authentication; it is designed for a single user.

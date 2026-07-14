@@ -43,6 +43,8 @@ class CodeReviewer:
                 self.github_client,
                 self.monitor.sound_notifier,
                 self.model_integration,
+                config=self.config,
+                monitor=self.monitor,
             )
 
     def signal_handler(self, signum, frame):

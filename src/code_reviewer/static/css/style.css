@@ -26,10 +26,10 @@
   --color-neutral-soft: #e8edf3;
   --color-neutral-text: #546274;
 
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-xl: 28px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 8px;
   --radius-pill: 999px;
 
   --space-1: 4px;
@@ -292,6 +292,18 @@ input:focus-visible {
 
 .section {
   margin-bottom: var(--space-7);
+}
+
+.section-heading-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.section-heading-row .section-description {
+  margin-bottom: 0;
 }
 
 .section h2 {
@@ -877,9 +889,15 @@ select:focus {
 
 .analytics-table {
   width: 100%;
+  min-width: 560px;
   border-collapse: collapse;
   margin-top: var(--space-3);
   font-size: var(--font-size-sm);
+}
+
+.analytics-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .analytics-table th,
@@ -932,6 +950,33 @@ select:focus {
   border-color: rgba(31, 79, 136, 0.14);
   background: linear-gradient(180deg, var(--color-accent) 0%, var(--color-accent-strong) 100%);
   box-shadow: 0 8px 18px rgba(31, 79, 136, 0.16);
+}
+
+.history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.history-panel {
+  display: none;
+}
+
+.history-panel.active {
+  display: block;
+}
+
+.history-panel h3 {
+  margin: 0 0 var(--space-4);
+  color: var(--color-ink-strong);
+  font-size: var(--font-size-lg);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
 }
 
 .re-review-context-area {

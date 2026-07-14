@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -34,6 +34,10 @@ from .models import (
     ReviewModel,
 )
 
+if TYPE_CHECKING:
+    from .config import Config
+    from .github_monitor import GitHubMonitor
+
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +51,15 @@ class ReviewWebServer:
         github_client: GitHubClient,
         sound_notifier=None,
         llm_integration=None,
+        config: Optional["Config"] = None,
+        monitor: Optional["GitHubMonitor"] = None,
     ):
         self.database = database
         self.github_client = github_client
         self.sound_notifier = sound_notifier
         self.llm_integration = llm_integration
+        self.config = config
+        self.monitor = monitor
         self.app = FastAPI(title="Code Review Dashboard")
 
         # Setup static files and templates
@@ -114,6 +122,145 @@ class ReviewWebServer:
             except Exception as e:
                 logger.error(f"Failed to get pending approvals: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/review-requests")
+        async def get_review_requests():
+            """Get every live PR requesting the configured user's review."""
+            if not self.config:
+                raise HTTPException(
+                    status_code=503, detail="Configuration not available"
+                )
+
+            try:
+                prs = await self.github_client.get_review_requests(
+                    self.config.github_username
+                )
+                results = []
+                for pr_info in prs:
+                    pending = await self.database.get_pending_approval_for_commit(
+                        pr_info.repository_name, pr_info.number, pr_info.head_sha
+                    )
+                    review = await self.database.get_review_for_commit(
+                        pr_info.repository_name, pr_info.number, pr_info.head_sha
+                    )
+                    if (
+                        pending
+                        and pending.get("status") == PENDING_APPROVAL_STATUS_PENDING
+                    ):
+                        review_state = "awaiting_decision"
+                    elif review:
+                        review_state = "reviewed"
+                    else:
+                        review_state = "not_reviewed"
+
+                    results.append(
+                        {
+                            "id": pr_info.id,
+                            "number": pr_info.number,
+                            "repository": pr_info.repository_name,
+                            "url": pr_info.url,
+                            "title": pr_info.title,
+                            "author": pr_info.author,
+                            "head_sha": pr_info.head_sha,
+                            "base_sha": pr_info.base_sha,
+                            "review_state": review_state,
+                        }
+                    )
+                return JSONResponse(content=results)
+            except Exception as e:
+                logger.error(f"Failed to get review requests: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/api/review-requests/review")
+        async def review_requested_pr(request: Request):
+            """Trigger a review for a currently requested PR, regardless of filters."""
+            if not self.config or not self.monitor or not self.llm_integration:
+                raise HTTPException(
+                    status_code=503, detail="On-demand review is not available"
+                )
+
+            try:
+                body = await request.json()
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid JSON")
+            if not isinstance(body, dict):
+                raise HTTPException(status_code=400, detail="Invalid request body")
+
+            repository = body.get("repository", "")
+            pr_number = body.get("pr_number")
+            if not isinstance(repository, str) or repository.count("/") != 1:
+                raise HTTPException(status_code=400, detail="Invalid repository")
+            if not isinstance(pr_number, int):
+                raise HTTPException(status_code=400, detail="Invalid PR number")
+
+            user_context_value = body.get("user_context", "")
+            user_context = (
+                user_context_value.strip()
+                if isinstance(user_context_value, str) and user_context_value.strip()
+                else None
+            )
+            requested_model = body.get("claude_model", "")
+            claude_model = None
+            if isinstance(requested_model, str) and requested_model.strip():
+                try:
+                    claude_model = self.llm_integration.resolve_claude_model(
+                        requested_model.strip()
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                if self.llm_integration.model is not ReviewModel.CLAUDE:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Claude model overrides require REVIEW_MODEL=CLAUDE",
+                    )
+
+            live_requests = await self.github_client.get_review_requests(
+                self.config.github_username
+            )
+            pr_info = next(
+                (
+                    pr
+                    for pr in live_requests
+                    if pr.repository_name == repository and pr.number == pr_number
+                ),
+                None,
+            )
+            if not pr_info:
+                raise HTTPException(
+                    status_code=404,
+                    detail="This PR is no longer requesting your review",
+                )
+
+            if self.llm_integration.review_in_progress:
+                return self._review_busy_response()
+
+            pending = await self.database.get_pending_approval_for_commit(
+                repository, pr_number, pr_info.head_sha
+            )
+            if pending and pending.get("status") == PENDING_APPROVAL_STATUS_PENDING:
+                await self.database.update_pending_approval_status(
+                    pending["id"],
+                    PENDING_APPROVAL_STATUS_EXPIRED,
+                    "On-demand re-review requested by user",
+                )
+            await self.database.delete_review_for_re_review(
+                repository, pr_number, pr_info.head_sha
+            )
+
+            async def run_review():
+                await self.monitor.review_pr_on_demand(
+                    pr_info,
+                    user_context=user_context,
+                    claude_model=claude_model,
+                )
+
+            asyncio.create_task(run_review())
+            return JSONResponse(
+                content={
+                    "status": "success",
+                    "message": f"Review started for {repository}#{pr_number}.",
+                }
+            )
 
         @self.app.get("/api/own-prs")
         async def get_own_prs():
@@ -806,9 +953,7 @@ class ReviewWebServer:
         async def get_sound_mute():
             """Return whether runtime mute-all is active (overrides config)."""
             if not self.sound_notifier:
-                return JSONResponse(
-                    content={"muted": True, "controllable": False}
-                )
+                return JSONResponse(content={"muted": True, "controllable": False})
             return JSONResponse(
                 content={
                     "muted": self.sound_notifier.is_runtime_mute_all(),
@@ -834,9 +979,7 @@ class ReviewWebServer:
                 )
             muted = body.get("muted")
             if not isinstance(muted, bool):
-                raise HTTPException(
-                    status_code=400, detail="'muted' must be a boolean"
-                )
+                raise HTTPException(status_code=400, detail="'muted' must be a boolean")
             self.sound_notifier.set_runtime_mute_all(muted)
             return JSONResponse(
                 content={"muted": self.sound_notifier.is_runtime_mute_all()}

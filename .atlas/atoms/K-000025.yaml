@@ -1,0 +1,20 @@
+id: K-000025
+title: Review request queue is live and independent of automatic-review filters
+type: decision
+confidence: high
+summary: Show every current GitHub review request live in the dashboard while keeping repository/author filters scoped to automatic reviews; route manual reviews through the existing monitor pipeline.
+details: 'Design: the Review Requests dashboard queue is derived live from GitHub with get_review_requests(username) and deliberately omits repository/author filters. Filters continue to govern only automatic monitoring. Existing SQLite pr_reviews and pending_approvals annotate each current head as not_reviewed, reviewed, or awaiting_decision; only a row whose status is pending counts as awaiting_decision because the lookup also returns archived rows. On-demand actions revalidate that the PR still requests review, expire a same-head pending decision, remove a same-head completed record, and call GitHubMonitor.review_pr_on_demand so normal posting, pending-decision, notification, error, and analytics behavior is reused. The queue is not persisted, avoiding stale attention records when GitHub removes a review request.'
+tags:
+- review-requests
+- web-ui
+- filters
+- on-demand-review
+- github
+sources:
+- src/code_reviewer/web_server.py
+- src/code_reviewer/github_monitor.py
+- src/code_reviewer/templates/dashboard.html
+links:
+- K-000018
+- K-000024
+updated_at: 2026-07-14

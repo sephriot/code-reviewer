@@ -361,9 +361,10 @@ The system automatically tracks review history using commit SHA comparison:
 
 When web UI is enabled (`--web-enabled` or `WEB_ENABLED=true`):
 
+- 🔔 **Review Requests**: See every open PR currently requesting your review, even when repository or author filters exclude it from automatic review; start or repeat a review on demand
 - 📋 **Pending Approvals**: Review and approve/reject `approve_with_comments` actions before posting to GitHub
 - 👤 **Human Reviews**: View all PRs flagged for human attention with reasons and timestamps
-- 📚 **Approval History**: Complete history of approved and rejected reviews with:
+- 📚 **Unified History**: Completed, approved, rejected, merged/closed, and expired review records in one tab, including:
   - Original vs final comments comparison
   - Original vs final inline comments
   - Original vs final review summaries
@@ -392,7 +393,7 @@ repositories:
   - "owner/repo2"
 ```
 
-**Important**: Repository names must be in `owner/repo` format. Invalid formats will be ignored with a warning.
+**Important**: Repository names must be in `owner/repo` format. Invalid formats will be ignored with a warning. These filters control automatic reviews; the web dashboard's Review Requests tab still lists every PR currently requesting your review.
 
 Examples:
 - ✅ `microsoft/vscode`
