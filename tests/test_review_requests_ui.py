@@ -195,6 +195,24 @@ def test_requested_review_shows_starting_state_before_waiting_for_api():
     assert template.index(button_feedback) < template.index(request_start)
 
 
+def test_dashboard_escapes_api_content_before_html_rendering():
+    template = (
+        Path(__file__).parents[1]
+        / "src"
+        / "code_reviewer"
+        / "templates"
+        / "dashboard.html"
+    ).read_text()
+
+    assert "function escapeApiData(value, key = '')" in template
+    assert "function safeHttpsUrl(value)" in template
+    assert "reviewRequestsData = escapeApiData(snapshot.items || []);" in template
+    assert template.count("const approvals = escapeApiData(await response.json());") == 5
+    assert template.count("const reviews = escapeApiData(await response.json());") == 2
+    assert "ownPRsData = escapeApiData(await response.json());" in template
+    assert "modal-pr-info').textContent = title" in template
+
+
 @pytest.mark.asyncio
 async def test_review_request_ignores_archived_pending_decision(tmp_path):
     db = ReviewDatabase(tmp_path / "reviews.db")

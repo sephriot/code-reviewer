@@ -251,6 +251,45 @@
             return `<div class="empty-state">${message}</div>`;
         }
 
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>'"]/g, character => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                "'": '&#39;',
+                '"': '&quot;'
+            })[character]);
+        }
+
+        function safeHttpsUrl(value) {
+            try {
+                const url = new URL(String(value ?? ''), window.location.origin);
+                return url.protocol === 'https:' ? escapeHtml(url.href) : '#';
+            } catch (_) {
+                return '#';
+            }
+        }
+
+        function escapeApiData(value, key = '') {
+            if (Array.isArray(value)) {
+                return value.map(item => escapeApiData(item));
+            }
+            if (value && typeof value === 'object') {
+                return Object.fromEntries(
+                    Object.entries(value).map(([entryKey, entryValue]) => [
+                        entryKey,
+                        escapeApiData(entryValue, entryKey)
+                    ])
+                );
+            }
+            if (typeof value === 'string') {
+                return key === 'url' || key === 'pr_url'
+                    ? safeHttpsUrl(value)
+                    : escapeHtml(value);
+            }
+            return value;
+        }
+
         function showTab(tabName, tabButton) {
             // Hide all tabs
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
@@ -330,7 +369,7 @@
                 const response = await fetch('/api/review-requests');
                 if (!response.ok) throw new Error(await response.text());
                 const snapshot = await response.json();
-                reviewRequestsData = snapshot.items || [];
+                reviewRequestsData = escapeApiData(snapshot.items || []);
                 if (!snapshot.last_synced_at) {
                     container.innerHTML = renderEmptyState('Waiting for the first successful review-request scan...');
                     window.setTimeout(loadReviewRequests, 5000);
@@ -423,7 +462,7 @@
         async function loadPendingApprovals() {
             try {
                 const response = await fetch('/api/pending-approvals');
-                const approvals = await response.json();
+                const approvals = escapeApiData(await response.json());
                 const container = document.getElementById('pending-approvals');
                 
                 if (approvals.length === 0) {
@@ -513,7 +552,7 @@
         async function loadHumanReviews() {
             try {
                 const response = await fetch('/api/human-reviews');
-                const reviews = await response.json();
+                const reviews = escapeApiData(await response.json());
                 const container = document.getElementById('human-reviews');
                 
                 if (reviews.length === 0) {
@@ -550,7 +589,7 @@
         function showApprovalModal(id, title, comment) {
             console.log('showApprovalModal called with:', id, title, comment);
             currentApprovalId = id;
-            document.getElementById('modal-pr-info').innerHTML = `<strong>${title}</strong>`;
+            document.getElementById('modal-pr-info').textContent = title;
             document.getElementById('user-comment').value = comment;
             document.getElementById('approval-modal').style.display = 'block';
             console.log('Modal displayed, currentApprovalId:', currentApprovalId);
@@ -899,7 +938,7 @@
         async function loadApprovedHistory() {
             try {
                 const response = await fetch('/api/approved-approvals');
-                const approvals = await response.json();
+                const approvals = escapeApiData(await response.json());
                 const container = document.getElementById('approved-approvals');
                 
                 if (approvals.length === 0) {
@@ -1004,7 +1043,7 @@
         async function loadRejectedHistory() {
             try {
                 const response = await fetch('/api/rejected-approvals');
-                const approvals = await response.json();
+                const approvals = escapeApiData(await response.json());
                 const container = document.getElementById('rejected-approvals');
                 
                 if (approvals.length === 0) {
@@ -1110,7 +1149,7 @@
         async function loadMergedClosedApprovals() {
             try {
                 const response = await fetch('/api/merged-or-closed-approvals');
-                const approvals = await response.json();
+                const approvals = escapeApiData(await response.json());
                 const container = document.getElementById('merged-closed-approvals');
 
                 if (approvals.length === 0) {
@@ -1163,7 +1202,7 @@
         async function loadExpiredApprovals() {
             try {
                 const response = await fetch('/api/expired-approvals');
-                const approvals = await response.json();
+                const approvals = escapeApiData(await response.json());
                 const container = document.getElementById('expired-approvals');
 
                 if (approvals.length === 0) {
@@ -1216,7 +1255,7 @@
         async function loadCompletedReviews() {
             try {
                 const response = await fetch('/api/completed-reviews');
-                const reviews = await response.json();
+                const reviews = escapeApiData(await response.json());
                 const container = document.getElementById('completed-reviews-list');
                 
                 if (reviews.length === 0) {
@@ -1330,7 +1369,7 @@
                 renderReposChart(repos);
 
                 // Render authors table
-                renderAuthorsTable(authors);
+                renderAuthorsTable(escapeApiData(authors));
 
             } catch (error) {
                 console.error('Failed to load analytics:', error);
@@ -1507,7 +1546,7 @@
                 case 'requires_human_review':
                     return '<span class="status-badge status-human-review">HUMAN REVIEW</span>';
                 default:
-                    return `<span class="status-badge status-neutral">${action.replace('_', ' ').toUpperCase()}</span>`;
+                    return `<span class="status-badge status-neutral">${escapeHtml(action.replace('_', ' ').toUpperCase())}</span>`;
             }
         }
 
@@ -1519,7 +1558,7 @@
         async function loadOwnPRs() {
             try {
                 const response = await fetch('/api/own-prs');
-                ownPRsData = await response.json();
+                ownPRsData = escapeApiData(await response.json());
                 renderOwnPRFilters();
                 renderOwnPRs();
             } catch (error) {
@@ -1573,7 +1612,7 @@
                 case 'expired':
                     return '<span class="status-badge status-expired">EXPIRED</span>';
                 default:
-                    return `<span class="status-badge status-neutral">${status.toUpperCase()}</span>`;
+                    return `<span class="status-badge status-neutral">${escapeHtml(status.toUpperCase())}</span>`;
             }
         }
 
