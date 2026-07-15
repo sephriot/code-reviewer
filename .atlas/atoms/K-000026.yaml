@@ -1,0 +1,13 @@
+id: K-000026
+title: GitHub PR discovery must paginate search results
+type: gotcha
+confidence: high
+summary: GitHub issue search returns paginated results; both assigned and own-PR scans must request up to 100 results per page and continue through the reported total, otherwise review requests can be silently missed.
+tags:
+- github-api
+- search
+- pagination
+- polling
+sources:
+- src/code_reviewer/github_client.py
+updated_at: 2026-07-15

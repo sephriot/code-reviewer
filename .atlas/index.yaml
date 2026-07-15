@@ -1,4 +1,4 @@
-next_id: 26
+next_id: 27
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -366,3 +366,14 @@ entries:
   - src/code_reviewer/web_server.py
   - src/code_reviewer/templates/dashboard.html
   - tests/test_review_requests_ui.py
+- id: K-000026
+  title: GitHub PR discovery must paginate search results
+  type: gotcha
+  confidence: high
+  tags:
+  - github-api
+  - search
+  - pagination
+  - polling
+  sources:
+  - src/code_reviewer/github_client.py
