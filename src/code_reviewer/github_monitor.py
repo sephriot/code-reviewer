@@ -543,7 +543,13 @@ class GitHubMonitor:
             )
 
         elif action == ReviewAction.APPROVE_WITHOUT_COMMENT:
-            await self.github_client.approve_pr(pr_info.repository, pr_info.number)
+            approved = await self.github_client.approve_pr(
+                pr_info.repository, pr_info.number
+            )
+            if not approved:
+                raise RuntimeError(
+                    f"GitHub did not accept automatic approval for PR #{pr_info.number}"
+                )
             logger.info(f"Approved PR #{pr_info.number} without comment")
 
             # Play approval sound

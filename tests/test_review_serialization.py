@@ -223,6 +223,42 @@ async def test_failed_review_request_poll_preserves_cached_snapshot(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_failed_automatic_approval_requires_human_review(tmp_path):
+    github_client = AsyncMock()
+    github_client.approve_pr.return_value = False
+    llm_integration = AsyncMock()
+    llm_integration.review_pr.return_value = ReviewResult(
+        action=ReviewAction.APPROVE_WITHOUT_COMMENT,
+        reason="safe to approve",
+    )
+
+    monitor = GitHubMonitor(
+        github_client,
+        llm_integration,
+        _make_monitor_config(tmp_path),
+    )
+    monitor.sound_notifier.play_human_review_sound = AsyncMock()
+    monitor.sound_notifier.play_approval_sound = AsyncMock()
+    pr_info = _make_pr_info(12)
+
+    try:
+        await monitor._process_pr(pr_info)
+
+        github_client.approve_pr.assert_awaited_once_with(
+            pr_info.repository, pr_info.number
+        )
+        recorded = await monitor.db.get_review_for_commit(
+            pr_info.repository_name, pr_info.number, pr_info.head_sha
+        )
+        assert recorded is not None
+        assert recorded.review_action == ReviewAction.REQUIRES_HUMAN_REVIEW
+        monitor.sound_notifier.play_human_review_sound.assert_awaited_once()
+        monitor.sound_notifier.play_approval_sound.assert_not_awaited()
+    finally:
+        monitor.db.close()
+
+
+@pytest.mark.asyncio
 async def test_review_started_comment_replaced_for_new_head_sha(tmp_path):
     github_client = AsyncMock()
     first_pr = _make_pr_info(9)
