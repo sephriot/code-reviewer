@@ -329,7 +329,13 @@
             try {
                 const response = await fetch('/api/review-requests');
                 if (!response.ok) throw new Error(await response.text());
-                reviewRequestsData = await response.json();
+                const snapshot = await response.json();
+                reviewRequestsData = snapshot.items || [];
+                if (!snapshot.last_synced_at) {
+                    container.innerHTML = renderEmptyState('Waiting for the first successful review-request scan...');
+                    window.setTimeout(loadReviewRequests, 5000);
+                    return;
+                }
                 renderReviewRequests();
             } catch (error) {
                 console.error('Failed to load review requests:', error);

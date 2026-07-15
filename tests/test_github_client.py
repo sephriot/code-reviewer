@@ -1,7 +1,11 @@
 import pytest
 
-from code_reviewer.github_client import GitHubClient, _matches_repository_filter
-from code_reviewer.models import InlineComment
+from code_reviewer.github_client import (
+    GitHubClient,
+    _matches_repository_filter,
+    filter_review_requests,
+)
+from code_reviewer.models import InlineComment, PRInfo
 
 
 class TestMatchesRepositoryFilter:
@@ -32,6 +36,27 @@ class TestMatchesRepositoryFilter:
 
     def test_empty_patterns(self):
         assert not _matches_repository_filter("spacelift-io/repo", [])
+
+
+def test_filter_review_requests_combines_repository_and_author_filters():
+    matching = PRInfo(
+        id=1,
+        number=1,
+        repository=["acme", "api"],
+        url="https://github.com/acme/api/pull/1",
+        author="alice",
+    )
+    wrong_author = PRInfo(
+        id=2,
+        number=2,
+        repository=["acme", "worker"],
+        url="https://github.com/acme/worker/pull/2",
+        author="bob",
+    )
+
+    assert filter_review_requests(
+        [matching, wrong_author], ["acme/*"], ["alice"]
+    ) == [matching]
 
 
 def test_extract_valid_diff_lines_basic():

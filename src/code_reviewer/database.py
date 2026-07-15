@@ -221,6 +221,36 @@ class ReviewDatabase:
         """)
 
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS review_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                github_pr_id INTEGER NOT NULL,
+                repository TEXT NOT NULL,
+                pr_number INTEGER NOT NULL,
+                pr_title TEXT,
+                pr_author TEXT,
+                pr_url TEXT NOT NULL,
+                head_sha TEXT NOT NULL,
+                base_sha TEXT,
+                active INTEGER NOT NULL DEFAULT 1,
+                first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(repository, pr_number)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_review_requests_active
+            ON review_requests(active, last_seen_at)
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS review_request_sync_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                last_synced_at TIMESTAMP NOT NULL
+            )
+        """)
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS review_started_comments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 repository TEXT NOT NULL,
@@ -751,6 +781,123 @@ class ReviewDatabase:
             f"PR #{pr_number} in {repository}: No review found for head SHA {current_head_sha[:8]}, will review"
         )
         return True
+
+    async def sync_review_requests(self, prs: List[PRInfo]) -> None:
+        """Replace the active review-request snapshot after a successful poll."""
+        await asyncio.get_event_loop().run_in_executor(
+            None, self._sync_review_requests_sync, prs
+        )
+
+    def _sync_review_requests_sync(self, prs: List[PRInfo]) -> None:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("BEGIN IMMEDIATE")
+        try:
+            cursor.execute("UPDATE review_requests SET active = 0")
+            for pr_info in prs:
+                cursor.execute(
+                    """
+                    INSERT INTO review_requests (
+                        github_pr_id, repository, pr_number, pr_title, pr_author,
+                        pr_url, head_sha, base_sha, active
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    ON CONFLICT(repository, pr_number) DO UPDATE SET
+                        github_pr_id = excluded.github_pr_id,
+                        pr_title = excluded.pr_title,
+                        pr_author = excluded.pr_author,
+                        pr_url = excluded.pr_url,
+                        head_sha = excluded.head_sha,
+                        base_sha = excluded.base_sha,
+                        active = 1,
+                        last_seen_at = CURRENT_TIMESTAMP
+                    """,
+                    (
+                        pr_info.id,
+                        pr_info.repository_name,
+                        pr_info.number,
+                        pr_info.title,
+                        pr_info.author,
+                        pr_info.url,
+                        pr_info.head_sha,
+                        pr_info.base_sha,
+                    ),
+                )
+            cursor.execute("DELETE FROM review_requests WHERE active = 0")
+            cursor.execute(
+                """
+                INSERT INTO review_request_sync_state (id, last_synced_at)
+                VALUES (1, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    last_synced_at = CURRENT_TIMESTAMP
+                """
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    async def get_review_requests(self) -> List[Dict[str, Any]]:
+        """Return the cached review-request snapshot with local review state."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_review_requests_sync
+        )
+
+    def _get_review_requests_sync(self) -> List[Dict[str, Any]]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                rr.github_pr_id AS id,
+                rr.pr_number AS number,
+                rr.repository,
+                rr.pr_url AS url,
+                rr.pr_title AS title,
+                rr.pr_author AS author,
+                rr.head_sha,
+                rr.base_sha,
+                rr.last_seen_at,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM pending_approvals pa
+                        WHERE pa.repository = rr.repository
+                          AND pa.pr_number = rr.pr_number
+                          AND pa.head_sha = rr.head_sha
+                          AND pa.status = ?
+                    ) THEN 'awaiting_decision'
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM pr_reviews reviewed
+                        WHERE reviewed.repository = rr.repository
+                          AND reviewed.pr_number = rr.pr_number
+                          AND reviewed.head_sha = rr.head_sha
+                    ) THEN 'reviewed'
+                    ELSE 'not_reviewed'
+                END AS review_state
+            FROM review_requests rr
+            WHERE rr.active = 1
+            ORDER BY rr.last_seen_at DESC, rr.repository, rr.pr_number DESC
+            """,
+            (PENDING_APPROVAL_STATUS_PENDING,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    async def get_review_requests_last_synced_at(self) -> Optional[str]:
+        """Return when the review-request cache was last replaced."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_review_requests_last_synced_at_sync
+        )
+
+    def _get_review_requests_last_synced_at_sync(self) -> Optional[str]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT last_synced_at FROM review_request_sync_state WHERE id = 1"
+        )
+        row = cursor.fetchone()
+        return row["last_synced_at"] if row else None
 
     async def get_review_stats(self) -> Dict[str, Any]:
         """Get statistics about reviews performed."""

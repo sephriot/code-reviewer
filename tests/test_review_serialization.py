@@ -162,6 +162,67 @@ async def test_check_for_new_prs_skips_poll_when_review_in_progress(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_check_for_new_prs_caches_all_requests_before_filtering(tmp_path):
+    github_client = AsyncMock()
+    selected_pr = _make_pr_info(7)
+    excluded_pr = PRInfo(
+        id=8,
+        number=8,
+        repository=["other", "repo"],
+        url="https://github.com/other/repo/pull/8",
+        title="Excluded from automatic review",
+        author="bob",
+        head_sha="deadbeef08",
+        base_sha="cafebabe08",
+    )
+    github_client.get_review_requests.return_value = [selected_pr, excluded_pr]
+    llm_integration = AsyncMock()
+    llm_integration.review_in_progress = False
+    config = _make_monitor_config(tmp_path)
+    config.repositories = [selected_pr.repository_name]
+    monitor = GitHubMonitor(github_client, llm_integration, config)
+    monitor._process_pr = AsyncMock()
+
+    try:
+        await monitor._check_for_new_prs()
+
+        github_client.get_review_requests.assert_awaited_once_with(
+            "alice", raise_on_error=True
+        )
+        monitor._process_pr.assert_awaited_once_with(selected_pr)
+        cached = await monitor.db.get_review_requests()
+        assert {request["repository"] for request in cached} == {
+            selected_pr.repository_name,
+            excluded_pr.repository_name,
+        }
+    finally:
+        monitor.db.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_review_request_poll_preserves_cached_snapshot(tmp_path):
+    github_client = AsyncMock()
+    github_client.get_review_requests.side_effect = RuntimeError("GitHub unavailable")
+    llm_integration = AsyncMock()
+    llm_integration.review_in_progress = False
+    monitor = GitHubMonitor(
+        github_client,
+        llm_integration,
+        _make_monitor_config(tmp_path),
+    )
+    cached_pr = _make_pr_info(11)
+    await monitor.db.sync_review_requests([cached_pr])
+
+    try:
+        await monitor._check_for_new_prs()
+
+        cached = await monitor.db.get_review_requests()
+        assert [request["number"] for request in cached] == [cached_pr.number]
+    finally:
+        monitor.db.close()
+
+
+@pytest.mark.asyncio
 async def test_review_started_comment_replaced_for_new_head_sha(tmp_path):
     github_client = AsyncMock()
     first_pr = _make_pr_info(9)

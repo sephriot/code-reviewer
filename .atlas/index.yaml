@@ -348,7 +348,7 @@ entries:
   - K-000005
   - K-000018
 - id: K-000025
-  title: Review request queue is live and independent of automatic-review filters
+  title: Review request queue caches periodic scans before automatic filters
   type: decision
   confidence: high
   tags:
@@ -357,10 +357,9 @@ entries:
   - filters
   - on-demand-review
   - github
+  - sqlite
   sources:
-  - src/code_reviewer/web_server.py
+  - src/code_reviewer/database.py
+  - src/code_reviewer/github_client.py
   - src/code_reviewer/github_monitor.py
-  - src/code_reviewer/templates/dashboard.html
-  links:
-  - K-000018
-  - K-000024
+  - src/code_reviewer/web_server.py

@@ -1,20 +1,19 @@
 id: K-000025
-title: Review request queue is live and independent of automatic-review filters
+title: Review request queue caches periodic scans before automatic filters
 type: decision
 confidence: high
-summary: Show every current GitHub review request live in the dashboard while keeping repository/author filters scoped to automatic reviews; route manual reviews through the existing monitor pipeline.
-details: 'Design: the Review Requests dashboard queue is derived live from GitHub with get_review_requests(username) and deliberately omits repository/author filters. Filters continue to govern only automatic monitoring. Existing SQLite pr_reviews and pending_approvals annotate each current head as not_reviewed, reviewed, or awaiting_decision; only a row whose status is pending counts as awaiting_decision because the lookup also returns archived rows. On-demand actions revalidate that the PR still requests review, expire a same-head pending decision, remove a same-head completed record, and call GitHubMonitor.review_pr_on_demand so normal posting, pending-decision, notification, error, and analytics behavior is reused. The queue is not persisted, avoiding stale attention records when GitHub removes a review request.'
+summary: Cache each successful unfiltered periodic GitHub review-request scan in SQLite, then apply filters only to automatic processing so the dashboard loads locally without stale-cache loss on API failures.
+details: 'Design: GitHubMonitor fetches the complete review-request list once per periodic poll with error propagation enabled. After a successful fetch, ReviewDatabase.sync_review_requests atomically upserts the current rows and removes requests absent from the new snapshot; a successful empty result clears the queue. A failed fetch never calls sync, preserving the last known snapshot. Repository and author filters are applied in memory only after the complete snapshot is stored, so they still control automatic review selection without hiding attention items. GET /api/review-requests reads SQLite and computes not_reviewed, reviewed, or awaiting_decision from existing pr_reviews and pending_approvals. On-demand review still revalidates the request against GitHub before running GitHubMonitor.review_pr_on_demand. The review_requests table is an operational cache and does not feed analytics.'
 tags:
 - review-requests
 - web-ui
 - filters
 - on-demand-review
 - github
+- sqlite
 sources:
-- src/code_reviewer/web_server.py
+- src/code_reviewer/database.py
+- src/code_reviewer/github_client.py
 - src/code_reviewer/github_monitor.py
-- src/code_reviewer/templates/dashboard.html
-links:
-- K-000018
-- K-000024
+- src/code_reviewer/web_server.py
 updated_at: 2026-07-14

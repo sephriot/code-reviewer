@@ -80,6 +80,7 @@ Do not use system Python (`python` or `python3`) for project commands.
   - Thread-safe connections via thread-local storage.
   - Auto-migrates schema for edited pending approvals and commit-tracking columns.
   - `should_review_pr` prevents duplicate reviews by checking `pr_reviews` and `pending_approvals` against the current head SHA.
+  - `sync_review_requests` atomically replaces the locally cached attention queue after each successful periodic GitHub scan; failed scans preserve the previous snapshot.
   - `create_pending_approval` stores human-gated review results with conditional overwrite logic.
   - Approved/rejected reviews are preserved while new commits can overwrite still-pending approvals.
   - Provides CRUD helpers, history queries, action counts, and per-repository reporting.
@@ -88,7 +89,7 @@ Do not use system Python (`python` or `python3`) for project commands.
 - **Location**: `src/code_reviewer/web_server.py`.
 - **Role**: FastAPI application serving HTML dashboard and REST APIs for managing pending approvals, human-review queues, and review history.
 - **Key workflows**:
-  - Review Requests tab fetches every live GitHub review request without automatic-review repository/author filters and can trigger an on-demand review through `GitHubMonitor.review_pr_on_demand`.
+  - Review Requests tab reads the latest complete review-request snapshot from SQLite without automatic-review repository/author filters and can trigger an on-demand review through `GitHubMonitor.review_pr_on_demand`.
   - Pending approvals tab for editing comments/summaries, approving, or rejecting automated suggestions.
   - Human review tab capturing `REQUIRES_HUMAN_REVIEW` results with direct GitHub links.
   - Unified History tab groups completed, approved, rejected, merged/closed, and expired views.
@@ -201,7 +202,8 @@ GitHubMonitor -> ReviewDatabase.should_review_pr
 
 ### Web UI Dashboard System
 - The dashboard is a FastAPI REST API with HTML templates.
-- The Review Requests tab always lists the configured user's live GitHub review requests; repository and author filters only control automatic review selection.
+- The Review Requests tab reads the latest successful periodic GitHub snapshot from SQLite; repository and author filters only control automatic review selection.
+- A successful scan atomically replaces the cached queue, including clearing it when GitHub returns no requests; a failed scan leaves the previous queue intact.
 - Review requests can be reviewed on demand through the same assigned-PR pipeline, with optional user context and Claude model override.
 - Pending approvals let users review and approve/reject comments before GitHub posting.
 - Human review tracking displays PRs marked as `requires_human_review`.
@@ -211,6 +213,7 @@ GitHubMonitor -> ReviewDatabase.should_review_pr
 - The UI should remain mobile responsive.
 - The server runs on localhost by default and has no built-in authentication; it is designed for a single user.
 - The `pending_approvals` table stores inline comments as JSON and tracks commit SHAs.
+- The `review_requests` table stores only the current attention snapshot and is not included in review analytics.
 
 #### Web UI Workflow
 1. Monitor detects PR.

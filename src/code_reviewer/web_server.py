@@ -125,48 +125,15 @@ class ReviewWebServer:
 
         @self.app.get("/api/review-requests")
         async def get_review_requests():
-            """Get every live PR requesting the configured user's review."""
-            if not self.config:
-                raise HTTPException(
-                    status_code=503, detail="Configuration not available"
-                )
-
+            """Get the latest periodically cached review-request snapshot."""
             try:
-                prs = await self.github_client.get_review_requests(
-                    self.config.github_username
+                requests, last_synced_at = await asyncio.gather(
+                    self.database.get_review_requests(),
+                    self.database.get_review_requests_last_synced_at(),
                 )
-                results = []
-                for pr_info in prs:
-                    pending = await self.database.get_pending_approval_for_commit(
-                        pr_info.repository_name, pr_info.number, pr_info.head_sha
-                    )
-                    review = await self.database.get_review_for_commit(
-                        pr_info.repository_name, pr_info.number, pr_info.head_sha
-                    )
-                    if (
-                        pending
-                        and pending.get("status") == PENDING_APPROVAL_STATUS_PENDING
-                    ):
-                        review_state = "awaiting_decision"
-                    elif review:
-                        review_state = "reviewed"
-                    else:
-                        review_state = "not_reviewed"
-
-                    results.append(
-                        {
-                            "id": pr_info.id,
-                            "number": pr_info.number,
-                            "repository": pr_info.repository_name,
-                            "url": pr_info.url,
-                            "title": pr_info.title,
-                            "author": pr_info.author,
-                            "head_sha": pr_info.head_sha,
-                            "base_sha": pr_info.base_sha,
-                            "review_state": review_state,
-                        }
-                    )
-                return JSONResponse(content=results)
+                return JSONResponse(
+                    content={"items": requests, "last_synced_at": last_synced_at}
+                )
             except Exception as e:
                 logger.error(f"Failed to get review requests: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
@@ -214,9 +181,17 @@ class ReviewWebServer:
                         detail="Claude model overrides require REVIEW_MODEL=CLAUDE",
                     )
 
-            live_requests = await self.github_client.get_review_requests(
-                self.config.github_username
-            )
+            try:
+                live_requests = await self.github_client.get_review_requests(
+                    self.config.github_username,
+                    raise_on_error=True,
+                )
+            except Exception as exc:
+                logger.error("Failed to revalidate review requests: %s", exc)
+                raise HTTPException(
+                    status_code=503,
+                    detail="GitHub review requests could not be refreshed",
+                ) from exc
             pr_info = next(
                 (
                     pr

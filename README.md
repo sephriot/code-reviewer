@@ -361,7 +361,7 @@ The system automatically tracks review history using commit SHA comparison:
 
 When web UI is enabled (`--web-enabled` or `WEB_ENABLED=true`):
 
-- 🔔 **Review Requests**: See every open PR currently requesting your review, even when repository or author filters exclude it from automatic review; start or repeat a review on demand
+- 🔔 **Review Requests**: See every PR found by the latest periodic review-request scan, even when repository or author filters exclude it from automatic review; the UI reads the cached SQLite snapshot immediately and supports on-demand reviews
 - 📋 **Pending Approvals**: Review and approve/reject `approve_with_comments` actions before posting to GitHub
 - 👤 **Human Reviews**: View all PRs flagged for human attention with reasons and timestamps
 - 📚 **Unified History**: Completed, approved, rejected, merged/closed, and expired review records in one tab, including:

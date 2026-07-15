@@ -45,26 +45,20 @@ def _pr() -> PRInfo:
 
 
 @pytest.mark.asyncio
-async def test_review_requests_endpoint_fetches_without_automatic_review_filters(
-    tmp_path,
-):
+async def test_review_requests_endpoint_reads_cached_snapshot(tmp_path):
     db = ReviewDatabase(tmp_path / "reviews.db")
+    await db.sync_review_requests([_pr()])
     github_client = AsyncMock()
-    github_client.get_review_requests.return_value = [_pr()]
-    config = SimpleNamespace(
-        github_username="reviewer",
-        repositories=["selected/repository"],
-        pr_authors=["selected-author"],
-    )
-    server = ReviewWebServer(db, github_client, config=config)
+    server = ReviewWebServer(db, github_client)
     endpoint = _route_endpoint(server.app, "/api/review-requests", "GET")
 
     try:
         response = await endpoint()
 
-        github_client.get_review_requests.assert_awaited_once_with("reviewer")
+        github_client.get_review_requests.assert_not_awaited()
         assert b'"repository":"acme/widgets"' in response.body
         assert b'"review_state":"not_reviewed"' in response.body
+        assert b'"last_synced_at":null' not in response.body
     finally:
         db.close()
 
@@ -106,6 +100,9 @@ async def test_requested_review_runs_live_pr_through_monitor(tmp_path):
         await asyncio.sleep(0)
 
         assert response.status_code == 200
+        github_client.get_review_requests.assert_awaited_once_with(
+            "reviewer", raise_on_error=True
+        )
         monitor.review_pr_on_demand.assert_awaited_once_with(
             pr_info,
             user_context="focus on concurrency",
@@ -126,8 +123,8 @@ async def test_review_request_ignores_archived_pending_decision(tmp_path):
     await db.update_pending_approval_status(
         pending_id, PENDING_APPROVAL_STATUS_REJECTED, "not posting"
     )
+    await db.sync_review_requests([pr_info])
     github_client = AsyncMock()
-    github_client.get_review_requests.return_value = [pr_info]
     server = ReviewWebServer(
         db,
         github_client,
@@ -139,5 +136,35 @@ async def test_review_request_ignores_archived_pending_decision(tmp_path):
         response = await endpoint()
 
         assert b'"review_state":"not_reviewed"' in response.body
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_review_request_snapshot_replaces_requests_atomically(tmp_path):
+    db = ReviewDatabase(tmp_path / "reviews.db")
+    old_pr = _pr()
+    current_pr = PRInfo(
+        id=456,
+        number=7,
+        repository=["acme", "api"],
+        url="https://github.com/acme/api/pull/7",
+        title="Current request",
+        author="bob",
+        head_sha="deadbeef07",
+        base_sha="cafebabe07",
+    )
+
+    try:
+        assert await db.get_review_requests_last_synced_at() is None
+        await db.sync_review_requests([old_pr, current_pr])
+        assert await db.get_review_requests_last_synced_at() is not None
+        await db.sync_review_requests([current_pr])
+
+        requests = await db.get_review_requests()
+        assert [request["repository"] for request in requests] == ["acme/api"]
+
+        await db.sync_review_requests([])
+        assert await db.get_review_requests() == []
     finally:
         db.close()

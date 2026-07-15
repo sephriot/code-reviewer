@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from .github_client import GitHubClient
+from .github_client import GitHubClient, filter_review_requests
 from .llm_integration import LLMIntegration, LLMOutputParseError
 from .config import Config
 from .sound_notifier import SoundNotifier
@@ -174,14 +174,25 @@ class GitHubMonitor:
                     f"Error while expiring merged/closed approvals: {cleanup_error}"
                 )
 
-            prs = await self.github_client.get_review_requests(
+            all_prs = await self.github_client.get_review_requests(
                 self.config.github_username,
+                raise_on_error=True,
+            )
+            if not self.config.dry_run:
+                await self.db.sync_review_requests(all_prs)
+
+            prs = filter_review_requests(
+                all_prs,
                 self.config.repositories,
                 self.config.pr_authors,
             )
 
-            if prs:
-                logger.info(f"Found {len(prs)} PR(s) pending review")
+            if all_prs:
+                logger.info(
+                    "Found %s review request(s); %s match automatic-review filters",
+                    len(all_prs),
+                    len(prs),
+                )
             else:
                 logger.debug("No PRs found pending review")
 

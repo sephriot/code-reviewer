@@ -24,6 +24,24 @@ def _matches_repository_filter(repo_name: str, patterns: List[str]) -> bool:
     return any(fnmatch.fnmatch(repo_name, pattern) for pattern in patterns)
 
 
+def filter_review_requests(
+    prs: List[PRInfo],
+    repositories: Optional[List[str]] = None,
+    pr_authors: Optional[List[str]] = None,
+) -> List[PRInfo]:
+    """Apply automatic-review repository and author filters to PRs."""
+    filtered_prs = prs
+    if repositories:
+        filtered_prs = [
+            pr
+            for pr in filtered_prs
+            if _matches_repository_filter(pr.repository_name, repositories)
+        ]
+    if pr_authors:
+        filtered_prs = [pr for pr in filtered_prs if pr.author in pr_authors]
+    return filtered_prs
+
+
 class GitHubClient:
     def __init__(self, token: str):
         self.token = token
@@ -66,6 +84,7 @@ class GitHubClient:
         username: str,
         repositories: Optional[List[str]] = None,
         pr_authors: Optional[List[str]] = None,
+        raise_on_error: bool = False,
     ) -> List[PRInfo]:
         """Get PRs where the user is requested as a reviewer - minimal info only."""
         try:
@@ -102,6 +121,11 @@ class GitHubClient:
                             logger.warning(
                                 f"Failed to fetch details for PR #{item['number']} in {'/'.join(repository)}"
                             )
+                            if raise_on_error:
+                                raise RuntimeError(
+                                    "Incomplete review-request scan: failed to fetch "
+                                    f"details for {'/'.join(repository)}#{item['number']}"
+                                )
                             continue
 
                         # Include title, author, and SHA information in PRInfo
@@ -124,30 +148,19 @@ class GitHubClient:
                         f"  PR #{pr.number} in {pr.repository_name} by {pr.author}: {pr.title}"
                     )
 
-                filtered_prs = all_prs
-
-                # Filter by repositories
                 if repositories:
                     logger.info(
                         f"Filtering PRs to repositories: {', '.join(repositories)}"
                     )
                     logger.debug(
-                        f"Available repositories: {[pr.repository_name for pr in filtered_prs]}"
+                        f"Available repositories: {[pr.repository_name for pr in all_prs]}"
                     )
-                    filtered_prs = [
-                        pr
-                        for pr in filtered_prs
-                        if _matches_repository_filter(
-                            pr.repository_name, repositories
-                        )
-                    ]
-
-                # Filter by PR authors
                 if pr_authors:
                     logger.info(f"Filtering PRs to authors: {', '.join(pr_authors)}")
-                    filtered_prs = [
-                        pr for pr in filtered_prs if pr.author in pr_authors
-                    ]
+
+                filtered_prs = filter_review_requests(
+                    all_prs, repositories, pr_authors
+                )
 
                 if repositories or pr_authors:
                     logger.debug(
@@ -160,6 +173,8 @@ class GitHubClient:
 
         except Exception as e:
             logger.error(f"Error fetching review requests: {e}")
+            if raise_on_error:
+                raise
             return []
 
     async def get_own_prs(
