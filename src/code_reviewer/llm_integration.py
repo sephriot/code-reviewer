@@ -49,7 +49,7 @@ class LLMIntegration:
             "codex",
             "exec",
             "--sandbox",
-            "danger-full-access",
+            "workspace-write",
             "--skip-git-repo-check",
             "--output-last-message",
         ],

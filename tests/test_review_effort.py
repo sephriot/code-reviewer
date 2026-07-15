@@ -45,6 +45,14 @@ def test_codex_effort_is_incompatible():
     assert "CODEX" in integration.effort_message
 
 
+def test_codex_uses_workspace_write_sandbox():
+    integration = LLMIntegration(PROMPT, ReviewModel.CODEX)
+    cmd = integration._build_command()
+
+    assert cmd[cmd.index("--sandbox") + 1] == "workspace-write"
+    assert "danger-full-access" not in cmd
+
+
 def test_effort_unset_passes_no_flag():
     integration = LLMIntegration(PROMPT, ReviewModel.CLAUDE)
     cmd = integration._build_command()
