@@ -95,3 +95,38 @@ async def test_request_review_transitions_pending_own_pr(tmp_path):
         assert entries[0]["review_action"] == ReviewAction.APPROVE_WITHOUT_COMMENT.value
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_busy_own_pr_re_review_preserves_existing_record(tmp_path):
+    db = ReviewDatabase(tmp_path / "reviews.db")
+    pr_info = PRInfo(
+        id=32,
+        number=32,
+        repository=["acme", "repo"],
+        url="https://github.com/acme/repo/pull/32",
+        title="PR 32",
+        author="alice",
+        head_sha="deadbeef32",
+        base_sha="cafebabe32",
+    )
+    llm_integration = Mock(
+        review_in_progress=True,
+        active_review_target="acme/api#7",
+    )
+    server = ReviewWebServer(
+        db,
+        github_client=AsyncMock(),
+        llm_integration=llm_integration,
+    )
+    endpoint = _route_endpoint(server.app, "/api/own-prs/{pr_id}/review-again", "POST")
+
+    try:
+        own_pr_id = await db.create_own_pr(pr_info, review_result=None)
+
+        response = await endpoint(own_pr_id, _StubRequest())
+
+        assert response.status_code == 409
+        assert await db.get_own_pr_by_id(own_pr_id) is not None
+    finally:
+        db.close()
