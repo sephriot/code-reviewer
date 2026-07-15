@@ -94,17 +94,37 @@ class GitHubClient:
 
             self._ensure_session()
 
-            url = f"https://api.github.com/search/issues"
-            params = {"q": query, "sort": "updated", "order": "desc"}
+            url = "https://api.github.com/search/issues"
+            all_prs = []
+            page = 1
+            total_count: Optional[int] = None
+            items_seen = 0
 
-            async with self.session.get(url, params=params) as response:
-                data = await response.json()
+            while True:
+                params = {
+                    "q": query,
+                    "sort": "updated",
+                    "order": "desc",
+                    "per_page": 100,
+                    "page": page,
+                }
+                async with self.session.get(url, params=params) as response:
+                    data = await response.json()
 
-                if response.status != 200:
-                    raise Exception(f"GitHub API error: {data}")
+                    if response.status != 200:
+                        raise Exception(f"GitHub API error: {data}")
 
-                all_prs = []
-                for item in data.get("items", []):
+                items = data.get("items", [])
+                items_seen += len(items)
+                if total_count is None:
+                    total_count = min(data.get("total_count", 0), 1000)
+                    if data.get("total_count", 0) > 1000:
+                        logger.warning(
+                            "GitHub search returned more than 1000 review requests; "
+                            "the API cannot return results beyond that limit"
+                        )
+
+                for item in items:
                     if item.get("pull_request"):  # Ensure it's a PR
                         # Get author and title information from the API response
                         author = item.get("user", {}).get("login", "")
@@ -141,35 +161,39 @@ class GitHubClient:
                         )
                         all_prs.append(pr_info)
 
-                # Apply filters on the application side
-                logger.debug(f"Found {len(all_prs)} total PRs before filtering")
-                for pr in all_prs:
-                    logger.debug(
-                        f"  PR #{pr.number} in {pr.repository_name} by {pr.author}: {pr.title}"
-                    )
+                if not items or (
+                    total_count is not None and items_seen >= total_count
+                ):
+                    break
+                page += 1
 
-                if repositories:
-                    logger.info(
-                        f"Filtering PRs to repositories: {', '.join(repositories)}"
-                    )
-                    logger.debug(
-                        f"Available repositories: {[pr.repository_name for pr in all_prs]}"
-                    )
-                if pr_authors:
-                    logger.info(f"Filtering PRs to authors: {', '.join(pr_authors)}")
-
-                filtered_prs = filter_review_requests(
-                    all_prs, repositories, pr_authors
+            # Apply filters on the application side
+            logger.debug(f"Found {len(all_prs)} total PRs before filtering")
+            for pr in all_prs:
+                logger.debug(
+                    f"  PR #{pr.number} in {pr.repository_name} by {pr.author}: {pr.title}"
                 )
 
-                if repositories or pr_authors:
-                    logger.debug(
-                        f"Found {len(all_prs)} total PRs, {len(filtered_prs)} match filters"
-                    )
-                else:
-                    logger.info("No filters specified, monitoring all accessible PRs")
+            if repositories:
+                logger.info(
+                    f"Filtering PRs to repositories: {', '.join(repositories)}"
+                )
+                logger.debug(
+                    f"Available repositories: {[pr.repository_name for pr in all_prs]}"
+                )
+            if pr_authors:
+                logger.info(f"Filtering PRs to authors: {', '.join(pr_authors)}")
 
-                return filtered_prs
+            filtered_prs = filter_review_requests(all_prs, repositories, pr_authors)
+
+            if repositories or pr_authors:
+                logger.debug(
+                    f"Found {len(all_prs)} total PRs, {len(filtered_prs)} match filters"
+                )
+            else:
+                logger.info("No filters specified, monitoring all accessible PRs")
+
+            return filtered_prs
 
         except Exception as e:
             logger.error(f"Error fetching review requests: {e}")
@@ -223,17 +247,37 @@ class GitHubClient:
 
             self._ensure_session()
 
-            url = f"https://api.github.com/search/issues"
-            params = {"q": query, "sort": "updated", "order": "desc"}
+            url = "https://api.github.com/search/issues"
+            all_prs = []
+            page = 1
+            total_count: Optional[int] = None
+            items_seen = 0
 
-            async with self.session.get(url, params=params) as response:
-                data = await response.json()
+            while True:
+                params = {
+                    "q": query,
+                    "sort": "updated",
+                    "order": "desc",
+                    "per_page": 100,
+                    "page": page,
+                }
+                async with self.session.get(url, params=params) as response:
+                    data = await response.json()
 
-                if response.status != 200:
-                    raise Exception(f"GitHub API error: {data}")
+                    if response.status != 200:
+                        raise Exception(f"GitHub API error: {data}")
 
-                all_prs = []
-                for item in data.get("items", []):
+                items = data.get("items", [])
+                items_seen += len(items)
+                if total_count is None:
+                    total_count = min(data.get("total_count", 0), 1000)
+                    if data.get("total_count", 0) > 1000:
+                        logger.warning(
+                            "GitHub search returned more than 1000 own PRs; "
+                            "the API cannot return results beyond that limit"
+                        )
+
+                for item in items:
                     if item.get("pull_request"):
                         author = item.get("user", {}).get("login", "")
                         title = item.get("title", "")
@@ -260,23 +304,27 @@ class GitHubClient:
                         )
                         all_prs.append(pr_info)
 
-                logger.debug(f"Found {len(all_prs)} total own PRs before filtering")
+                if not items or (
+                    total_count is not None and items_seen >= total_count
+                ):
+                    break
+                page += 1
 
-                filtered_prs = all_prs
+            logger.debug(f"Found {len(all_prs)} total own PRs before filtering")
 
-                if repositories:
-                    logger.info(
-                        f"Filtering own PRs to repositories: {', '.join(repositories)}"
-                    )
-                    filtered_prs = [
-                        pr
-                        for pr in filtered_prs
-                        if _matches_repository_filter(
-                            pr.repository_name, repositories
-                        )
-                    ]
+            filtered_prs = all_prs
 
-                return filtered_prs
+            if repositories:
+                logger.info(
+                    f"Filtering own PRs to repositories: {', '.join(repositories)}"
+                )
+                filtered_prs = [
+                    pr
+                    for pr in filtered_prs
+                    if _matches_repository_filter(pr.repository_name, repositories)
+                ]
+
+            return filtered_prs
 
         except Exception as e:
             logger.error(f"Error fetching own PRs: {e}")

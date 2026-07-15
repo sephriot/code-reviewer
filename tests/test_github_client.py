@@ -153,6 +153,57 @@ class _FakeGetSession:
         return self.response
 
 
+class _PagedGetSession:
+    def __init__(self, responses):
+        self.closed = False
+        self.responses = responses
+        self.get_calls = []
+
+    def get(self, url, params=None):
+        self.get_calls.append((url, params))
+        page = params["page"]
+        return self.responses[page]
+
+
+@pytest.mark.asyncio
+async def test_get_review_requests_fetches_all_search_pages(monkeypatch):
+    first_issue = {
+        "id": 1,
+        "number": 1,
+        "repository_url": "https://api.github.com/repos/acme/one",
+        "html_url": "https://github.com/acme/one/pull/1",
+        "title": "First",
+        "user": {"login": "alice"},
+        "pull_request": {"url": "https://api.github.com/repos/acme/one/pulls/1"},
+    }
+    second_issue = {
+        "id": 2,
+        "number": 2,
+        "repository_url": "https://api.github.com/repos/acme/two",
+        "html_url": "https://github.com/acme/two/pull/2",
+        "title": "Second",
+        "user": {"login": "bob"},
+        "pull_request": {"url": "https://api.github.com/repos/acme/two/pulls/2"},
+    }
+    client = GitHubClient(token="dummytoken")
+    client.session = _PagedGetSession(
+        {
+            1: _FakeResponse(200, {"total_count": 2, "items": [first_issue]}),
+            2: _FakeResponse(200, {"total_count": 2, "items": [second_issue]}),
+        }
+    )
+
+    async def fake_fetch_details(owner, repo, number):
+        return {"head": {"sha": f"head-{number}"}, "base": {"sha": f"base-{number}"}}
+
+    monkeypatch.setattr(client, "_fetch_pr_details", fake_fetch_details)
+
+    prs = await client.get_review_requests("reviewer")
+
+    assert [pr.number for pr in prs] == [1, 2]
+    assert [params["page"] for _, params in client.session.get_calls] == [1, 2]
+
+
 @pytest.mark.asyncio
 async def test_get_requested_pr_fetches_only_selected_pr():
     payload = {
