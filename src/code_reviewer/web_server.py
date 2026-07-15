@@ -491,6 +491,42 @@ class ReviewWebServer:
                         status_code=400, detail="Approval is not pending"
                     )
 
+                pr_status = await self.github_client.get_pr_status(
+                    approval["repository"].split("/"), approval["pr_number"]
+                )
+                if not pr_status:
+                    return JSONResponse(
+                        status_code=502,
+                        content={"detail": "Unable to verify the current PR state"},
+                    )
+
+                if pr_status.get("state") != "open" or pr_status.get("merged"):
+                    await self.database.update_pending_approval_status(
+                        approval_id,
+                        PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED,
+                        "PR was merged or closed before approval could be posted",
+                    )
+                    return JSONResponse(
+                        status_code=409,
+                        content={"detail": "PR is no longer open"},
+                    )
+
+                if (
+                    pr_status.get("head_sha") != approval["head_sha"]
+                    or pr_status.get("base_sha") != approval["base_sha"]
+                ):
+                    await self.database.update_pending_approval_status(
+                        approval_id,
+                        PENDING_APPROVAL_STATUS_EXPIRED,
+                        "PR changed after the pending review was created",
+                    )
+                    return JSONResponse(
+                        status_code=409,
+                        content={
+                            "detail": "PR changed after this review was created; request a new review"
+                        },
+                    )
+
                 # Create PR info and review result objects
                 pr_info = PRInfo(
                     id=0,  # Not used for this purpose
@@ -499,6 +535,8 @@ class ReviewWebServer:
                     url=approval["pr_url"],
                     title=approval["pr_title"],
                     author=approval["pr_author"],
+                    head_sha=approval["head_sha"],
+                    base_sha=approval["base_sha"],
                 )
 
                 # Recreate inline comments

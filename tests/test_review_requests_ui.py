@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from code_reviewer.database import (
+    PENDING_APPROVAL_STATUS_EXPIRED,
     PENDING_APPROVAL_STATUS_REJECTED,
     ReviewDatabase,
 )
@@ -218,6 +219,40 @@ async def test_review_request_ignores_archived_pending_decision(tmp_path):
         response = await endpoint()
 
         assert b'"review_state":"not_reviewed"' in response.body
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_approval_rejects_a_pending_review_for_a_new_commit(tmp_path):
+    db = ReviewDatabase(tmp_path / "reviews.db")
+    pr_info = _pr()
+    approval_id = await db.create_pending_approval(
+        pr_info,
+        ReviewResult(
+            action=ReviewAction.APPROVE_WITH_COMMENT,
+            comment="Looks good",
+        ),
+    )
+    github_client = AsyncMock()
+    github_client.get_pr_status.return_value = {
+        "state": "open",
+        "merged": False,
+        "head_sha": "feedface42",
+        "base_sha": pr_info.base_sha,
+    }
+    server = ReviewWebServer(db, github_client)
+    server._post_github_review = AsyncMock(return_value=True)
+    endpoint = _route_endpoint(server.app, "/api/approvals/{approval_id}/approve", "POST")
+
+    try:
+        response = await endpoint(approval_id, _StubRequest({"comment": ""}))
+
+        assert response.status_code == 409
+        server._post_github_review.assert_not_awaited()
+        approval = await db.get_pending_approval(approval_id)
+        assert approval is not None
+        assert approval["status"] == PENDING_APPROVAL_STATUS_EXPIRED
     finally:
         db.close()
 
