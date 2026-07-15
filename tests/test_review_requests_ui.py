@@ -258,6 +258,38 @@ async def test_approval_rejects_a_pending_review_for_a_new_commit(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_busy_re_review_keeps_pending_approval(tmp_path):
+    db = ReviewDatabase(tmp_path / "reviews.db")
+    pr_info = _pr()
+    approval_id = await db.create_pending_approval(
+        pr_info,
+        ReviewResult(action=ReviewAction.APPROVE_WITH_COMMENT, comment="Looks good"),
+    )
+    llm_integration = Mock(
+        review_in_progress=True,
+        active_review_target="acme/api#7",
+    )
+    server = ReviewWebServer(
+        db,
+        AsyncMock(),
+        llm_integration=llm_integration,
+    )
+    endpoint = _route_endpoint(
+        server.app, "/api/approvals/{approval_id}/review-again", "POST"
+    )
+
+    try:
+        response = await endpoint(approval_id, _StubRequest({}))
+
+        assert response.status_code == 409
+        approval = await db.get_pending_approval(approval_id)
+        assert approval is not None
+        assert approval["status"] == "pending"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
 async def test_review_request_snapshot_replaces_requests_atomically(tmp_path):
     db = ReviewDatabase(tmp_path / "reviews.db")
     old_pr = _pr()

@@ -644,6 +644,14 @@ class ReviewWebServer:
                         status_code=500, detail="LLM integration not available"
                     )
 
+                if self.llm_integration.review_in_progress:
+                    logger.info(
+                        "Rejecting approval re-review for ID %s because %s is already running",
+                        approval_id,
+                        self.llm_integration.active_review_target or "another review",
+                    )
+                    return self._review_busy_response()
+
                 # Parse optional user context from request body
                 user_context = None
                 try:
@@ -686,15 +694,6 @@ class ReviewWebServer:
                     head_sha=approval["head_sha"],
                     base_sha=approval["base_sha"],
                 )
-
-                if self.llm_integration.review_in_progress:
-                    logger.info(
-                        "Rejecting approval re-review for %s#%s because %s is already running",
-                        pr_info.repository_name,
-                        pr_info.number,
-                        self.llm_integration.active_review_target or "another review",
-                    )
-                    return self._review_busy_response()
 
                 # Trigger fresh review in background
                 re_review_context = user_context
