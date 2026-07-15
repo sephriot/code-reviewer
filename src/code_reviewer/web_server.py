@@ -181,48 +181,82 @@ class ReviewWebServer:
                         detail="Claude model overrides require REVIEW_MODEL=CLAUDE",
                     )
 
-            try:
-                live_requests = await self.github_client.get_review_requests(
-                    self.config.github_username,
-                    raise_on_error=True,
-                )
-            except Exception as exc:
-                logger.error("Failed to revalidate review requests: %s", exc)
-                raise HTTPException(
-                    status_code=503,
-                    detail="GitHub review requests could not be refreshed",
-                ) from exc
-            pr_info = next(
-                (
-                    pr
-                    for pr in live_requests
-                    if pr.repository_name == repository and pr.number == pr_number
-                ),
-                None,
-            )
-            if not pr_info:
-                raise HTTPException(
-                    status_code=404,
-                    detail="This PR is no longer requesting your review",
-                )
-
             if self.llm_integration.review_in_progress:
                 return self._review_busy_response()
 
-            pending = await self.database.get_pending_approval_for_commit(
-                repository, pr_number, pr_info.head_sha
+            cached_requests = await self.database.get_review_requests()
+            cached_request = next(
+                (
+                    item
+                    for item in cached_requests
+                    if item["repository"] == repository
+                    and item["number"] == pr_number
+                ),
+                None,
             )
-            if pending and pending.get("status") == PENDING_APPROVAL_STATUS_PENDING:
-                await self.database.update_pending_approval_status(
-                    pending["id"],
-                    PENDING_APPROVAL_STATUS_EXPIRED,
-                    "On-demand re-review requested by user",
+            if not cached_request:
+                raise HTTPException(
+                    status_code=404,
+                    detail="This PR is not in the current review request queue",
                 )
-            await self.database.delete_review_for_re_review(
-                repository, pr_number, pr_info.head_sha
+            cached_pr_info = PRInfo(
+                id=cached_request["id"],
+                number=cached_request["number"],
+                repository=repository.split("/", 1),
+                url=cached_request["url"],
+                title=cached_request["title"],
+                author=cached_request["author"],
+                head_sha=cached_request["head_sha"],
+                base_sha=cached_request["base_sha"],
             )
 
             async def run_review():
+                try:
+                    pr_info = await self.github_client.get_requested_pr(
+                        self.config.github_username,
+                        repository,
+                        pr_number,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to refresh review request for %s#%s; using cached data: %s",
+                        repository,
+                        pr_number,
+                        exc,
+                    )
+                    pr_info = cached_pr_info
+
+                if not pr_info:
+                    logger.info(
+                        "Skipping on-demand review because %s#%s no longer requests review",
+                        repository,
+                        pr_number,
+                    )
+                    return
+                if self.llm_integration.review_in_progress:
+                    logger.info(
+                        "Skipping on-demand review for %s#%s because another review started",
+                        repository,
+                        pr_number,
+                    )
+                    return
+
+                pending = await self.database.get_pending_approval_for_commit(
+                    repository, pr_number, pr_info.head_sha
+                )
+                if (
+                    pending
+                    and pending.get("status") == PENDING_APPROVAL_STATUS_PENDING
+                ):
+                    await self.database.update_pending_approval_status(
+                        pending["id"],
+                        PENDING_APPROVAL_STATUS_EXPIRED,
+                        "On-demand re-review requested by user",
+                    )
+                await self.database.delete_review_for_re_review(
+                    repository, pr_number, pr_info.head_sha
+                )
+
                 await self.monitor.review_pr_on_demand(
                     pr_info,
                     user_context=user_context,

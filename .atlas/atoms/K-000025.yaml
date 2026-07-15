@@ -2,8 +2,11 @@ id: K-000025
 title: Review request queue caches periodic scans before automatic filters
 type: decision
 confidence: high
-summary: Cache each successful unfiltered periodic GitHub review-request scan in SQLite, then apply filters only to automatic processing so the dashboard loads locally without stale-cache loss on API failures.
-details: 'Design: GitHubMonitor fetches the complete review-request list once per periodic poll with error propagation enabled. After a successful fetch, ReviewDatabase.sync_review_requests atomically upserts the current rows and removes requests absent from the new snapshot; a successful empty result clears the queue. A failed fetch never calls sync, preserving the last known snapshot. Repository and author filters are applied in memory only after the complete snapshot is stored, so they still control automatic review selection without hiding attention items. GET /api/review-requests reads SQLite and computes not_reviewed, reviewed, or awaiting_decision from existing pr_reviews and pending_approvals. On-demand review still revalidates the request against GitHub before running GitHubMonitor.review_pr_on_demand. The review_requests table is an operational cache and does not feed analytics.'
+summary: Cache unfiltered periodic GitHub scans in SQLite; acknowledge on-demand reviews locally and refresh only the selected PR in the background.
+details: 'Design: GitHubMonitor fetches the complete review-request list once per periodic poll with error propagation enabled. After a successful fetch, ReviewDatabase.sync_review_requests atomically upserts the current rows and removes requests absent from the new snapshot; a successful empty result clears the queue. A failed fetch never calls sync, preserving the last known snapshot. Repository and author filters are applied in memory only after the complete snapshot is stored, so they still control automatic review selection without hiding attention items. GET /api/review-requests reads SQLite and computes not_reviewed, reviewed, or awaiting_decision from existing review state. POST /api/review-requests/review acknowledges immediately from the cached row and launches background work. That task fetches only the selected PR to refresh head and base SHAs before SHA-sensitive cleanup and review execution; if GitHub is temporarily unavailable, it falls back to the cached row so the user action is not lost. The frontend disables the clicked button and shows Starting immediately. The review_requests table is an operational cache and does not feed analytics.'
+pitfalls:
+- Do not block the review-start response on a full GitHub review-request scan; it performs one detail request per open PR and delays all UI acknowledgement.
+- Cached head SHAs can be stale, so refresh the selected PR before expiring or recording SHA-sensitive review state when GitHub is available.
 tags:
 - review-requests
 - web-ui
@@ -11,9 +14,12 @@ tags:
 - on-demand-review
 - github
 - sqlite
+- responsiveness
 sources:
 - src/code_reviewer/database.py
 - src/code_reviewer/github_client.py
 - src/code_reviewer/github_monitor.py
 - src/code_reviewer/web_server.py
-updated_at: 2026-07-14
+- src/code_reviewer/templates/dashboard.html
+- tests/test_review_requests_ui.py
+updated_at: 2026-07-15

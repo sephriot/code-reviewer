@@ -8,7 +8,7 @@ The code reviewer now includes an optional web UI that provides a dashboard for 
 - Lists every PR from the latest successful periodic GitHub review-request scan
 - Reads the queue from SQLite so opening or refreshing the tab does not call GitHub
 - Ignores repository and author filters when listing attention items; those filters continue to control automatic reviews
-- Starts a review on demand with optional context and Claude model override
+- Starts a review on demand from cached data with immediate UI feedback, optional context, and Claude model override; only the selected PR is revalidated with GitHub in the background
 - Shows whether the current commit is unreviewed, already reviewed, or awaiting a dashboard decision
 
 ### 🎯 **Human Review Dashboard**
@@ -92,7 +92,7 @@ When the system processes PRs:
 #### **Review Requests Tab**
 - Lists the latest successfully scanned GitHub review requests, independently of automatic-review filters
 - Keeps the previous snapshot when a GitHub scan fails and replaces it after the next successful scan
-- Starts a review or re-runs an existing review with optional context
+- Starts a review or re-runs an existing review with optional context, immediately acknowledges it from SQLite, and revalidates only that PR with GitHub in the background
 - Links directly to the pull request on GitHub
 
 #### **Pending Approvals Tab**

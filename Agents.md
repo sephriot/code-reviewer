@@ -204,7 +204,7 @@ GitHubMonitor -> ReviewDatabase.should_review_pr
 - The dashboard is a FastAPI REST API with HTML templates.
 - The Review Requests tab reads the latest successful periodic GitHub snapshot from SQLite; repository and author filters only control automatic review selection.
 - A successful scan atomically replaces the cached queue, including clearing it when GitHub returns no requests; a failed scan leaves the previous queue intact.
-- Review requests can be reviewed on demand through the same assigned-PR pipeline, with optional user context and Claude model override.
+- Review requests can be reviewed on demand through the same assigned-PR pipeline, with immediate start feedback, optional user context, and Claude model override; the endpoint acknowledges from SQLite and revalidates only the selected PR in the background.
 - Pending approvals let users review and approve/reject comments before GitHub posting.
 - Human review tracking displays PRs marked as `requires_human_review`.
 - Approval history preserves approved and rejected reviews with before/after comparison.

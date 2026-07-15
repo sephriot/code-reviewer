@@ -1,6 +1,7 @@
 """Tests for the unfiltered review-request queue and manual review action."""
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -64,18 +65,31 @@ async def test_review_requests_endpoint_reads_cached_snapshot(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_requested_review_runs_live_pr_through_monitor(tmp_path):
+async def test_requested_review_returns_before_live_revalidation(tmp_path):
     db = ReviewDatabase(tmp_path / "reviews.db")
     pr_info = _pr()
+    await db.sync_review_requests([pr_info])
+    revalidation_started = asyncio.Event()
+    release_revalidation = asyncio.Event()
+    review_started = asyncio.Event()
+
+    async def delayed_revalidation(*args):
+        revalidation_started.set()
+        await release_revalidation.wait()
+        return pr_info
+
+    async def mark_review_started(*args, **kwargs):
+        review_started.set()
+
     github_client = AsyncMock()
-    github_client.get_review_requests.return_value = [pr_info]
+    github_client.get_requested_pr.side_effect = delayed_revalidation
     llm_integration = Mock()
     llm_integration.model = ReviewModel.CLAUDE
     llm_integration.review_in_progress = False
     llm_integration.active_review_target = None
     llm_integration.resolve_claude_model.return_value = "sonnet"
     monitor = Mock()
-    monitor.review_pr_on_demand = AsyncMock()
+    monitor.review_pr_on_demand = AsyncMock(side_effect=mark_review_started)
     config = SimpleNamespace(github_username="reviewer")
     server = ReviewWebServer(
         db,
@@ -87,22 +101,31 @@ async def test_requested_review_runs_live_pr_through_monitor(tmp_path):
     endpoint = _route_endpoint(server.app, "/api/review-requests/review", "POST")
 
     try:
-        response = await endpoint(
-            _StubRequest(
-                {
-                    "repository": "acme/widgets",
-                    "pr_number": 42,
-                    "user_context": "focus on concurrency",
-                    "claude_model": "sonnet",
-                }
-            )
+        response = await asyncio.wait_for(
+            endpoint(
+                _StubRequest(
+                    {
+                        "repository": "acme/widgets",
+                        "pr_number": 42,
+                        "user_context": "focus on concurrency",
+                        "claude_model": "sonnet",
+                    }
+                )
+            ),
+            timeout=0.1,
         )
-        await asyncio.sleep(0)
 
         assert response.status_code == 200
-        github_client.get_review_requests.assert_awaited_once_with(
-            "reviewer", raise_on_error=True
+        await asyncio.wait_for(revalidation_started.wait(), timeout=0.1)
+        monitor.review_pr_on_demand.assert_not_awaited()
+
+        release_revalidation.set()
+        await asyncio.wait_for(review_started.wait(), timeout=0.1)
+
+        github_client.get_requested_pr.assert_awaited_once_with(
+            "reviewer", "acme/widgets", 42
         )
+        github_client.get_review_requests.assert_not_awaited()
         monitor.review_pr_on_demand.assert_awaited_once_with(
             pr_info,
             user_context="focus on concurrency",
@@ -110,6 +133,65 @@ async def test_requested_review_runs_live_pr_through_monitor(tmp_path):
         )
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_requested_review_uses_cached_pr_when_refresh_fails(tmp_path):
+    db = ReviewDatabase(tmp_path / "reviews.db")
+    pr_info = _pr()
+    await db.sync_review_requests([pr_info])
+    github_client = AsyncMock()
+    github_client.get_requested_pr.side_effect = RuntimeError("GitHub unavailable")
+    llm_integration = Mock(
+        model=ReviewModel.CLAUDE,
+        review_in_progress=False,
+        active_review_target=None,
+    )
+    monitor = Mock()
+    review_started = asyncio.Event()
+
+    async def mark_review_started(*args, **kwargs):
+        review_started.set()
+
+    monitor.review_pr_on_demand = AsyncMock(side_effect=mark_review_started)
+    server = ReviewWebServer(
+        db,
+        github_client,
+        llm_integration=llm_integration,
+        config=SimpleNamespace(github_username="reviewer"),
+        monitor=monitor,
+    )
+    endpoint = _route_endpoint(server.app, "/api/review-requests/review", "POST")
+
+    try:
+        response = await endpoint(
+            _StubRequest({"repository": "acme/widgets", "pr_number": 42})
+        )
+        await asyncio.wait_for(review_started.wait(), timeout=0.1)
+
+        assert response.status_code == 200
+        monitor.review_pr_on_demand.assert_awaited_once_with(
+            pr_info,
+            user_context=None,
+            claude_model=None,
+        )
+    finally:
+        db.close()
+
+
+def test_requested_review_shows_starting_state_before_waiting_for_api():
+    template = (
+        Path(__file__).parents[1]
+        / "src"
+        / "code_reviewer"
+        / "templates"
+        / "dashboard.html"
+    ).read_text()
+
+    button_feedback = "startButton.textContent = 'Starting…';"
+    request_start = "await fetch('/api/review-requests/review'"
+    assert 'id="review-request-start-${pr.id}"' in template
+    assert template.index(button_feedback) < template.index(request_start)
 
 
 @pytest.mark.asyncio

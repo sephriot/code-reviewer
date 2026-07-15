@@ -142,6 +142,69 @@ class _FakeSession:
         return _FakeResponse(204)
 
 
+class _FakeGetSession:
+    def __init__(self, response):
+        self.closed = False
+        self.response = response
+        self.get_calls = []
+
+    def get(self, url):
+        self.get_calls.append(url)
+        return self.response
+
+
+@pytest.mark.asyncio
+async def test_get_requested_pr_fetches_only_selected_pr():
+    payload = {
+        "id": 123,
+        "number": 42,
+        "html_url": "https://github.com/acme/widgets/pull/42",
+        "title": "Improve review queue",
+        "state": "open",
+        "user": {"login": "alice"},
+        "requested_reviewers": [{"login": "reviewer"}],
+        "head": {"sha": "deadbeef42"},
+        "base": {"sha": "cafebabe42"},
+    }
+    client = GitHubClient(token="dummytoken")
+    client.session = _FakeGetSession(_FakeResponse(200, payload=payload))
+
+    pr_info = await client.get_requested_pr("reviewer", "acme/widgets", 42)
+
+    assert pr_info == PRInfo(
+        id=123,
+        number=42,
+        repository=["acme", "widgets"],
+        url="https://github.com/acme/widgets/pull/42",
+        title="Improve review queue",
+        author="alice",
+        head_sha="deadbeef42",
+        base_sha="cafebabe42",
+    )
+    assert client.session.get_calls == [
+        "https://api.github.com/repos/acme/widgets/pulls/42"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_requested_pr_returns_none_when_review_is_not_requested():
+    payload = {
+        "id": 123,
+        "number": 42,
+        "html_url": "https://github.com/acme/widgets/pull/42",
+        "title": "Improve review queue",
+        "state": "open",
+        "user": {"login": "alice"},
+        "requested_reviewers": [{"login": "someone-else"}],
+        "head": {"sha": "deadbeef42"},
+        "base": {"sha": "cafebabe42"},
+    }
+    client = GitHubClient(token="dummytoken")
+    client.session = _FakeGetSession(_FakeResponse(200, payload=payload))
+
+    assert await client.get_requested_pr("reviewer", "acme/widgets", 42) is None
+
+
 @pytest.mark.asyncio
 async def test_add_issue_comment_uses_issue_comment_endpoint():
     client = GitHubClient(token="dummytoken")

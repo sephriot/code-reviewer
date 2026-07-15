@@ -358,8 +358,11 @@ entries:
   - on-demand-review
   - github
   - sqlite
+  - responsiveness
   sources:
   - src/code_reviewer/database.py
   - src/code_reviewer/github_client.py
   - src/code_reviewer/github_monitor.py
   - src/code_reviewer/web_server.py
+  - src/code_reviewer/templates/dashboard.html
+  - tests/test_review_requests_ui.py

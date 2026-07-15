@@ -370,7 +370,7 @@
                             <option value="fable">Fable</option>
                         </select>
                         <div class="buttons">
-                            <button class="btn btn-approve" onclick="submitRequestedReview(${pr.id})">Start Review</button>
+                            <button id="review-request-start-${pr.id}" class="btn btn-approve" onclick="submitRequestedReview(${pr.id})">Start Review</button>
                             <button class="btn" onclick="toggleRequestedReviewContext(${pr.id}, false)">Cancel</button>
                         </div>
                     </div>
@@ -393,6 +393,9 @@
             if (!pr) return;
             const userContext = document.getElementById(`review-request-context-input-${id}`).value;
             const claudeModel = document.getElementById(`review-request-model-${id}`).value;
+            const startButton = document.getElementById(`review-request-start-${id}`);
+            startButton.disabled = true;
+            startButton.textContent = 'Starting…';
             try {
                 const response = await fetch('/api/review-requests/review', {
                     method: 'POST',
@@ -411,6 +414,8 @@
                 showToast(result.message);
             } catch (error) {
                 console.error('Failed to start review:', error);
+                startButton.disabled = false;
+                startButton.textContent = 'Start Review';
                 alert(error.message);
             }
         }

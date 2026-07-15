@@ -177,6 +177,43 @@ class GitHubClient:
                 raise
             return []
 
+    async def get_requested_pr(
+        self, username: str, repository: str, pr_number: int
+    ) -> Optional[PRInfo]:
+        """Fetch one open PR and confirm that it requests this user's review."""
+        owner, repo = repository.split("/", 1)
+        self._ensure_session()
+
+        url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+        async with self.session.get(url) as response:
+            data = await response.json()
+            if response.status == 404:
+                return None
+            if response.status != 200:
+                raise RuntimeError(
+                    f"GitHub API returned {response.status} while fetching "
+                    f"{repository}#{pr_number}"
+                )
+
+        requested_logins = {
+            reviewer.get("login", "").casefold()
+            for reviewer in data.get("requested_reviewers", [])
+            if isinstance(reviewer, dict)
+        }
+        if data.get("state") != "open" or username.casefold() not in requested_logins:
+            return None
+
+        return PRInfo(
+            id=data["id"],
+            number=data["number"],
+            repository=[owner, repo],
+            url=data["html_url"],
+            title=data.get("title", ""),
+            author=data.get("user", {}).get("login", ""),
+            head_sha=data.get("head", {}).get("sha", ""),
+            base_sha=data.get("base", {}).get("sha", ""),
+        )
+
     async def get_own_prs(
         self, username: str, repositories: Optional[List[str]] = None
     ) -> List[PRInfo]:
