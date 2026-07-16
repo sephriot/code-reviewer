@@ -276,6 +276,48 @@ async def test_approval_rejects_a_pending_review_for_a_new_commit(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_concurrent_approval_posts_only_one_github_review(tmp_path):
+    db = ReviewDatabase(tmp_path / "reviews.db")
+    pr_info = _pr()
+    approval_id = await db.create_pending_approval(
+        pr_info,
+        ReviewResult(action=ReviewAction.APPROVE_WITH_COMMENT, comment="Looks good"),
+    )
+    github_client = AsyncMock()
+    github_client.get_pr_status.return_value = {
+        "state": "open",
+        "merged": False,
+        "head_sha": pr_info.head_sha,
+        "base_sha": pr_info.base_sha,
+    }
+    server = ReviewWebServer(db, github_client)
+    first_post_started = asyncio.Event()
+    release_first_post = asyncio.Event()
+
+    async def post_review(*_args):
+        if not first_post_started.is_set():
+            first_post_started.set()
+            await release_first_post.wait()
+        return True
+
+    server._post_github_review = AsyncMock(side_effect=post_review)
+    endpoint = _route_endpoint(server.app, "/api/approvals/{approval_id}/approve", "POST")
+
+    try:
+        first = asyncio.create_task(endpoint(approval_id, _StubRequest({"comment": ""})))
+        await first_post_started.wait()
+        second_response = await endpoint(approval_id, _StubRequest({"comment": ""}))
+        release_first_post.set()
+        first_response = await first
+
+        assert first_response.status_code == 200
+        assert second_response.status_code == 409
+        server._post_github_review.assert_awaited_once()
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
 async def test_busy_re_review_keeps_pending_approval(tmp_path):
     db = ReviewDatabase(tmp_path / "reviews.db")
     pr_info = _pr()

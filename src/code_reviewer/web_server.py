@@ -18,6 +18,7 @@ from .database import (
     PENDING_APPROVAL_STATUS_PENDING,
     PENDING_APPROVAL_STATUS_REJECTED,
     PENDING_APPROVAL_STATUS_EXPIRED,
+    PENDING_APPROVAL_STATUS_POSTING,
     OWN_PR_STATUS_PENDING,
     OWN_PR_STATUS_READY_FOR_MERGING,
     OWN_PR_STATUS_NEEDS_ATTENTION,
@@ -473,6 +474,7 @@ class ReviewWebServer:
         @self.app.post("/api/approvals/{approval_id}/approve")
         async def approve_pr(approval_id: int, request: Request):
             """Approve a PR and post the review."""
+            posting_claimed = False
             try:
                 body = await request.json()
                 user_comment = body.get("comment", "")
@@ -485,9 +487,24 @@ class ReviewWebServer:
                 if not approval:
                     raise HTTPException(status_code=404, detail="Approval not found")
 
+                if approval["status"] == PENDING_APPROVAL_STATUS_POSTING:
+                    return JSONResponse(
+                        status_code=409,
+                        content={"detail": "Approval is already being posted"},
+                    )
+
                 if approval["status"] != PENDING_APPROVAL_STATUS_PENDING:
                     raise HTTPException(
                         status_code=400, detail="Approval is not pending"
+                    )
+
+                posting_claimed = await self.database.claim_pending_approval_for_posting(
+                    approval_id
+                )
+                if not posting_claimed:
+                    return JSONResponse(
+                        status_code=409,
+                        content={"detail": "Approval is already being posted"},
                     )
 
                 pr_status = await self.github_client.get_pr_status(
@@ -612,6 +629,11 @@ class ReviewWebServer:
             except Exception as e:
                 logger.error(f"Failed to approve PR {approval_id}: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
+            finally:
+                if posting_claimed:
+                    await self.database.release_pending_approval_posting_claim(
+                        approval_id
+                    )
 
         @self.app.post("/api/approvals/{approval_id}/reject")
         async def reject_pr(approval_id: int, request: Request):

@@ -20,6 +20,7 @@ PENDING_APPROVAL_STATUS_APPROVED = "approved"
 PENDING_APPROVAL_STATUS_REJECTED = "rejected"
 PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED = "merged_or_closed"
 PENDING_APPROVAL_STATUS_EXPIRED = "expired"
+PENDING_APPROVAL_STATUS_POSTING = "posting"
 
 OWN_PR_STATUS_PENDING = "pending"
 OWN_PR_STATUS_READY_FOR_MERGING = "ready_for_merging"
@@ -43,6 +44,7 @@ VALID_PENDING_APPROVAL_STATUSES = {
     PENDING_APPROVAL_STATUS_REJECTED,
     PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED,
     PENDING_APPROVAL_STATUS_EXPIRED,
+    PENDING_APPROVAL_STATUS_POSTING,
 }
 
 
@@ -186,6 +188,13 @@ class ReviewDatabase:
 
         # Migrate UNIQUE constraint to include head_sha (if needed)
         self._migrate_pending_approvals_unique_constraint(cursor)
+
+        # A process crash can interrupt an external review post after claiming it.
+        # No process owns a claim across restarts, so make it retryable at startup.
+        cursor.execute(
+            "UPDATE pending_approvals SET status = ? WHERE status = ?",
+            (PENDING_APPROVAL_STATUS_PENDING, PENDING_APPROVAL_STATUS_POSTING),
+        )
 
         # Create own_prs table for tracking own PR reviews
         cursor.execute("""
@@ -1341,6 +1350,52 @@ class ReviewDatabase:
         except sqlite3.Error as e:
             logger.error(f"Error updating pending approval: {e}")
             raise
+
+    async def claim_pending_approval_for_posting(self, approval_id: int) -> bool:
+        """Atomically claim a pending approval before posting it to GitHub."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._claim_pending_approval_for_posting_sync, approval_id
+        )
+
+    def _claim_pending_approval_for_posting_sync(self, approval_id: int) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE pending_approvals
+            SET status = ?
+            WHERE id = ? AND status = ?
+            """,
+            (
+                PENDING_APPROVAL_STATUS_POSTING,
+                approval_id,
+                PENDING_APPROVAL_STATUS_PENDING,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    async def release_pending_approval_posting_claim(self, approval_id: int) -> bool:
+        """Return a failed posting claim to the pending state."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._release_pending_approval_posting_claim_sync, approval_id
+        )
+
+    def _release_pending_approval_posting_claim_sync(self, approval_id: int) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE pending_approvals
+            SET status = ?
+            WHERE id = ? AND status = ?
+            """,
+            (
+                PENDING_APPROVAL_STATUS_PENDING,
+                approval_id,
+                PENDING_APPROVAL_STATUS_POSTING,
+            ),
+        )
+        return cursor.rowcount == 1
 
     async def get_pending_approval(self, approval_id: int) -> Optional[Dict[str, Any]]:
         """Get a specific pending approval by ID."""
