@@ -204,7 +204,7 @@ class GitHubClient:
     async def get_requested_pr(
         self, username: str, repository: str, pr_number: int
     ) -> Optional[PRInfo]:
-        """Fetch one open PR and confirm that it requests this user's review."""
+        """Fetch one open PR and return its details."""
         owner, repo = repository.split("/", 1)
         self._ensure_session()
 
@@ -219,12 +219,7 @@ class GitHubClient:
                     f"{repository}#{pr_number}"
                 )
 
-        requested_logins = {
-            reviewer.get("login", "").casefold()
-            for reviewer in data.get("requested_reviewers", [])
-            if isinstance(reviewer, dict)
-        }
-        if data.get("state") != "open" or username.casefold() not in requested_logins:
+        if data.get("state") != "open":
             return None
 
         return PRInfo(

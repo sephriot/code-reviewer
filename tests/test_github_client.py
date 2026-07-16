@@ -238,7 +238,7 @@ async def test_get_requested_pr_fetches_only_selected_pr():
 
 
 @pytest.mark.asyncio
-async def test_get_requested_pr_returns_none_when_review_is_not_requested():
+async def test_get_requested_pr_returns_pr_info_for_open_pr_regardless_of_requested_reviewers():
     payload = {
         "id": 123,
         "number": 42,
@@ -253,7 +253,10 @@ async def test_get_requested_pr_returns_none_when_review_is_not_requested():
     client = GitHubClient(token="dummytoken")
     client.session = _FakeGetSession(_FakeResponse(200, payload=payload))
 
-    assert await client.get_requested_pr("reviewer", "acme/widgets", 42) is None
+    pr_info = await client.get_requested_pr("reviewer", "acme/widgets", 42)
+    assert pr_info is not None
+    assert pr_info.number == 42
+    assert pr_info.repository_name == "acme/widgets"
 
 
 @pytest.mark.asyncio
