@@ -1,4 +1,4 @@
-next_id: 27
+next_id: 31
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -377,3 +377,60 @@ entries:
   - polling
   sources:
   - src/code_reviewer/github_client.py
+- id: K-000027
+  title: Dashboard operational inbox and accessible actions
+  type: decision
+  confidence: high
+  tags:
+  - web-ui
+  - accessibility
+  - dashboard
+  - pending-approval
+  sources:
+  - src/code_reviewer/templates/dashboard.html
+  - src/code_reviewer/static/css/style.css
+  links:
+  - K-000013
+- id: K-000028
+  title: Master sound mute with separate startup control
+  type: decision
+  confidence: high
+  tags:
+  - sound
+  - startup
+  - configuration
+  sources:
+  - src/code_reviewer/config.py
+  - src/code_reviewer/main.py
+  - src/code_reviewer/sound_notifier.py
+  links:
+  - K-000011
+- id: K-000029
+  title: Human reviews archive when PRs close or merge
+  type: decision
+  confidence: high
+  tags:
+  - human-review
+  - cleanup
+  - github
+  - sqlite
+  sources:
+  - src/code_reviewer/database.py
+  - src/code_reviewer/github_monitor.py
+  links:
+  - K-000014
+- id: K-000030
+  title: REVIEW_TOOL replaces REVIEW_MODEL configuration
+  type: decision
+  confidence: high
+  tags:
+  - configuration
+  - review-tool
+  - web-ui
+  sources:
+  - src/code_reviewer/config.py
+  - src/code_reviewer/main.py
+  - src/code_reviewer/web_server.py
+  - src/code_reviewer/templates/dashboard.html
+  links:
+  - K-000015

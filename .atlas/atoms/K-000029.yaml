@@ -1,0 +1,16 @@
+id: K-000029
+title: Human reviews archive when PRs close or merge
+type: decision
+confidence: high
+summary: Poll cleanup shares one GitHub status lookup per PR across pending approvals and active human reviews. Closed or merged human-review records become merged_or_closed and leave the active dashboard queue while history remains.
+tags:
+- human-review
+- cleanup
+- github
+- sqlite
+sources:
+- src/code_reviewer/database.py
+- src/code_reviewer/github_monitor.py
+links:
+- K-000014
+updated_at: 2026-07-17

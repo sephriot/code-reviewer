@@ -27,7 +27,7 @@ class CodeReviewer:
         self.github_client = GitHubClient(config.github_token)
         self.model_integration = LLMIntegration(
             config.prompt_file,
-            config.review_model,
+            config.review_tool,
             output_format_file=config.output_format_file,
             show_thinking=config.show_thinking,
             atlas_enabled=config.atlas_enabled,
@@ -63,7 +63,7 @@ class CodeReviewer:
         click.echo(f"Using prompt file: {self.config.prompt_file}")
         if self.config.output_format_file:
             click.echo(f"Using output format file: {self.config.output_format_file}")
-        click.echo(f"Using review model: {self.config.review_model.value}")
+        click.echo(f"Using review tool: {self.config.review_tool.value}")
         if self.config.claude_model:
             click.echo(f"Using Claude model: {self.config.claude_model}")
         if self.model_integration.effort_message:
@@ -82,9 +82,10 @@ class CodeReviewer:
         for placeholder, desc in templates:
             click.echo(f"  {placeholder} - {desc}")
 
-        await self.monitor.sound_notifier.play_all_enabled(
-            self.monitor.sound_notifier.get_demo_context()
-        )
+        if self.config.startup_sounds_enabled:
+            await self.monitor.sound_notifier.play_all_enabled(
+                self.monitor.sound_notifier.get_demo_context()
+            )
 
         try:
             own_prs_monitored = self.config.own_pr_mode != OwnPRMode.OFF
@@ -163,12 +164,13 @@ class CodeReviewer:
     help="Path to output format prompt file (appended to the review prompt)",
 )
 @click.option(
+    "--tool",
     "--model",
-    "review_model",
+    "review_tool",
     type=click.Choice(["CLAUDE", "CODEX", "AGENT"]),
-    envvar="REVIEW_MODEL",
-    default="CLAUDE",
-    help="Language model CLI to use for reviews (env: REVIEW_MODEL)",
+    envvar="REVIEW_TOOL",
+    default=None,
+    help="Review CLI to use (env: REVIEW_TOOL; default: CLAUDE; --model is deprecated)",
 )
 @click.option(
     "--effort",
@@ -199,7 +201,7 @@ class CodeReviewer:
     default=None,
     envvar="REVIEW_AGENT_ARGV",
     help=(
-        "When --model AGENT: JSON array of argv for the Cursor `agent` CLI "
+        "When --tool AGENT: JSON array of argv for the Cursor `agent` CLI "
         '(default: ["agent","--print","--output-format","json","--trust"]). '
         "Env: REVIEW_AGENT_ARGV"
     ),
@@ -225,8 +227,15 @@ class CodeReviewer:
 )
 @click.option(
     "--sound-enabled/--no-sound",
-    default=True,
-    help="Enable/disable sound notifications (default: enabled)",
+    default=None,
+    help="Enable/disable every sound notification (env: SOUND_ENABLED)",
+)
+@click.option(
+    "--startup-sounds/--no-startup-sounds",
+    "startup_sounds_enabled",
+    envvar="STARTUP_SOUNDS_ENABLED",
+    default=None,
+    help="Enable/disable startup sound playback only (env: STARTUP_SOUNDS_ENABLED)",
 )
 @click.option(
     "--speech-rate",
@@ -371,7 +380,7 @@ def main(
     config: Optional[str],
     prompt: Optional[str],
     output_format: Optional[str],
-    review_model: str,
+    review_tool: Optional[str],
     review_effort: Optional[str],
     claude_model: Optional[str],
     review_agent_argv_json: Optional[str],
@@ -379,7 +388,8 @@ def main(
     github_username: Optional[str],
     poll_interval: int,
     review_timeout: Optional[int],
-    sound_enabled: bool,
+    sound_enabled: Optional[bool],
+    startup_sounds_enabled: Optional[bool],
     speech_rate: Optional[int],
     sound_file: Optional[str],
     approval_sound_enabled: bool,
@@ -432,7 +442,7 @@ def main(
             config_file=config,
             prompt_file=prompt,
             output_format_file=output_format,
-            review_model=review_model,
+            review_tool=review_tool,
             review_effort=review_effort,
             claude_model=claude_model,
             github_token=github_token,
@@ -440,6 +450,7 @@ def main(
             poll_interval=poll_interval,
             review_timeout=review_timeout,
             sound_enabled=sound_enabled,
+            startup_sounds_enabled=startup_sounds_enabled,
             speech_rate=speech_rate,
             sound_file=sound_file,
             approval_sound_enabled=approval_sound_enabled,

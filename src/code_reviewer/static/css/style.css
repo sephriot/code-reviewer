@@ -68,6 +68,7 @@
 html {
   font-size: 16px;
   scroll-behavior: smooth;
+  color-scheme: light;
 }
 
 body {
@@ -110,6 +111,23 @@ select:focus-visible,
 input:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+.skip-link {
+  position: fixed;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 10000;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-ink-strong);
+  color: #fff;
+  transform: translateY(-160%);
+  transition: transform var(--transition-fast);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
 }
 
 .container {
@@ -235,6 +253,85 @@ input:focus-visible {
 
 .sound-toggle input:checked + .sound-toggle-track::after {
   transform: translateX(20px);
+}
+
+.attention-deck {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  border: 1px solid rgba(20, 32, 51, 0.1);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--color-shadow-sm);
+}
+
+.attention-deck .eyebrow {
+  margin-bottom: var(--space-1);
+}
+
+.attention-deck h2 {
+  margin: 0;
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-xl);
+  color: var(--color-ink-strong);
+}
+
+.attention-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(130px, 1fr));
+  gap: var(--space-2);
+  width: min(100%, 620px);
+}
+
+.attention-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-strong);
+  color: var(--color-ink-soft);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.attention-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(31, 79, 136, 0.34);
+  box-shadow: 0 8px 18px rgba(31, 79, 136, 0.1);
+}
+
+.attention-card-decision {
+  border-color: rgba(155, 95, 19, 0.24);
+  background: linear-gradient(135deg, #fffdf8, var(--color-warning-soft));
+}
+
+.attention-card-review {
+  border-color: rgba(162, 65, 55, 0.2);
+  background: linear-gradient(135deg, #fffafb, var(--color-danger-soft));
+}
+
+.attention-count {
+  min-width: 1.45em;
+  color: var(--color-ink-strong);
+  font-family: var(--font-family-heading);
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .tabs {
@@ -755,12 +852,16 @@ select:focus {
 }
 
 .modal {
-  display: none;
+  display: block;
   position: fixed;
   inset: 0;
   z-index: 1000;
   background: rgba(14, 20, 28, 0.5);
   backdrop-filter: blur(6px);
+}
+
+.modal[hidden] {
+  display: none;
 }
 
 .modal-content {
@@ -779,6 +880,14 @@ select:focus {
   font-family: var(--font-family-heading);
   font-size: 1.6rem;
   color: var(--color-ink-strong);
+}
+
+.modal-content label {
+  display: block;
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--color-ink-soft);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
 }
 
 .close {
@@ -937,7 +1046,12 @@ select:focus {
   font-size: var(--font-size-sm);
   font-weight: 600;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition:
+    transform var(--transition-fast),
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .filter-btn:hover {
@@ -1039,6 +1153,15 @@ td.empty-state {
   .pr-card {
     padding: var(--space-5);
   }
+
+  .attention-deck {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .attention-actions {
+    width: 100%;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1053,6 +1176,14 @@ td.empty-state {
   .tab {
     flex: 1 1 calc(50% - var(--space-2));
     text-align: center;
+  }
+
+  .attention-deck {
+    padding: var(--space-4);
+  }
+
+  .attention-actions {
+    grid-template-columns: 1fr;
   }
 
   .analytics-controls {
@@ -1084,5 +1215,19 @@ td.empty-state {
   .modal-content {
     margin: 4vh auto;
     padding: var(--space-5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

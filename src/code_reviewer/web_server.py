@@ -110,8 +110,18 @@ class ReviewWebServer:
         @self.app.get("/", response_class=HTMLResponse)
         async def dashboard(request: Request):
             """Main dashboard page."""
+            review_tool = getattr(self.config, "review_tool", None)
+            supports_claude_model_override = (
+                review_tool is ReviewModel.CLAUDE
+                if review_tool is not None
+                else getattr(self.llm_integration, "model", None) is ReviewModel.CLAUDE
+            )
             return self.templates.TemplateResponse(
-                "dashboard.html", {"request": request}
+                "dashboard.html",
+                {
+                    "request": request,
+                    "supports_claude_model_override": supports_claude_model_override,
+                },
             )
 
         @self.app.get("/api/pending-approvals")
@@ -179,7 +189,7 @@ class ReviewWebServer:
                 if self.llm_integration.model is not ReviewModel.CLAUDE:
                     raise HTTPException(
                         status_code=400,
-                        detail="Claude model overrides require REVIEW_MODEL=CLAUDE",
+                        detail="Claude model overrides require REVIEW_TOOL=CLAUDE",
                     )
 
             if self.llm_integration.review_in_progress:
@@ -343,7 +353,7 @@ class ReviewWebServer:
                     if self.llm_integration.model is not ReviewModel.CLAUDE:
                         raise HTTPException(
                             status_code=400,
-                            detail="Claude model overrides require REVIEW_MODEL=CLAUDE",
+                            detail="Claude model overrides require REVIEW_TOOL=CLAUDE",
                         )
 
                 own_pr = await self.database.get_own_pr_by_id(pr_id)

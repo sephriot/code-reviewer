@@ -19,6 +19,8 @@ PENDING_APPROVAL_STATUS_PENDING = "pending"
 PENDING_APPROVAL_STATUS_APPROVED = "approved"
 PENDING_APPROVAL_STATUS_REJECTED = "rejected"
 PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED = "merged_or_closed"
+HUMAN_REVIEW_STATUS_ACTIVE = "active"
+HUMAN_REVIEW_STATUS_MERGED_OR_CLOSED = "merged_or_closed"
 PENDING_APPROVAL_STATUS_EXPIRED = "expired"
 PENDING_APPROVAL_STATUS_POSTING = "posting"
 
@@ -94,6 +96,7 @@ class ReviewDatabase:
                 pr_updated_at TIMESTAMP,
                 head_sha TEXT,
                 base_sha TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(repository, pr_number, head_sha)
             )
@@ -127,6 +130,14 @@ class ReviewDatabase:
         """)
 
         # Create index for faster lookups
+        # Existing databases predate the human-review lifecycle status.
+        try:
+            cursor.execute(
+                "ALTER TABLE pr_reviews ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
+            )
+        except sqlite3.OperationalError:
+            pass
+
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_pr_lookup 
             ON pr_reviews(repository, pr_number)
@@ -135,6 +146,11 @@ class ReviewDatabase:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_review_action 
             ON pr_reviews(review_action)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_human_review_status
+            ON pr_reviews(review_action, status)
         """)
 
         cursor.execute("""
@@ -1288,14 +1304,58 @@ class ReviewDatabase:
         cursor.execute(
             """
             SELECT * FROM pr_reviews 
-            WHERE review_action = ?
+            WHERE review_action = ? AND status = ?
             ORDER BY reviewed_at DESC
             LIMIT 50
         """,
-            (ReviewAction.REQUIRES_HUMAN_REVIEW.value,),
+            (ReviewAction.REQUIRES_HUMAN_REVIEW.value, HUMAN_REVIEW_STATUS_ACTIVE),
         )
 
         return [ReviewRecord.from_db_row(dict(row)) for row in cursor.fetchall()]
+
+    async def get_active_human_review_refs(self) -> List[Dict[str, Any]]:
+        """Get lightweight metadata for active human-review items."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._get_active_human_review_refs_sync
+        )
+
+    def _get_active_human_review_refs_sync(self) -> List[Dict[str, Any]]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, repository, pr_number, pr_title, pr_author
+            FROM pr_reviews
+            WHERE review_action = ? AND status = ?
+            ORDER BY reviewed_at DESC
+            """,
+            (ReviewAction.REQUIRES_HUMAN_REVIEW.value, HUMAN_REVIEW_STATUS_ACTIVE),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    async def mark_human_review_merged_or_closed(self, review_id: int) -> bool:
+        """Archive an active human-review item after its PR closes or merges."""
+        return await asyncio.get_event_loop().run_in_executor(
+            None, self._mark_human_review_merged_or_closed_sync, review_id
+        )
+
+    def _mark_human_review_merged_or_closed_sync(self, review_id: int) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE pr_reviews
+            SET status = ?
+            WHERE id = ? AND review_action = ? AND status = ?
+            """,
+            (
+                HUMAN_REVIEW_STATUS_MERGED_OR_CLOSED,
+                review_id,
+                ReviewAction.REQUIRES_HUMAN_REVIEW.value,
+                HUMAN_REVIEW_STATUS_ACTIVE,
+            ),
+        )
+        return cursor.rowcount > 0
 
     async def update_pending_approval_status(
         self, approval_id: int, status: str, user_comment: Optional[str] = None

@@ -1,0 +1,17 @@
+id: K-000030
+title: REVIEW_TOOL replaces REVIEW_MODEL configuration
+type: decision
+confidence: high
+summary: REVIEW_TOOL and --tool are primary review CLI configuration. REVIEW_MODEL and --model remain deprecated compatibility aliases. Claude model override controls render only for the Claude tool.
+tags:
+- configuration
+- review-tool
+- web-ui
+sources:
+- src/code_reviewer/config.py
+- src/code_reviewer/main.py
+- src/code_reviewer/web_server.py
+- src/code_reviewer/templates/dashboard.html
+links:
+- K-000015
+updated_at: 2026-07-17

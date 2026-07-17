@@ -135,6 +135,21 @@ async def test_runtime_mute_skips_all_playback(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sound_enabled_is_master_mute(monkeypatch):
+    called = []
+
+    async def fake_play_system(self):
+        called.append("system")
+
+    monkeypatch.setattr(SoundNotifier, "_play_system_sound", fake_play_system)
+
+    notifier = SoundNotifier(enabled=False)
+    await notifier.play_all_enabled()
+
+    assert called == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_mute_cleared_allows_playback(monkeypatch):
     called = []
 

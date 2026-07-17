@@ -60,7 +60,7 @@ class Config:
     github_username: str
     prompt_file: Path
     output_format_file: Optional[Path] = None
-    review_model: ReviewModel = ReviewModel.CLAUDE
+    review_tool: ReviewModel = ReviewModel.CLAUDE
     review_effort: Optional[str] = None
     claude_model: Optional[str] = None
     review_agent_argv: Optional[List[str]] = None
@@ -70,6 +70,7 @@ class Config:
     repositories: Optional[list] = None
     pr_authors: Optional[list] = None
     sound_enabled: bool = True
+    startup_sounds_enabled: bool = True
     speech_rate: int = 200
     sound_file: Optional[SoundFileConfig] = None
     approval_sound_enabled: bool = True
@@ -116,7 +117,7 @@ class Config:
             "GITHUB_USERNAME": "github_username",
             "PROMPT_FILE": "prompt_file",
             "OUTPUT_FORMAT_FILE": "output_format_file",
-            "REVIEW_MODEL": "review_model",
+            "REVIEW_TOOL": "review_tool",
             "REVIEW_EFFORT": "review_effort",
             "CLAUDE_MODEL": "claude_model",
             "REVIEW_TIMEOUT": "review_timeout",
@@ -125,6 +126,7 @@ class Config:
             "REPOSITORIES": "repositories",
             "PR_AUTHORS": "pr_authors",
             "SOUND_ENABLED": "sound_enabled",
+            "STARTUP_SOUNDS_ENABLED": "startup_sounds_enabled",
             "SPEECH_RATE": "speech_rate",
             "SOUND_FILE": "sound_file",
             "APPROVAL_SOUND_ENABLED": "approval_sound_enabled",
@@ -169,6 +171,7 @@ class Config:
                         raise ValueError(f"{config_key} must be an integer") from exc
                 elif config_key in [
                     "sound_enabled",
+                    "startup_sounds_enabled",
                     "approval_sound_enabled",
                     "human_review_sound_enabled",
                     "timeout_sound_enabled",
@@ -228,10 +231,20 @@ class Config:
         if legacy_sound_file and "merged_or_closed_sound_file" not in config_data:
             config_data["merged_or_closed_sound_file"] = Path(legacy_sound_file)
 
+        legacy_review_model = os.getenv("REVIEW_MODEL")
+        if legacy_review_model and "review_tool" not in config_data:
+            logger.warning("REVIEW_MODEL is deprecated; use REVIEW_TOOL instead")
+            config_data["review_tool"] = legacy_review_model
+
         # Override with function parameters
         for key, value in overrides.items():
             if value is not None:
                 config_data[key] = value
+
+        if "review_model" in config_data and "review_tool" not in config_data:
+            logger.warning("review_model is deprecated; use review_tool instead")
+            config_data["review_tool"] = config_data["review_model"]
+        config_data.pop("review_model", None)
 
         # Translate legacy own_pr_enabled (YAML/env/CLI) into own_pr_mode.
         # An explicit own_pr_mode always wins over the legacy boolean.
@@ -277,8 +290,8 @@ class Config:
             config_data["speech_rate"] = speech_rate
 
         # Normalize review model selection
-        config_data["review_model"] = cls._normalize_review_model(
-            config_data.get("review_model", ReviewModel.CLAUDE)
+        config_data["review_tool"] = cls._normalize_review_tool(
+            config_data.get("review_tool", ReviewModel.CLAUDE)
         )
 
         # Normalize effort selection (compatibility with the selected model is
@@ -402,8 +415,8 @@ class Config:
         raise ValueError(f"Unsupported own PR mode '{value}'. Choose from: {valid}.")
 
     @staticmethod
-    def _normalize_review_model(value) -> ReviewModel:
-        """Convert string or enum input into ReviewModel."""
+    def _normalize_review_tool(value) -> ReviewModel:
+        """Convert configured review-tool value into its CLI enum."""
         if value is None:
             return ReviewModel.CLAUDE
         if isinstance(value, ReviewModel):

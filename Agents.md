@@ -62,7 +62,7 @@ Do not use system Python (`python` or `python3`) for project commands.
   - Validates required fields and action enum values.
   - Raises `LLMOutputParseError` when parsing fails, triggering retry logic in the monitor and logging truncated output for diagnosis.
 - **Prompt sourcing**: Uses `Config.prompt_file`, defaulting to `prompts/review_prompt.txt` or user-selected prompt packs.
-- **Model selection**: Controlled by `Config.review_model` (`REVIEW_MODEL` env or `--model` flag) to switch between CLAUDE and CODEX CLIs. Claude CLI reviews can also set `Config.claude_model` (`CLAUDE_MODEL`, `--claude-model`) to pass `--model opus|sonnet|fable`.
+- **Tool selection**: Controlled by `Config.review_tool` (`REVIEW_TOOL` env or `--tool` flag) to switch between CLAUDE, CODEX, and AGENT CLIs. `REVIEW_MODEL` and `--model` remain deprecated aliases. Claude CLI reviews can also set `Config.claude_model` (`CLAUDE_MODEL`, `--claude-model`) to pass `--model opus|sonnet|fable`.
 
 ### GitHub API Agent - `GitHubClient`
 - **Location**: `src/code_reviewer/github_client.py`.
@@ -102,7 +102,8 @@ Do not use system Python (`python` or `python3`) for project commands.
   - Prefers custom sound files when provided.
   - Falls back gracefully if audio binaries are unavailable.
   - Distinguishes startup, new PR, human review, and pending approval sounds.
-  - Can be disabled through configuration.
+- Can be disabled through configuration.
+- `SOUND_ENABLED` is the master gate for every sound event; `STARTUP_SOUNDS_ENABLED` controls only startup demo playback.
 
 ### Configuration Agent - `Config`
 - **Location**: `src/code_reviewer/config.py`.
@@ -206,10 +207,13 @@ GitHubMonitor -> ReviewDatabase.should_review_pr
 - A successful scan atomically replaces the cached queue, including clearing it when GitHub returns no requests; a failed scan leaves the previous queue intact.
 - Review requests can be reviewed on demand through the same assigned-PR pipeline, with immediate start feedback, optional user context, and Claude model override; the endpoint acknowledges from SQLite and revalidates only the selected PR in the background.
 - Pending approvals let users review and approve/reject comments before GitHub posting.
+- The operational inbox exposes live pending-decision, human-review, and review-request counts; it is navigation only and does not alter cached queue or automatic-review behavior.
 - Human review tracking displays PRs marked as `requires_human_review`.
+- Closed or merged PRs are archived from active human-review tracking during the poll cleanup; completed entries remain in review history.
 - Approval history preserves approved and rejected reviews with before/after comparison.
 - History states are grouped under one History tab; analytics remains a separate top-level view.
 - The JavaScript interface uses async API calls for updates.
+- Tabs support arrow-key, Home, and End navigation; approval/rejection uses a focus-managed modal and status messages are announced through an ARIA live region.
 - The UI should remain mobile responsive.
 - The server runs on localhost by default and has no built-in authentication; it is designed for a single user.
 - The `pending_approvals` table stores inline comments as JSON and tracks commit SHAs.
@@ -256,7 +260,7 @@ GitHubMonitor -> ReviewDatabase.should_review_pr
 - Enable the web UI (`WEB_ENABLED=true` or `--web-enabled`) when working with pending approvals; otherwise, approvals remain in the database awaiting manual processing.
 - Dry run mode (`--dry-run` or `DRY_RUN=true`) exercises the full pipeline without mutating GitHub or the database.
 - Sound notifications can be toggled or customized with `SOUND_ENABLED`, `SOUND_FILE`, `APPROVAL_SOUND_ENABLED`, and `APPROVAL_SOUND_FILE`.
-- Set `REVIEW_MODEL` to `CLAUDE` or `CODEX`, or use the `--model` CLI flag, to choose the review CLI.
+- Set `REVIEW_TOOL` to `CLAUDE`, `CODEX`, or `AGENT`, or use the `--tool` CLI flag, to choose the review CLI. `REVIEW_MODEL` and `--model` remain deprecated aliases.
 - Set `CLAUDE_MODEL` (or `--claude-model`) to `opus`, `sonnet`, or `fable` to pass Claude CLI `--model` for automated Claude reviews. My PRs one-shot reviews in the web UI can override this per request; leaving the selector on the default uses config.
 - Set `REVIEW_EFFORT` (or `--effort`) to tune Claude's reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`). It applies only to the Claude CLI; for other models or invalid values it is logged at startup and ignored (the tool default is used). The effective effort is also logged in the per-PR review startup log.
 - Set `OWN_PR_MODE` (or `--own-pr-mode`) to `off`, `auto`, or `manual` to control own PR handling. `auto` reviews own PRs automatically when detected; `manual` tracks them as `pending` in the My PRs tab without reviewing, and a review runs only when explicitly requested via the web UI ("Request Review"). New commits to a manually reviewed PR reset it to `pending`. The legacy `OWN_PR_ENABLED` boolean maps to `auto`/`off` and is ignored when `OWN_PR_MODE` is set. Manual mode requires the web UI to be useful.

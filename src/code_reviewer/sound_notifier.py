@@ -103,6 +103,9 @@ class SoundNotifier:
         return value
 
     def _skip_if_runtime_muted(self) -> bool:
+        if not self.enabled:
+            logger.debug("Sound playback skipped (sound notifications disabled)")
+            return True
         if self.runtime_mute_all:
             logger.debug("Sound playback skipped (runtime mute all)")
             return True

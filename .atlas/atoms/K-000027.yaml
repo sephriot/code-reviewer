@@ -1,0 +1,16 @@
+id: K-000027
+title: Dashboard operational inbox and accessible actions
+type: decision
+confidence: high
+summary: Keep existing API contracts while surfacing actionable queue counts first and using semantic keyboard-accessible tabs plus a focus-managed approval/rejection dialog.
+tags:
+- web-ui
+- accessibility
+- dashboard
+- pending-approval
+sources:
+- src/code_reviewer/templates/dashboard.html
+- src/code_reviewer/static/css/style.css
+links:
+- K-000013
+updated_at: 2026-07-17

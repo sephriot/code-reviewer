@@ -1,14 +1,15 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <title>Code Review Dashboard</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}?v=20260717-ui2">
 </head>
 <body>
+    <a class="skip-link" href="#dashboard-main">Skip to dashboard</a>
     <div class="container">
-        <div class="dashboard-header">
+        <header class="dashboard-header">
             <div class="dashboard-heading">
                 <p class="eyebrow">Human-in-the-loop review operations</p>
                 <h1>Code Review Dashboard</h1>
@@ -23,18 +24,40 @@
                     <span class="sound-toggle-track"></span>
                 </label>
             </div>
-        </div>
+        </header>
 
-        <div class="tabs" role="tablist" aria-label="Dashboard sections">
-            <button type="button" class="tab active" onclick="showTab('review-requests', this)">Review Requests</button>
-            <button type="button" class="tab" onclick="showTab('pending', this)">Pending Decisions</button>
-            <button type="button" class="tab" onclick="showTab('human-review', this)">Human Reviews</button>
-            <button type="button" class="tab" onclick="showTab('own-prs', this)">My PRs</button>
-            <button type="button" class="tab" onclick="showTab('history', this)">History</button>
-            <button type="button" class="tab" onclick="showTab('analytics', this)">Analytics</button>
-        </div>
+        <section class="attention-deck" aria-labelledby="attention-heading">
+            <div>
+                <p class="eyebrow">Operational inbox</p>
+                <h2 id="attention-heading">Needs your attention</h2>
+            </div>
+            <div class="attention-actions">
+                <button type="button" class="attention-card attention-card-decision" onclick="showTab('pending', getTabButton('pending'))">
+                    <span class="attention-count" id="attention-pending-count">—</span>
+                    <span>Pending decisions</span>
+                </button>
+                <button type="button" class="attention-card attention-card-review" onclick="showTab('human-review', getTabButton('human-review'))">
+                    <span class="attention-count" id="attention-human-count">—</span>
+                    <span>Human reviews</span>
+                </button>
+                <button type="button" class="attention-card" onclick="showTab('review-requests', getTabButton('review-requests'))">
+                    <span class="attention-count" id="attention-request-count">—</span>
+                    <span>Review requests</span>
+                </button>
+            </div>
+        </section>
 
-        <div id="review-requests" class="tab-content active">
+        <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+            <button type="button" id="tab-review-requests" role="tab" aria-selected="true" aria-controls="review-requests" tabindex="0" class="tab active" onclick="showTab('review-requests', this)" onkeydown="handleTabKeydown(event, '.tabs .tab')">Review Requests</button>
+            <button type="button" id="tab-pending" role="tab" aria-selected="false" aria-controls="pending" tabindex="-1" class="tab" onclick="showTab('pending', this)" onkeydown="handleTabKeydown(event, '.tabs .tab')">Pending Decisions</button>
+            <button type="button" id="tab-human-review" role="tab" aria-selected="false" aria-controls="human-review" tabindex="-1" class="tab" onclick="showTab('human-review', this)" onkeydown="handleTabKeydown(event, '.tabs .tab')">Human Reviews</button>
+            <button type="button" id="tab-own-prs" role="tab" aria-selected="false" aria-controls="own-prs" tabindex="-1" class="tab" onclick="showTab('own-prs', this)" onkeydown="handleTabKeydown(event, '.tabs .tab')">My PRs</button>
+            <button type="button" id="tab-history" role="tab" aria-selected="false" aria-controls="history" tabindex="-1" class="tab" onclick="showTab('history', this)" onkeydown="handleTabKeydown(event, '.tabs .tab')">History</button>
+            <button type="button" id="tab-analytics" role="tab" aria-selected="false" aria-controls="analytics" tabindex="-1" class="tab" onclick="showTab('analytics', this)" onkeydown="handleTabKeydown(event, '.tabs .tab')">Analytics</button>
+        </nav>
+
+        <main id="dashboard-main">
+        <section id="review-requests" role="tabpanel" tabindex="0" aria-labelledby="tab-review-requests" class="tab-content active">
             <div class="section">
                 <div class="section-heading-row">
                     <div>
@@ -45,69 +68,69 @@
                 </div>
                 <div id="review-requests-list"></div>
             </div>
-        </div>
+        </section>
 
-        <div id="pending" class="tab-content">
+        <section id="pending" role="tabpanel" tabindex="0" aria-labelledby="tab-pending" class="tab-content">
             <div class="section">
                 <h2>PRs Awaiting Your Approval</h2>
                 <p class="section-description">Review what will be posted, trim wording if needed, then approve or reject without leaving the dashboard.</p>
                 <div id="pending-approvals"></div>
             </div>
-        </div>
+        </section>
         
-        <div id="human-review" class="tab-content">
+        <section id="human-review" role="tabpanel" tabindex="0" aria-labelledby="tab-human-review" class="tab-content">
             <div class="section">
                 <h2>PRs Requiring Human Review</h2>
                 <p class="section-description">These are the pull requests where the automated reviewer could not make a safe final call.</p>
                 <div id="human-reviews"></div>
             </div>
-        </div>
+        </section>
 
-        <div id="history" class="tab-content">
+        <section id="history" role="tabpanel" tabindex="0" aria-labelledby="tab-history" class="tab-content">
             <div class="section">
                 <h2>Review History</h2>
                 <p class="section-description">Completed reviews and archived decisions in one searchable workflow.</p>
                 <div class="history-filters" role="tablist" aria-label="History views">
-                    <button type="button" class="filter-btn active" onclick="showHistoryPanel('completed-reviews', this)">Completed</button>
-                    <button type="button" class="filter-btn" onclick="showHistoryPanel('approved', this)">Approved</button>
-                    <button type="button" class="filter-btn" onclick="showHistoryPanel('rejected', this)">Rejected</button>
-                    <button type="button" class="filter-btn" onclick="showHistoryPanel('merged-closed', this)">Merged / Closed</button>
-                    <button type="button" class="filter-btn" onclick="showHistoryPanel('expired', this)">Expired</button>
+                    <button type="button" id="history-tab-completed" role="tab" aria-selected="true" aria-controls="completed-reviews" tabindex="0" class="filter-btn active" onclick="showHistoryPanel('completed-reviews', this)" onkeydown="handleTabKeydown(event, '.history-filters .filter-btn')">Completed</button>
+                    <button type="button" id="history-tab-approved" role="tab" aria-selected="false" aria-controls="approved" tabindex="-1" class="filter-btn" onclick="showHistoryPanel('approved', this)" onkeydown="handleTabKeydown(event, '.history-filters .filter-btn')">Approved</button>
+                    <button type="button" id="history-tab-rejected" role="tab" aria-selected="false" aria-controls="rejected" tabindex="-1" class="filter-btn" onclick="showHistoryPanel('rejected', this)" onkeydown="handleTabKeydown(event, '.history-filters .filter-btn')">Rejected</button>
+                    <button type="button" id="history-tab-merged-closed" role="tab" aria-selected="false" aria-controls="merged-closed" tabindex="-1" class="filter-btn" onclick="showHistoryPanel('merged-closed', this)" onkeydown="handleTabKeydown(event, '.history-filters .filter-btn')">Merged / Closed</button>
+                    <button type="button" id="history-tab-expired" role="tab" aria-selected="false" aria-controls="expired" tabindex="-1" class="filter-btn" onclick="showHistoryPanel('expired', this)" onkeydown="handleTabKeydown(event, '.history-filters .filter-btn')">Expired</button>
                 </div>
 
-                <div id="completed-reviews" class="history-panel active">
+                <div id="completed-reviews" role="tabpanel" tabindex="0" aria-labelledby="history-tab-completed" class="history-panel active">
                     <h3>Last 50 Completed PR Reviews</h3>
                     <div id="completed-reviews-list"></div>
                 </div>
-                <div id="approved" class="history-panel">
+                <div id="approved" role="tabpanel" tabindex="0" aria-labelledby="history-tab-approved" class="history-panel">
                     <h3>Approved Decisions</h3>
                     <div id="approved-approvals"></div>
                 </div>
-                <div id="rejected" class="history-panel">
+                <div id="rejected" role="tabpanel" tabindex="0" aria-labelledby="history-tab-rejected" class="history-panel">
                     <h3>Rejected Decisions</h3>
                     <div id="rejected-approvals"></div>
                 </div>
-                <div id="merged-closed" class="history-panel">
+                <div id="merged-closed" role="tabpanel" tabindex="0" aria-labelledby="history-tab-merged-closed" class="history-panel">
                     <h3>Merged or Closed</h3>
                     <div id="merged-closed-approvals"></div>
                 </div>
-                <div id="expired" class="history-panel">
+                <div id="expired" role="tabpanel" tabindex="0" aria-labelledby="history-tab-expired" class="history-panel">
                     <h3>Expired Decisions</h3>
                     <div id="expired-approvals"></div>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <div id="own-prs" class="tab-content">
+        <section id="own-prs" role="tabpanel" tabindex="0" aria-labelledby="tab-own-prs" class="tab-content">
             <div class="section">
                 <h2>My Pull Requests</h2>
                 <p class="section-description">Track your own PRs, filter by readiness, and trigger a fresh review with optional context.</p>
                 <div id="own-pr-filters"></div>
                 <div id="own-prs-list"></div>
             </div>
-        </div>
+        </section>
 
-        <div id="analytics" class="tab-content">
+        <section id="analytics" role="tabpanel" tabindex="0" aria-labelledby="tab-analytics" class="tab-content">
             <div class="section">
                 <div class="analytics-toolbar">
                     <div>
@@ -190,31 +213,37 @@
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
+        </main>
     </div>
 
     <!-- Chart.js CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
     <!-- Toast notification -->
-    <div id="toast" class="toast"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
     <!-- Modal for approval confirmation -->
-    <div id="approval-modal" class="modal">
-        <div class="modal-content">
-            <span class="close" onclick="closeModal()">&times;</span>
-            <h3>Review Approval</h3>
+    <div id="approval-modal" class="modal" hidden>
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="approval-modal-title" aria-describedby="modal-pr-info">
+            <button type="button" class="close" aria-label="Close dialog" onclick="closeModal()">&times;</button>
+            <h3 id="approval-modal-title">Review Approval</h3>
             <div id="modal-pr-info"></div>
-            <textarea id="user-comment" placeholder="Optional: Modify the review comment before posting..."></textarea>
+            <div id="modal-comment-field">
+                <label for="user-comment" id="modal-comment-label">Review comment</label>
+                <textarea id="user-comment" name="user-comment" placeholder="Optional: Add context before posting…"></textarea>
+            </div>
             <div class="buttons">
-                <button class="btn btn-approve" onclick="confirmApproval()">Approve & Post Review</button>
-                <button class="btn btn-reject" onclick="rejectApproval()">Reject</button>
+                <button type="button" id="modal-confirm" class="btn btn-approve" onclick="confirmApproval()">Approve & Post Review</button>
+                <button type="button" class="btn btn-view" onclick="closeModal()">Cancel</button>
             </div>
         </div>
     </div>
 
     <script>
         let currentApprovalId = null;
+        let modalMode = 'approve';
+        let lastFocusedElement = null;
 
         function refreshCurrentView() {
             // Find the currently active tab and refresh its data
@@ -245,10 +274,38 @@
                     }
                 }
             }
+            loadAttentionSummary();
+        }
+
+        function getTabButton(tabName) {
+            return document.querySelector(`.tab[aria-controls="${tabName}"]`);
+        }
+
+        function handleTabKeydown(event, selector) {
+            const tabs = Array.from(document.querySelectorAll(selector));
+            const currentIndex = tabs.indexOf(event.currentTarget);
+            if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+
+            event.preventDefault();
+            let nextIndex = currentIndex;
+            if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+            if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+            if (event.key === 'Home') nextIndex = 0;
+            if (event.key === 'End') nextIndex = tabs.length - 1;
+            tabs[nextIndex].focus();
+            tabs[nextIndex].click();
         }
 
         function renderEmptyState(message) {
             return `<div class="empty-state">${message}</div>`;
+        }
+
+        function renderLoadError(message, retryAction) {
+            return `
+                <div class="empty-state" role="alert">
+                    <p>${message}</p>
+                    <button type="button" class="btn btn-view" onclick="${retryAction}">Try again</button>
+                </div>`;
         }
 
         function escapeHtml(value) {
@@ -291,14 +348,19 @@
         }
 
         function showTab(tabName, tabButton) {
-            // Hide all tabs
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+                tab.setAttribute('aria-selected', 'false');
+                tab.tabIndex = -1;
+            });
             
             // Show selected tab
             document.getElementById(tabName).classList.add('active');
             if (tabButton) {
                 tabButton.classList.add('active');
+                tabButton.setAttribute('aria-selected', 'true');
+                tabButton.tabIndex = 0;
             }
             
             // Load data for the tab
@@ -322,10 +384,47 @@
         function showHistoryPanel(panelName, button) {
             activeHistoryPanel = panelName;
             document.querySelectorAll('.history-panel').forEach(panel => panel.classList.remove('active'));
-            document.querySelectorAll('.history-filters .filter-btn').forEach(filter => filter.classList.remove('active'));
+            document.querySelectorAll('.history-filters .filter-btn').forEach(filter => {
+                filter.classList.remove('active');
+                filter.setAttribute('aria-selected', 'false');
+                filter.tabIndex = -1;
+            });
             document.getElementById(panelName).classList.add('active');
-            if (button) button.classList.add('active');
+            if (button) {
+                button.classList.add('active');
+                button.setAttribute('aria-selected', 'true');
+                button.tabIndex = 0;
+            }
             loadHistoryPanel(panelName);
+        }
+
+        async function loadAttentionSummary() {
+            const count = (id, value) => {
+                document.getElementById(id).textContent = Number.isFinite(value) ? value : '—';
+            };
+            try {
+                const [pendingResponse, humanResponse, requestResponse] = await Promise.all([
+                    fetch('/api/pending-approvals'),
+                    fetch('/api/human-reviews'),
+                    fetch('/api/review-requests'),
+                ]);
+                if (![pendingResponse, humanResponse, requestResponse].every(response => response.ok)) {
+                    throw new Error('Could not refresh dashboard counts');
+                }
+                const [pending, human, requests] = await Promise.all([
+                    pendingResponse.json(),
+                    humanResponse.json(),
+                    requestResponse.json(),
+                ]);
+                count('attention-pending-count', pending.length);
+                count('attention-human-count', human.length);
+                count('attention-request-count', (requests.items || []).length);
+            } catch (error) {
+                console.error('Failed to load dashboard counts:', error);
+                count('attention-pending-count');
+                count('attention-human-count');
+                count('attention-request-count');
+            }
         }
 
         function loadHistoryPanel(panelName) {
@@ -401,13 +500,15 @@
                     </div>
                     <div id="review-request-context-${pr.id}" class="re-review-context-area" style="display:none;">
                         <textarea id="review-request-context-input-${pr.id}" placeholder="Optional: provide context for the review (e.g. what to focus on)..."></textarea>
-                        <label for="review-request-model-${pr.id}">Claude model</label>
-                        <select id="review-request-model-${pr.id}">
-                            <option value="">Config default</option>
-                            <option value="opus">Opus</option>
-                            <option value="sonnet">Sonnet</option>
-                            <option value="fable">Fable</option>
-                        </select>
+                        {% if supports_claude_model_override %}
+                            <label for="review-request-model-${pr.id}">Claude model</label>
+                            <select id="review-request-model-${pr.id}">
+                                <option value="">Config default</option>
+                                <option value="opus">Opus</option>
+                                <option value="sonnet">Sonnet</option>
+                                <option value="fable">Fable</option>
+                            </select>
+                        {% endif %}
                         <div class="buttons">
                             <button id="review-request-start-${pr.id}" class="btn btn-approve" onclick="submitRequestedReview(${pr.id})">Start Review</button>
                             <button class="btn" onclick="toggleRequestedReviewContext(${pr.id}, false)">Cancel</button>
@@ -431,7 +532,8 @@
             const pr = reviewRequestsData.find(item => item.id === id);
             if (!pr) return;
             const userContext = document.getElementById(`review-request-context-input-${id}`).value;
-            const claudeModel = document.getElementById(`review-request-model-${id}`).value;
+            const modelSelect = document.getElementById(`review-request-model-${id}`);
+            const claudeModel = modelSelect ? modelSelect.value : '';
             const startButton = document.getElementById(`review-request-start-${id}`);
             startButton.disabled = true;
             startButton.textContent = 'Starting…';
@@ -460,10 +562,12 @@
         }
 
         async function loadPendingApprovals() {
+            const container = document.getElementById('pending-approvals');
+            container.innerHTML = renderEmptyState('Loading pending decisions…');
             try {
                 const response = await fetch('/api/pending-approvals');
+                if (!response.ok) throw new Error(await response.text());
                 const approvals = escapeApiData(await response.json());
-                const container = document.getElementById('pending-approvals');
                 
                 if (approvals.length === 0) {
                     container.innerHTML = renderEmptyState('No pending approvals.');
@@ -546,14 +650,17 @@
                 `).join('');
             } catch (error) {
                 console.error('Failed to load pending approvals:', error);
+                container.innerHTML = renderLoadError('Pending decisions could not be loaded.', 'loadPendingApprovals()');
             }
         }
 
         async function loadHumanReviews() {
+            const container = document.getElementById('human-reviews');
+            container.innerHTML = renderEmptyState('Loading human reviews…');
             try {
                 const response = await fetch('/api/human-reviews');
+                if (!response.ok) throw new Error(await response.text());
                 const reviews = escapeApiData(await response.json());
-                const container = document.getElementById('human-reviews');
                 
                 if (reviews.length === 0) {
                     container.innerHTML = renderEmptyState('No PRs marked for human review.');
@@ -583,103 +690,84 @@
                 `).join('');
             } catch (error) {
                 console.error('Failed to load human reviews:', error);
+                container.innerHTML = renderLoadError('Human reviews could not be loaded.', 'loadHumanReviews()');
             }
         }
 
         function showApprovalModal(id, title, comment) {
-            console.log('showApprovalModal called with:', id, title, comment);
+            openActionModal({ id, mode: 'approval', title, comment });
+        }
+
+        function openActionModal({ id, mode, title, comment = '' }) {
             currentApprovalId = id;
+            modalMode = mode;
+            lastFocusedElement = document.activeElement;
+
+            const modal = document.getElementById('approval-modal');
+            const titleElement = document.getElementById('approval-modal-title');
+            const field = document.getElementById('modal-comment-field');
+            const label = document.getElementById('modal-comment-label');
+            const textarea = document.getElementById('user-comment');
+            const confirmButton = document.getElementById('modal-confirm');
+
+            const isReject = mode === 'reject';
+            const isDirectApproval = mode === 'direct-approval';
+            titleElement.textContent = isReject ? 'Reject Review' : 'Post Review';
             document.getElementById('modal-pr-info').textContent = title;
-            document.getElementById('user-comment').value = comment;
-            document.getElementById('approval-modal').style.display = 'block';
-            console.log('Modal displayed, currentApprovalId:', currentApprovalId);
+            field.hidden = isDirectApproval;
+            label.textContent = isReject ? 'Rejection reason (optional)' : 'Review comment (optional)';
+            textarea.placeholder = isReject
+                ? 'Optional: Explain why this review should not be posted…'
+                : 'Optional: Add context before posting…';
+            textarea.value = comment;
+            confirmButton.textContent = isReject ? 'Reject Review' : 'Approve & Post Review';
+            confirmButton.className = `btn ${isReject ? 'btn-reject' : 'btn-approve'}`;
+            modal.hidden = false;
+
+            window.setTimeout(() => (isDirectApproval ? confirmButton : textarea).focus(), 0);
         }
 
         function closeModal() {
-            document.getElementById('approval-modal').style.display = 'none';
+            const modal = document.getElementById('approval-modal');
+            modal.hidden = true;
             currentApprovalId = null;
+            if (lastFocusedElement instanceof HTMLElement) lastFocusedElement.focus();
+            lastFocusedElement = null;
         }
 
         async function confirmApproval() {
-            console.log('confirmApproval called, currentApprovalId:', currentApprovalId);
-            if (!currentApprovalId) {
-                console.log('No currentApprovalId, returning');
-                return;
-            }
-            
-            const userComment = document.getElementById('user-comment').value;
-            console.log('User comment:', userComment);
-            
-            try {
-                console.log('Sending approval request to:', `/api/approvals/${currentApprovalId}/approve`);
-                const response = await fetch(`/api/approvals/${currentApprovalId}/approve`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ comment: userComment })
-                });
-                
-                console.log('Response received:', response.status, response.ok);
-                
-                if (response.ok) {
-                    closeModal();
-                    refreshCurrentView();
-                    alert('PR approved and review posted!');
-                } else {
-                    const errorText = await response.text();
-                    console.error('Server error:', errorText);
-                    alert('Failed to approve PR: ' + errorText);
-                }
-            } catch (error) {
-                console.error('Failed to approve PR:', error);
-                alert('Failed to approve PR: ' + error.message);
-            }
-        }
-
-        async function rejectApproval() {
             if (!currentApprovalId) return;
-            
-            const reason = prompt('Optional: Why are you rejecting this approval?');
-            
+
+            const isReject = modalMode === 'reject';
+            const endpoint = `/api/approvals/${currentApprovalId}/${isReject ? 'reject' : 'approve'}`;
+            const comment = document.getElementById('user-comment').value;
+            const body = isReject
+                ? { reason: comment }
+                : modalMode === 'approval' ? { comment } : {};
+
             try {
-                const response = await fetch(`/api/approvals/${currentApprovalId}/reject`, {
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ reason: reason || '' })
+                    body: JSON.stringify(body)
                 });
-                
-                if (response.ok) {
-                    closeModal();
-                    refreshCurrentView();
-                    alert('Approval rejected');
-                } else {
-                    alert('Failed to reject approval');
-                }
+                if (!response.ok) throw new Error(await response.text());
+
+                closeModal();
+                refreshCurrentView();
+                showToast(isReject ? 'Review rejected.' : 'Review posted to GitHub.');
             } catch (error) {
-                console.error('Failed to reject approval:', error);
-                alert('Failed to reject approval');
+                console.error(`Failed to ${isReject ? 'reject' : 'approve'} review:`, error);
+                showToast(`Could not ${isReject ? 'reject' : 'post'} review: ${error.message}`, 6000);
             }
         }
 
-        async function rejectPR(id) {
-            const reason = prompt('Optional: Why are you rejecting this approval?');
-            
-            try {
-                const response = await fetch(`/api/approvals/${id}/reject`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ reason: reason || '' })
-                });
-                
-                if (response.ok) {
-                    refreshCurrentView();
-                    alert('Approval rejected');
-                } else {
-                    alert('Failed to reject approval');
-                }
-            } catch (error) {
-                console.error('Failed to reject approval:', error);
-                alert('Failed to reject approval');
-            }
+        function rejectPR(id) {
+            openActionModal({
+                id,
+                mode: 'reject',
+                title: 'This removes the pending automated review without posting it to GitHub.'
+            });
         }
 
         // Inline editing functions
@@ -853,27 +941,11 @@
         }
 
         async function approveDirectly(id) {
-            if (!confirm('Approve and post this review to GitHub?')) return;
-
-            // Don't pass comment from DOM - let server use database edited versions
-            try {
-                const response = await fetch(`/api/approvals/${id}/approve`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({})
-                });
-
-                if (response.ok) {
-                    refreshCurrentView();
-                    alert('PR approved and review posted!');
-                } else {
-                    const errorText = await response.text();
-                    alert('Failed to approve PR: ' + errorText);
-                }
-            } catch (error) {
-                console.error('Failed to approve PR:', error);
-                alert('Failed to approve PR: ' + error.message);
-            }
+            openActionModal({
+                id,
+                mode: 'direct-approval',
+                title: 'Post the current edited review to GitHub. This action cannot be undone from this dashboard.'
+            });
         }
 
         function showToast(message, duration = 3000) {
@@ -884,6 +956,29 @@
                 toast.classList.remove('show');
             }, duration);
         }
+
+        document.addEventListener('keydown', event => {
+            const modal = document.getElementById('approval-modal');
+            if (modal.hidden) return;
+            if (event.key === 'Escape') {
+                closeModal();
+                return;
+            }
+            if (event.key !== 'Tab') return;
+
+            const focusable = Array.from(modal.querySelectorAll(
+                'button:not([disabled]), textarea'
+            )).filter(element => element.offsetParent !== null);
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        });
 
         async function submitReviewAgain(url, userContext) {
             try {
@@ -1644,13 +1739,15 @@
                     ${pr.review_reason ? `<div class="review-comment"><strong>Reason:</strong><br>${pr.review_reason}</div>` : ''}
                     <div id="own-pr-context-${pr.id}" class="re-review-context-area" style="display:none;">
                         <textarea id="own-pr-context-input-${pr.id}" placeholder="${pr.status === 'pending' ? 'Optional: provide context for the review (e.g. what to focus on)...' : 'Optional: provide context for the re-review (e.g. what changed, what to focus on)...'}"></textarea>
-                        <label for="own-pr-model-${pr.id}">Claude model</label>
-                        <select id="own-pr-model-${pr.id}">
-                            <option value="">Config default</option>
-                            <option value="opus">Opus</option>
-                            <option value="sonnet">Sonnet</option>
-                            <option value="fable">Fable</option>
-                        </select>
+                        {% if supports_claude_model_override %}
+                            <label for="own-pr-model-${pr.id}">Claude model</label>
+                            <select id="own-pr-model-${pr.id}">
+                                <option value="">Config default</option>
+                                <option value="opus">Opus</option>
+                                <option value="sonnet">Sonnet</option>
+                                <option value="fable">Fable</option>
+                            </select>
+                        {% endif %}
                         <div class="buttons">
                             <button class="btn btn-approve" onclick="submitOwnPRReview(${pr.id})">Submit Review</button>
                             <button class="btn" onclick="cancelOwnPRContext(${pr.id})">Cancel</button>
@@ -1672,12 +1769,14 @@
         function cancelOwnPRContext(id) {
             document.getElementById(`own-pr-context-${id}`).style.display = 'none';
             document.getElementById(`own-pr-context-input-${id}`).value = '';
-            document.getElementById(`own-pr-model-${id}`).value = '';
+            const modelSelect = document.getElementById(`own-pr-model-${id}`);
+            if (modelSelect) modelSelect.value = '';
         }
 
         async function submitOwnPRReview(id) {
             const userContext = document.getElementById(`own-pr-context-input-${id}`).value;
-            const claudeModel = document.getElementById(`own-pr-model-${id}`).value;
+            const modelSelect = document.getElementById(`own-pr-model-${id}`);
+            const claudeModel = modelSelect ? modelSelect.value : '';
             try {
                 const response = await fetch(`/api/own-prs/${id}/review-again`, {
                     method: 'POST',
@@ -1764,6 +1863,7 @@
 
         // Load initial data
         refreshSoundMuteState();
+        loadAttentionSummary();
         loadReviewRequests();
     </script>
 </body>

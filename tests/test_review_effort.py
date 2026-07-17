@@ -70,6 +70,33 @@ def test_config_loads_review_effort_from_env(monkeypatch):
     assert c.review_effort == "high"
 
 
+def test_config_loads_startup_sounds_enabled_from_env(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_USERNAME", "u")
+    monkeypatch.setenv("STARTUP_SOUNDS_ENABLED", "false")
+
+    c = Config.load()
+    assert c.startup_sounds_enabled is False
+
+
+def test_config_loads_review_tool_from_env(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_USERNAME", "u")
+    monkeypatch.setenv("REVIEW_TOOL", "CODEX")
+
+    c = Config.load()
+    assert c.review_tool is ReviewModel.CODEX
+
+
+def test_config_accepts_legacy_review_model_env(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_USERNAME", "u")
+    monkeypatch.setenv("REVIEW_MODEL", "AGENT")
+
+    c = Config.load()
+    assert c.review_tool is ReviewModel.AGENT
+
+
 def test_claude_model_in_command():
     integration = LLMIntegration(PROMPT, ReviewModel.CLAUDE, claude_model="Sonnet")
     cmd = integration._build_command()

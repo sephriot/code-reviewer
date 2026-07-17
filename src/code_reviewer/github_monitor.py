@@ -168,10 +168,10 @@ class GitHubMonitor:
                 return
 
             try:
-                await self._expire_merged_or_closed_pending_approvals()
+                await self._cleanup_merged_or_closed_review_items()
             except Exception as cleanup_error:
                 logger.error(
-                    f"Error while expiring merged/closed approvals: {cleanup_error}"
+                    f"Error while cleaning up merged/closed review items: {cleanup_error}"
                 )
 
             all_prs = await self.github_client.get_review_requests(
@@ -333,7 +333,7 @@ class GitHubMonitor:
             # Run model-driven code review - the CLI will fetch all PR details
             effort = self.llm_integration.effort or "default"
             logger.debug(
-                f"Running {self.config.review_model.value} code review (effort: {effort}) for PR #{pr_info.number}"
+                f"Running {self.config.review_tool.value} code review (effort: {effort}) for PR #{pr_info.number}"
             )
             review_result = await self.llm_integration.review_pr(
                 pr_info,
@@ -392,7 +392,7 @@ class GitHubMonitor:
 
         except LLMOutputParseError as e:
             logger.error(
-                f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from {self.config.review_model.value}"
+                f"❌ Review failed for PR #{pr_info.number} in {repo_name}: Invalid JSON output from {self.config.review_tool.value}"
             )
             logger.error(f"📋 PR: '{pr_info.title}' by {pr_info.author}")
             logger.error(f"❗ Reason: {str(e)}")
@@ -403,9 +403,9 @@ class GitHubMonitor:
                 else e.raw_output
             )
             logger.error(
-                f"📤 {self.config.review_model.value} output preview: {output_preview}"
+                f"📤 {self.config.review_tool.value} output preview: {output_preview}"
             )
-            reason = f"Automated review failed: invalid JSON output from {self.config.review_model.value} — {e}"
+            reason = f"Automated review failed: invalid JSON output from {self.config.review_tool.value} — {e}"
             if self.config.dry_run:
                 logger.info(
                     f"[DRY RUN] Would mark PR #{pr_info.number} as REQUIRES HUMAN REVIEW due to parse error"
@@ -460,34 +460,56 @@ class GitHubMonitor:
             claude_model=claude_model,
         )
 
-    async def _expire_merged_or_closed_pending_approvals(self) -> None:
-        """Mark pending approvals as merged_or_closed if their PRs are merged or closed."""
-        pending_refs = await self.db.get_pending_approval_refs()
+    async def _cleanup_merged_or_closed_review_items(self) -> None:
+        """Archive active pending approvals and human reviews after a PR closes or merges."""
+        pending_refs, human_review_refs = await asyncio.gather(
+            self.db.get_pending_approval_refs(),
+            self.db.get_active_human_review_refs(),
+        )
 
-        if not pending_refs:
+        if not pending_refs and not human_review_refs:
             return
 
         logger.debug(
-            f"Checking {len(pending_refs)} pending approval(s) for merged/closed status"
+            "Checking %s pending approval(s) and %s human review(s) for merged/closed status",
+            len(pending_refs),
+            len(human_review_refs),
         )
 
+        refs_by_pr = {}
+        for ref in pending_refs:
+            refs_by_pr.setdefault((ref["repository"], ref["pr_number"]), {}).setdefault(
+                "pending", []
+            ).append(ref)
+        for ref in human_review_refs:
+            refs_by_pr.setdefault((ref["repository"], ref["pr_number"]), {}).setdefault(
+                "human", []
+            ).append(ref)
+
         status_tasks = [
-            self.github_client.get_pr_status(ref["repository"], ref["pr_number"])
-            for ref in pending_refs
+            self.github_client.get_pr_status(repository, pr_number)
+            for repository, pr_number in refs_by_pr
         ]
 
         results = await asyncio.gather(*status_tasks, return_exceptions=True)
 
-        for ref, result in zip(pending_refs, results):
+        for (repository, pr_number), result in zip(refs_by_pr, results):
+            refs = refs_by_pr[(repository, pr_number)]
             if isinstance(result, Exception):
                 logger.error(
-                    f"Failed to fetch PR status for {ref['repository']}#{ref['pr_number']}: {result}"
+                    f"Failed to fetch PR status for {repository}#{pr_number}: {result}"
                 )
                 continue
 
             if not result:
                 logger.warning(
-                    f"Unable to determine PR status for {ref['repository']}#{ref['pr_number']}"
+                    f"Unable to determine PR status for {repository}#{pr_number}"
+                )
+                continue
+
+            if not isinstance(result, dict):
+                logger.warning(
+                    f"Invalid PR status for {repository}#{pr_number}; skipping cleanup"
                 )
                 continue
 
@@ -496,26 +518,30 @@ class GitHubMonitor:
 
             if state != "open" or merged:
                 reason = "merged" if merged else state or "unknown"
-                updated = await self.db.update_pending_approval_status(
-                    ref["id"], PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED
-                )
-                if updated:
-                    logger.info(
-                        f"Marked pending approval ID {ref['id']} for PR #{ref['pr_number']} in "
-                        f"{ref['repository']} as MERGED_OR_CLOSED ({reason})"
+                for ref in refs.get("pending", []):
+                    updated = await self.db.update_pending_approval_status(
+                        ref["id"], PENDING_APPROVAL_STATUS_MERGED_OR_CLOSED
                     )
-                    await self.sound_notifier.play_merged_or_closed_sound(
-                        {
-                            "repo": ref["repository"],
-                            "pr_number": ref["pr_number"],
-                            "author": ref.get("author", ""),
-                            "title": ref.get("title", ""),
-                        }
-                    )
-                else:
-                    logger.debug(
-                        f"Pending approval ID {ref['id']} already processed when marking as MERGED_OR_CLOSED"
-                    )
+                    if updated:
+                        logger.info(
+                            f"Marked pending approval ID {ref['id']} for PR #{pr_number} in "
+                            f"{repository} as MERGED_OR_CLOSED ({reason})"
+                        )
+                        await self.sound_notifier.play_merged_or_closed_sound(
+                            {
+                                "repo": repository,
+                                "pr_number": pr_number,
+                                "author": ref.get("author", ""),
+                                "title": ref.get("title", ""),
+                            }
+                        )
+
+                for ref in refs.get("human", []):
+                    if await self.db.mark_human_review_merged_or_closed(ref["id"]):
+                        logger.info(
+                            f"Archived human review ID {ref['id']} for PR #{pr_number} in "
+                            f"{repository} as MERGED_OR_CLOSED ({reason})"
+                        )
 
     async def _act_on_review(self, pr_info: PRInfo, review_result: ReviewResult):
         """Act on the model's review result."""
@@ -862,7 +888,7 @@ class GitHubMonitor:
 
             effort = self.llm_integration.effort or "default"
             logger.debug(
-                f"Running {self.config.review_model.value} code review (effort: {effort}) for own PR #{pr_info.number}"
+                f"Running {self.config.review_tool.value} code review (effort: {effort}) for own PR #{pr_info.number}"
             )
             review_result = await self.llm_integration.review_pr(
                 pr_info,

@@ -63,7 +63,8 @@ Create a `.env` file in the project root:
 GITHUB_TOKEN=your_github_personal_access_token
 GITHUB_USERNAME=your_github_username
 PROMPT_FILE=prompts/review_prompt.txt
-REVIEW_MODEL=CLAUDE  # options: CLAUDE or CODEX
+REVIEW_TOOL=CLAUDE  # options: CLAUDE, CODEX, or AGENT
+# REVIEW_MODEL=CLAUDE  # Legacy alias; use REVIEW_TOOL for new configuration.
 # CLAUDE_MODEL=sonnet  # Claude CLI --model alias: opus, sonnet, or fable.
 # REVIEW_EFFORT=high  # Claude CLI only: low, medium, high, xhigh, max.
 #                     # Ignored (with a startup log line) for other models or invalid values.
@@ -74,6 +75,8 @@ LOG_LEVEL=INFO
 
 # Sound notifications
 SOUND_ENABLED=true
+# Master switch: false disables every sound event.
+# STARTUP_SOUNDS_ENABLED=false  # Disable startup demo sounds only.
 SPEECH_RATE=200  # macOS say speech rate in words per minute
 # SOUND_FILE=sounds/notification.wav
 
@@ -138,7 +141,7 @@ You can also use a YAML configuration file:
 github_token: "your_token_here"
 github_username: "your_username"
 prompt_file: "prompts/custom_prompt.txt"
-review_model: "CLAUDE"  # options: CLAUDE or CODEX
+review_tool: "CLAUDE"  # options: CLAUDE, CODEX, or AGENT
 claude_model: "sonnet"  # optional Claude CLI --model alias: opus, sonnet, or fable
 poll_interval: 30
 review_timeout: 600
@@ -206,7 +209,9 @@ code-reviewer --web-enabled --web-host 0.0.0.0 --web-port 8080
 - `--review-timeout`: Maximum seconds allowed for an automated review before marking it for human attention (default: 600, use 0 to disable)
 - `--claude-model`: Claude CLI model alias for reviews (env: `CLAUDE_MODEL`): `opus`, `sonnet`, or `fable`
 - `--effort`: Reasoning effort for the review CLI (env: `REVIEW_EFFORT`). Claude CLI only — `low`, `medium`, `high`, `xhigh`, `max`. Other models or invalid values are logged at startup and ignored (tool default used).
+- `--tool`: Choose review CLI; `--model` remains a deprecated alias
 - `--sound-enabled/--no-sound`: Enable/disable sound notifications
+- `--startup-sounds/--no-startup-sounds`: Enable/disable startup demo sounds without affecting later notifications
 - `--speech-rate, -r`: Speech rate for macOS `say` TTS in words per minute (env: `SPEECH_RATE`, config: `speech_rate`; default: `200`)
 - `--sound-file`: Custom sound file for notifications
 - `--web-enabled/--no-web`: Enable/disable web UI dashboard
@@ -362,8 +367,10 @@ The system automatically tracks review history using commit SHA comparison:
 When web UI is enabled (`--web-enabled` or `WEB_ENABLED=true`):
 
 - 🔔 **Review Requests**: See every PR found by the latest periodic review-request scan, even when repository or author filters exclude it from automatic review; on-demand reviews are acknowledged from SQLite immediately, then revalidate only the selected PR in the background
+- 🚨 **Operational Inbox**: Live counts for pending decisions, human reviews, and review requests link directly to their working queues
 - 📋 **Pending Approvals**: Review and approve/reject `approve_with_comments` actions before posting to GitHub
 - 👤 **Human Reviews**: View all PRs flagged for human attention with reasons and timestamps
+- 🧹 **Human Review Cleanup**: Closed or merged PRs leave the active human-review queue automatically while their review history remains available
 - 📚 **Unified History**: Completed, approved, rejected, merged/closed, and expired review records in one tab, including:
   - Original vs final comments comparison
   - Original vs final inline comments
@@ -371,6 +378,7 @@ When web UI is enabled (`--web-enabled` or `WEB_ENABLED=true`):
   - Direct links to GitHub PRs
 - 🔄 **Real-time Updates**: JavaScript interface with automatic refresh
 - 📱 **Mobile Responsive**: Works on both desktop and mobile devices
+- ♿ **Keyboard Accessible**: Skip link, arrow-key tab navigation, live status announcements, and focus-managed approval/rejection dialog
 - 🧹 **Outdated Queue Cleanup**: Pending approvals auto-expire when a PR merges or closes, so the dashboard only shows actionable items
 
 Access the dashboard at `http://localhost:8000` (or your configured host/port).

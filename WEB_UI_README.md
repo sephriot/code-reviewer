@@ -9,12 +9,14 @@ The code reviewer now includes an optional web UI that provides a dashboard for 
 - Reads the queue from SQLite so opening or refreshing the tab does not call GitHub
 - Ignores repository and author filters when listing attention items; those filters continue to control automatic reviews
 - Starts a review on demand from cached data with immediate UI feedback, optional context, and Claude model override; only the selected PR is revalidated with GitHub in the background
+- Claude model selector appears only when `REVIEW_TOOL=CLAUDE`; other review tools receive context without a Claude-only picker
 - Shows whether the current commit is unreviewed, already reviewed, or awaiting a dashboard decision
 
 ### 🎯 **Human Review Dashboard**
 - View all PRs marked as `requires_human_review` with reasons
 - See timestamp and PR details for each human review requirement
 - Direct links to GitHub PRs for easy navigation
+- Automatically archives items once GitHub reports their PR as closed or merged
 
 ### ✅ **Pending Approvals Workflow** 
 - **New Behavior**: `approve_with_comments` actions now create pending approvals instead of immediately posting to GitHub
@@ -29,9 +31,11 @@ The code reviewer now includes an optional web UI that provides a dashboard for 
 
 ### 📊 **Centralized Management**
 - Single dashboard to manage all review activities
+- Operational inbox shows live counts for pending decisions, human reviews, and review requests before tab navigation
 - Real-time updates of pending approvals and human reviews
 - Unified history for completed, approved, rejected, merged/closed, and expired items
 - Clean, responsive interface that works on desktop and mobile
+- Keyboard-accessible tab navigation (arrow keys, Home, End), skip link, and focus-managed confirmation dialog
 
 ### 📚 **Approval History Tracking**
 - **Approved History**: View all approved reviews with original vs final comparison
@@ -88,6 +92,8 @@ When the system processes PRs:
 - **`requires_human_review`** → Logged for your attention (visible in web UI)
 
 ### 3. Web Dashboard Actions
+
+The operational inbox at the top links directly to pending decisions, human reviews, and review requests. Counts refresh from existing dashboard APIs; it does not change automatic-review filters or queue behavior.
 
 #### **Review Requests Tab**
 - Lists the latest successfully scanned GitHub review requests, independently of automatic-review filters

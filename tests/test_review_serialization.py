@@ -64,7 +64,7 @@ def _make_monitor_config(tmp_path: Path) -> SimpleNamespace:
         own_pr_mode=OwnPRMode.OFF,
         review_started_comment_enabled=False,
         review_timeout=None,
-        review_model=ReviewModel.CLAUDE,
+        review_tool=ReviewModel.CLAUDE,
         github_username="alice",
     )
 
@@ -598,5 +598,40 @@ async def test_expire_merged_or_closed_own_prs_updates_active_records(tmp_path):
         assert first_entry["status"] == OWN_PR_STATUS_CLOSED
         assert second_entry is not None
         assert second_entry["status"] == OWN_PR_STATUS_MERGED
+    finally:
+        monitor.db.close()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_archives_human_reviews_for_closed_prs(tmp_path):
+    github_client = AsyncMock()
+    github_client.get_pr_status.return_value = {"state": "closed", "merged": False}
+
+    llm_integration = AsyncMock()
+    llm_integration.review_in_progress = False
+    llm_integration.active_review_target = None
+
+    monitor = GitHubMonitor(
+        github_client,
+        llm_integration,
+        _make_monitor_config(tmp_path),
+    )
+    pr_info = _make_pr_info(23)
+
+    try:
+        await monitor.db.record_review(
+            pr_info,
+            ReviewResult(
+                action=ReviewAction.REQUIRES_HUMAN_REVIEW,
+                reason="Needs an owner decision",
+            ),
+        )
+
+        assert len(await monitor.db.get_human_review_prs()) == 1
+
+        await monitor._cleanup_merged_or_closed_review_items()
+
+        assert await monitor.db.get_human_review_prs() == []
+        github_client.get_pr_status.assert_awaited_once_with("acme/repo", 23)
     finally:
         monitor.db.close()
