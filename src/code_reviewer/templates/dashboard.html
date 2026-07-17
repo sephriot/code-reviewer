@@ -739,11 +739,15 @@
             if (!currentApprovalId) return;
 
             const isReject = modalMode === 'reject';
-            const endpoint = `/api/approvals/${currentApprovalId}/${isReject ? 'reject' : 'approve'}`;
+            const approvalId = currentApprovalId;
+            const endpoint = `/api/approvals/${approvalId}/${isReject ? 'reject' : 'approve'}`;
             const comment = document.getElementById('user-comment').value;
             const body = isReject
                 ? { reason: comment }
                 : modalMode === 'approval' ? { comment } : {};
+
+            closeModal();
+            showToast(isReject ? 'Rejecting review…' : 'Posting review…', null);
 
             try {
                 const response = await fetch(endpoint, {
@@ -753,7 +757,6 @@
                 });
                 if (!response.ok) throw new Error(await response.text());
 
-                closeModal();
                 refreshCurrentView();
                 showToast(isReject ? 'Review rejected.' : 'Review posted to GitHub.');
             } catch (error) {
@@ -948,12 +951,18 @@
             });
         }
 
+        let toastTimeoutId = null;
+
         function showToast(message, duration = 3000) {
             const toast = document.getElementById('toast');
+            if (toastTimeoutId) window.clearTimeout(toastTimeoutId);
             toast.textContent = message;
             toast.classList.add('show');
-            setTimeout(() => {
+            if (duration === null) return;
+
+            toastTimeoutId = window.setTimeout(() => {
                 toast.classList.remove('show');
+                toastTimeoutId = null;
             }, duration);
         }
 

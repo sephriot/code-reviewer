@@ -195,6 +195,23 @@ def test_requested_review_shows_starting_state_before_waiting_for_api():
     assert template.index(button_feedback) < template.index(request_start)
 
 
+def test_approval_modal_closes_before_posting_review():
+    template = (
+        Path(__file__).parents[1]
+        / "src"
+        / "code_reviewer"
+        / "templates"
+        / "dashboard.html"
+    ).read_text()
+
+    confirmation_start = template.index("async function confirmApproval()")
+    close_modal = template.index("closeModal();", confirmation_start)
+    post_review = template.index("await fetch(endpoint", confirmation_start)
+
+    assert close_modal < post_review
+    assert "showToast(isReject ? 'Rejecting review…' : 'Posting review…', null);" in template
+
+
 def test_dashboard_escapes_api_content_before_html_rendering():
     template = (
         Path(__file__).parents[1]

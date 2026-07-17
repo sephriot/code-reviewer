@@ -1,0 +1,13 @@
+id: K-000031
+title: Approval dialog must not wait for notification playback
+type: decision
+confidence: high
+summary: Close approval modal before awaiting GitHub post; show persistent progress toast, then replace with outcome toast.
+tags:
+- web-ui
+- pending-approval
+- toast
+- sound
+sources:
+- src/code_reviewer/templates/dashboard.html
+updated_at: 2026-07-17
