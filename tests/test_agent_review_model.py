@@ -1,6 +1,9 @@
 """Tests for Cursor Agent (AGENT) review model integration."""
 
+import asyncio
+import io
 import json
+from pathlib import Path
 
 import pytest
 
@@ -25,8 +28,6 @@ def test_unwrap_cursor_agent_json_passes_through_plain_json():
 
 
 def test_default_agent_argv():
-    from pathlib import Path
-
     p = Path("prompts/review_prompt.txt")
     integration = LLMIntegration(p, ReviewModel.AGENT, agent_argv=None)
     cmd = integration._build_command()
@@ -34,13 +35,84 @@ def test_default_agent_argv():
 
 
 def test_custom_agent_argv():
-    from pathlib import Path
-
     custom = ["agent", "--print", "--output-format", "text"]
     integration = LLMIntegration(
         Path("prompts/review_prompt.txt"), ReviewModel.AGENT, agent_argv=custom
     )
     assert integration._build_command() == custom
+
+
+def test_show_thinking_enables_agent_stream_json_output():
+    integration = LLMIntegration(
+        Path("prompts/review_prompt.txt"), ReviewModel.AGENT, show_thinking=True
+    )
+
+    assert integration._build_command() == [
+        "agent",
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--trust",
+    ]
+
+
+def test_show_thinking_replaces_custom_agent_output_format():
+    integration = LLMIntegration(
+        Path("prompts/review_prompt.txt"),
+        ReviewModel.AGENT,
+        show_thinking=True,
+        agent_argv=["agent", "--print", "--output-format", "text"],
+    )
+
+    assert integration._build_command() == [
+        "agent",
+        "--print",
+        "--output-format",
+        "stream-json",
+    ]
+
+
+def test_show_thinking_removes_custom_partial_output_flag():
+    integration = LLMIntegration(
+        Path("prompts/review_prompt.txt"),
+        ReviewModel.AGENT,
+        show_thinking=True,
+        agent_argv=[
+            "agent",
+            "--print",
+            "--output-format",
+            "stream-json",
+            "--stream-partial-output",
+        ],
+    )
+
+    assert "--stream-partial-output" not in integration._build_command()
+
+
+@pytest.mark.asyncio
+async def test_stream_cursor_agent_output_displays_events_and_returns_result():
+    stream = asyncio.StreamReader()
+    events = [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "Looking"}]}},
+        {"type": "tool_call", "subtype": "started", "tool_call": {"name": "Shell"}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": '{"action": "approve_without_comment"}',
+        },
+    ]
+    stream.feed_data("".join(f"{json.dumps(event)}\n" for event in events).encode())
+    stream.feed_eof()
+    output = io.StringIO()
+    buffer: list[str] = []
+
+    result = await LLMIntegration._stream_cursor_agent_output(
+        stream, buffer, output_stream=output
+    )
+
+    assert result == '{"action": "approve_without_comment"}'
+    assert output.getvalue() == "".join(f"{json.dumps(event)}\n" for event in events)
+    assert "\"type\": \"tool_call\"" in "".join(buffer)
 
 
 def test_review_agent_argv_config_json_env(monkeypatch, tmp_path):

@@ -368,7 +368,10 @@ class CodeReviewer:
     "--show-thinking/--no-show-thinking",
     envvar="SHOW_THINKING",
     default=False,
-    help="Show Claude thinking process in logs (default: disabled, env: SHOW_THINKING)",
+    help=(
+        "Show Claude thinking or Cursor Agent live events "
+        "(default: disabled, env: SHOW_THINKING)"
+    ),
 )
 @click.option(
     "--atlas-enabled/--no-atlas",

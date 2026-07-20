@@ -30,6 +30,7 @@ class LLMIntegration:
     _CODEX_OUTPUT_FILE = "codex_review_output.json"
 
     # Cursor Agent CLI: stdin prompt, stdout JSON envelope with `result` text body.
+    # `SHOW_THINKING` changes this to stream-json for live tool events.
     # Default matches `agent --help`: --print, --output-format json, --trust for headless.
     _DEFAULT_CURSOR_AGENT_ARGV = [
         "agent",
@@ -264,13 +265,20 @@ class LLMIntegration:
         if hasattr(process.stdin, "wait_closed"):
             await process.stdin.wait_closed()
 
-        use_stream_json = self.model is ReviewModel.CLAUDE and self.show_thinking
+        use_claude_stream_json = self.model is ReviewModel.CLAUDE and self.show_thinking
+        use_agent_stream_json = self.model is ReviewModel.AGENT and self.show_thinking
         stream_json_result: Optional[str] = None
 
-        if use_stream_json:
+        if use_claude_stream_json:
             stdout_task = asyncio.create_task(
                 self._stream_json_output(
                     process.stdout, stdout_buffer,
+                )
+            )
+        elif use_agent_stream_json:
+            stdout_task = asyncio.create_task(
+                self._stream_cursor_agent_output(
+                    process.stdout, stdout_buffer, output_stream=sys.stdout
                 )
             )
         else:
@@ -288,7 +296,7 @@ class LLMIntegration:
         try:
             await process.wait()
             results = await asyncio.gather(stdout_task, stderr_task)
-            if use_stream_json:
+            if use_claude_stream_json or use_agent_stream_json:
                 stream_json_result = results[0]
         except asyncio.CancelledError:
             logger.warning(
@@ -326,7 +334,7 @@ class LLMIntegration:
                 raw_output = codex_output_path.read_text(encoding="utf-8")
             finally:
                 codex_output_path.unlink(missing_ok=True)
-        elif use_stream_json and stream_json_result is not None:
+        elif (use_claude_stream_json or use_agent_stream_json) and stream_json_result is not None:
             raw_output = stream_json_result
         else:
             raw_output = "".join(stdout_buffer)
@@ -353,6 +361,9 @@ class LLMIntegration:
             except KeyError:  # pragma: no cover - defensive
                 raise ValueError(f"Unsupported review model: {self.model}")
 
+        if self.model is ReviewModel.AGENT and self.show_thinking:
+            self._enable_cursor_agent_streaming(command)
+
         if self.model is ReviewModel.CLAUDE and self.show_thinking:
             command.extend(["--output-format", "stream-json", "--verbose"])
 
@@ -374,6 +385,28 @@ class LLMIntegration:
             command.append(str(output_target))
 
         return command
+
+    @staticmethod
+    def _enable_cursor_agent_streaming(command: List[str]) -> None:
+        """Configure a Cursor Agent command to emit live JSON events."""
+        for index, argument in enumerate(command):
+            if argument == "--output-format":
+                if index + 1 == len(command):
+                    command.append("stream-json")
+                else:
+                    command[index + 1] = "stream-json"
+                break
+            if argument.startswith("--output-format="):
+                command[index] = "--output-format=stream-json"
+                break
+        else:
+            command.extend(["--output-format", "stream-json"])
+
+        # Partial text deltas are optional and have caused Cursor Agent runs to
+        # hang without emitting their terminal result event. Tool events still
+        # stream with plain stream-json, so prefer the stable mode here.
+        while "--stream-partial-output" in command:
+            command.remove("--stream-partial-output")
 
     @staticmethod
     def _unwrap_cursor_agent_json(raw_output: str) -> str:
@@ -526,6 +559,56 @@ class LLMIntegration:
             buffer.append(text)
             output_stream.write(text)
             output_stream.flush()
+
+    @staticmethod
+    async def _stream_cursor_agent_output(
+        stream: Optional[asyncio.StreamReader],
+        buffer: List[str],
+        *,
+        output_stream: TextIO,
+    ) -> str:
+        """Display Cursor Agent stream events and return its final review text."""
+        if stream is None:
+            return ""
+
+        partial_text: List[str] = []
+        result_text: Optional[str] = None
+
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+            text = line.decode(errors="replace")
+            buffer.append(text)
+            output_stream.write(text)
+            output_stream.flush()
+
+            try:
+                event = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "result" and isinstance(event.get("result"), str):
+                result_text = event["result"]
+                continue
+
+            message = event.get("message")
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    partial_text.append(block["text"])
+
+        if result_text is not None:
+            return result_text
+        if partial_text:
+            return "".join(partial_text)
+        return "".join(buffer)
 
     @staticmethod
     def _strip_markdown_fences(text: str) -> str:

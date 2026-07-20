@@ -1,0 +1,7 @@
+id: K-000032
+title: SHOW_THINKING streams Cursor Agent events safely
+type: recipe
+confidence: high
+summary: Cursor Agent streaming must avoid partial-delta hangs while preserving final result parsing.
+details: With REVIEW_TOOL=AGENT and SHOW_THINKING=true, LLMIntegration replaces any Cursor --output-format value with stream-json and removes --stream-partial-output. Plain stream-json still emits live tool events and avoids a Cursor Agent failure mode where partial-delta runs can hang without a terminal result event. The parser returns only the final result payload for ReviewResult parsing.
+updated_at: 2026-07-20
