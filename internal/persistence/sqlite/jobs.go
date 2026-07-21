@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -12,16 +13,100 @@ import (
 	"time"
 )
 
+// ErrJobConflict means an active job already owns a dedupe key with different facts.
+var ErrJobConflict = errors.New("active job dedupe facts conflict")
+
+// EnsureJobResult identifies the active job selected or created by EnsureJob.
+type EnsureJobResult struct {
+	ID      string
+	Created bool
+}
+
 // EnqueueJob stores a new queued job.
 func (s *Store) EnqueueJob(ctx context.Context, input JobInput) (string, error) {
+	input, err := normalizedJobInput(input)
+	if err != nil {
+		return "", err
+	}
+
+	id, err := newID("job")
+	if err != nil {
+		return "", err
+	}
+	now := time.Now().UTC().UnixMicro()
+	if err := insertJob(ctx, s.db, id, input, now); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// EnsureJob returns the matching active job for a dedupe key or creates it.
+// An active key is never silently rebound to different resource or payload facts.
+func (s *Store) EnsureJob(ctx context.Context, input JobInput) (result EnsureJobResult, err error) {
+	input, err = normalizedJobInput(input)
+	if err != nil {
+		return EnsureJobResult{}, err
+	}
+	if input.DedupeKey == "" {
+		return EnsureJobResult{}, errors.New("job dedupe key is required")
+	}
+
+	err = withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
+		var existing struct {
+			id           string
+			resourceType sql.NullString
+			resourceID   sql.NullString
+			payload      []byte
+		}
+		scanErr := conn.QueryRowContext(ctx, `
+SELECT id, resource_type, resource_id, payload_json
+FROM jobs
+WHERE kind = ?
+  AND dedupe_key = ?
+  AND state IN ('queued', 'running', 'retry_wait')`, input.Kind, input.DedupeKey).Scan(
+			&existing.id,
+			&existing.resourceType,
+			&existing.resourceID,
+			&existing.payload,
+		)
+		switch {
+		case scanErr == nil:
+			if existing.resourceType.String != input.ResourceType ||
+				existing.resourceID.String != input.ResourceID ||
+				!bytes.Equal(existing.payload, input.Payload) {
+				return fmt.Errorf("%w: kind=%q dedupe_key=%q", ErrJobConflict, input.Kind, input.DedupeKey)
+			}
+			result = EnsureJobResult{ID: existing.id}
+			return nil
+		case !errors.Is(scanErr, sql.ErrNoRows):
+			return fmt.Errorf("read active job dedupe: %w", scanErr)
+		}
+
+		id, idErr := newID("job")
+		if idErr != nil {
+			return idErr
+		}
+		if insertErr := insertJob(ctx, conn, id, input, time.Now().UTC().UnixMicro()); insertErr != nil {
+			return insertErr
+		}
+		result = EnsureJobResult{ID: id, Created: true}
+		return nil
+	})
+	if err != nil {
+		return EnsureJobResult{}, fmt.Errorf("ensure job: %w", err)
+	}
+	return result, nil
+}
+
+func normalizedJobInput(input JobInput) (JobInput, error) {
 	if input.Kind == "" {
-		return "", errors.New("job kind is required")
+		return JobInput{}, errors.New("job kind is required")
 	}
 	if len(input.Payload) == 0 {
 		input.Payload = []byte(`{}`)
 	}
 	if !json.Valid(input.Payload) {
-		return "", errors.New("job payload must be valid JSON")
+		return JobInput{}, errors.New("job payload must be valid JSON")
 	}
 	if input.AvailableAt.IsZero() {
 		input.AvailableAt = time.Now().UTC()
@@ -30,15 +115,17 @@ func (s *Store) EnqueueJob(ctx context.Context, input JobInput) (string, error) 
 		input.MaxAttempts = 3
 	}
 	if input.MaxAttempts < 1 {
-		return "", errors.New("job max attempts must be positive")
+		return JobInput{}, errors.New("job max attempts must be positive")
 	}
+	return input, nil
+}
 
-	id, err := newID("job")
-	if err != nil {
-		return "", err
-	}
-	now := time.Now().UTC().UnixMicro()
-	_, err = s.db.ExecContext(ctx, `
+type jobInserter interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func insertJob(ctx context.Context, executor jobInserter, id string, input JobInput, now int64) error {
+	_, err := executor.ExecContext(ctx, `
 INSERT INTO jobs(
     id, kind, resource_type, resource_id, dedupe_key, payload_json, state,
     priority, available_at_us, max_attempts, created_at_us, updated_at_us
@@ -56,9 +143,9 @@ INSERT INTO jobs(
 		now,
 	)
 	if err != nil {
-		return "", fmt.Errorf("enqueue job: %w", err)
+		return fmt.Errorf("insert job: %w", err)
 	}
-	return id, nil
+	return nil
 }
 
 // ClaimJob claims the next eligible job for an owner.
