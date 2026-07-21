@@ -14,6 +14,7 @@ import (
 	"time"
 
 	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
+	"github.com/sephriot/code-reviewer/internal/application/hydrate"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/legacy"
@@ -48,9 +49,84 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return legacyImport(ctx, args[2:], stdout, stderr)
 	case "github reconcile":
 		return githubReconcile(ctx, args[2:], stdout, stderr)
+	case "github hydrate":
+		return githubHydrate(ctx, args[2:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0]+" "+args[1])
 	}
+}
+
+func githubHydrate(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("github hydrate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	shadow := flags.Bool("shadow", false, "attach canonical evidence without scheduling or publication")
+	connectionID := flags.String("connection-id", "github-local", "stable local GitHub connection identity")
+	owner := flags.String("owner", "", "GitHub repository owner")
+	repository := flags.String("repository", "", "GitHub repository name")
+	number := flags.Int("number", 0, "GitHub pull request number")
+	apiURL := flags.String("api-url", "https://api.github.com", "GitHub API base URL")
+	tokenEnvironment := flags.String("token-env", "", "environment variable containing the GitHub token (default GITHUB_TOKEN)")
+	tokenFile := flags.String("token-file", "", "file containing the GitHub token")
+	timeout := flags.Duration("http-timeout", 30*time.Second, "GitHub HTTP request timeout")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if !*shadow {
+		return errors.New("refusing canonical hydration without --shadow")
+	}
+	if *connectionID == "" || *owner == "" || *repository == "" || strings.Contains(*owner, "/") || strings.Contains(*repository, "/") || *number <= 0 || *timeout <= 0 {
+		return errors.New("connection ID, repository coordinates, positive pull request number, and positive HTTP timeout are required")
+	}
+	if *tokenFile != "" && *tokenEnvironment != "" {
+		return errors.New("--token-file and --token-env are mutually exclusive")
+	}
+
+	store, err := storagesqlite.OpenReadOnly(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	status, err := store.SchemaStatus(ctx)
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
+	if status.Current != status.Latest || status.Current < 6 || status.Pending != 0 {
+		_ = store.Close()
+		return fmt.Errorf("canonical hydration requires a current schema at version 6 or newer: current=%d latest=%d pending=%d", status.Current, status.Latest, status.Pending)
+	}
+	if err := store.Close(); err != nil {
+		return err
+	}
+	store, err = storagesqlite.Open(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+
+	token, _, _, err := githubToken(*tokenEnvironment, *tokenFile)
+	if err != nil {
+		return err
+	}
+	client, err := githubadapter.NewClient(*apiURL, token, &http.Client{Timeout: *timeout})
+	if err != nil {
+		return err
+	}
+	service := hydrate.Service{Reader: client, Store: store}
+	report, err := service.Hydrate(ctx, hydrate.Request{
+		ConnectionID: *connectionID,
+		Owner:        *owner,
+		Repository:   *repository,
+		Number:       *number,
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, report)
 }
 
 func githubReconcile(ctx context.Context, args []string, stdout, stderr io.Writer) error {

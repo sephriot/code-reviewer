@@ -132,6 +132,139 @@ func TestGitHubReconcileRequiresShadow(t *testing.T) {
 	}
 }
 
+func TestGitHubHydrateRequiresSafeTargetFlags(t *testing.T) {
+	var output bytes.Buffer
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "shadow", args: []string{"github", "hydrate"}, want: "--shadow"},
+		{name: "coordinates", args: []string{"github", "hydrate", "--shadow"}, want: "repository coordinates"},
+		{name: "number", args: []string{"github", "hydrate", "--shadow", "--owner", "acme", "--repository", "widgets"}, want: "pull request number"},
+		{name: "timeout", args: []string{"github", "hydrate", "--shadow", "--owner", "acme", "--repository", "widgets", "--number", "42", "--http-timeout", "0s"}, want: "positive HTTP timeout"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output.Reset()
+			err := run(context.Background(), test.args, &output, &output)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("run() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestGitHubHydrateDoesNotCreateMissingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.db")
+	t.Setenv("GITHUB_TOKEN", "test-secret")
+	var output bytes.Buffer
+	err := run(context.Background(), []string{
+		"github", "hydrate", "--shadow", "--database", path,
+		"--owner", "acme", "--repository", "widgets", "--number", "42",
+	}, &output, &output)
+	if err == nil {
+		t.Fatal("github hydrate accepted a missing database")
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("github hydrate created target: %v", statErr)
+	}
+}
+
+func TestGitHubHydrateAttachesFixtureWithoutSideEffects(t *testing.T) {
+	const (
+		token = "test-secret"
+		head  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		base  = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		blob  = "cccccccccccccccccccccccccccccccccccccccc"
+	)
+	var methods []string
+	var methodsMu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		methodsMu.Lock()
+		methods = append(methods, request.Method)
+		methodsMu.Unlock()
+		if request.Header.Get("Authorization") != "Bearer "+token {
+			t.Errorf("Authorization = %q", request.Header.Get("Authorization"))
+		}
+		switch request.URL.Path {
+		case "/user":
+			_, _ = response.Write([]byte(`{"id":9001,"node_id":"U_9001","login":"reviewer"}`))
+		case "/search/issues":
+			if strings.Contains(request.URL.Query().Get("q"), "review-requested:reviewer") {
+				_, _ = response.Write([]byte(fmt.Sprintf(`{"total_count":1,"incomplete_results":false,"items":[{"number":42,"repository_url":%q,"pull_request":{}}]}`, serverURLForTest(request)+"/repos/acme/widgets")))
+				return
+			}
+			_, _ = response.Write([]byte(`{"total_count":0,"incomplete_results":false,"items":[]}`))
+		case "/repos/acme/widgets/pulls/42":
+			if request.Header.Get("Accept") == "application/vnd.github.diff" {
+				_, _ = response.Write([]byte("diff --git a/new.txt b/new.txt\n@@ -0,0 +1 @@\n+new\n"))
+				return
+			}
+			_, _ = response.Write([]byte(fmt.Sprintf(`{
+              "id":501,"node_id":"PR_501","number":42,
+              "html_url":"https://github.com/acme/widgets/pull/42",
+              "title":"Fixture PR","body":"Fixture details",
+              "user":{"id":9,"node_id":"U_9","login":"author"},
+              "state":"open","merged":false,"draft":false,"updated_at":"2026-07-21T08:00:00Z",
+              "head":{"sha":%q},
+              "base":{"sha":%q,"ref":"main","repo":{"id":77,"node_id":"R_77","full_name":"acme/widgets"}},
+              "labels":[],"requested_reviewers":[{"id":9001,"node_id":"U_9001","login":"reviewer"}]
+            }`, head, base)))
+		case "/repos/acme/widgets/pulls/42/files":
+			if request.URL.Query().Get("page") != "1" {
+				t.Errorf("file page = %q", request.URL.Query().Get("page"))
+			}
+			_, _ = response.Write([]byte(fmt.Sprintf(`[{"filename":"new.txt","status":"added","sha":%q,"patch":"+new\\n"}]`, blob)))
+		case "/repos/acme/widgets/git/trees/" + base:
+			_, _ = response.Write([]byte(`{"truncated":false,"tree":[]}`))
+		case "/repos/acme/widgets/git/trees/" + head:
+			_, _ = response.Write([]byte(fmt.Sprintf(`{"truncated":false,"tree":[{"path":"new.txt","mode":"100644","type":"blob","sha":%q}]}`, blob)))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	databasePath := filepath.Join(t.TempDir(), "control-plane.db")
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"db", "migrate", "--database", databasePath, "--apply"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITHUB_TOKEN", token)
+	if err := run(context.Background(), []string{"github", "reconcile", "--shadow", "--database", databasePath, "--api-url", server.URL, "--connection-id", "fixture"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := run(context.Background(), []string{
+		"github", "hydrate", "--shadow", "--database", databasePath, "--api-url", server.URL,
+		"--connection-id", "fixture", "--owner", "acme", "--repository", "widgets", "--number", "42",
+	}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"EntryCount": 1`) || strings.Contains(output.String(), token) {
+		t.Fatalf("hydrate output = %s", output.String())
+	}
+
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	assertCLIQueryCount(t, database, "revision_manifests", 1)
+	assertCLIQueryCount(t, database, "observation_revision_links", 1)
+	assertCLIQueryCount(t, database, "jobs", 0)
+	assertCLIQueryCount(t, database, "domain_events", 0)
+	assertCLIQueryCount(t, database, "outbox", 0)
+	methodsMu.Lock()
+	defer methodsMu.Unlock()
+	for _, method := range methods {
+		if method != http.MethodGet {
+			t.Fatalf("GitHub fixture saw mutating method %q", method)
+		}
+	}
+}
+
 func TestGitHubReconcileDoesNotCreateMissingDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.db")
 	t.Setenv("GITHUB_TOKEN", "test-secret")
