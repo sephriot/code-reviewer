@@ -9,14 +9,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sephriot/code-reviewer/internal/application/hydrateworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
+	"github.com/sephriot/code-reviewer/internal/application/reconcileworker"
 	"github.com/sephriot/code-reviewer/internal/config"
+	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 	"github.com/sephriot/code-reviewer/internal/worker"
 
 	_ "modernc.org/sqlite"
 )
 
 type waitingRunner struct{ started chan<- struct{} }
+
+type reconciliationSchedulerFunc func(context.Context, reconcile.Config) (sqlite.EnsureJobResult, error)
+
+func (f reconciliationSchedulerFunc) Schedule(ctx context.Context, cfg reconcile.Config) (sqlite.EnsureJobResult, error) {
+	return f(ctx, cfg)
+}
+
+type hydrationSchedulerFunc func(context.Context, string) ([]sqlite.EnsureJobResult, error)
+
+func (f hydrationSchedulerFunc) Schedule(ctx context.Context, connectionID string) ([]sqlite.EnsureJobResult, error) {
+	return f(ctx, connectionID)
+}
 
 func (r waitingRunner) Run(ctx context.Context) error {
 	r.started <- struct{}{}
@@ -118,6 +133,88 @@ func TestEnvironmentReaderFactoryRejectsMissingTokenAsPermanent(t *testing.T) {
 	})
 	if err == nil || !worker.IsPermanent(err) || strings.Contains(err.Error(), "not-persisted-token") {
 		t.Fatalf("factory error = %v", err)
+	}
+}
+
+func TestEnvironmentHydrationReaderFactoryUsesConfiguredReadOnlyConnection(t *testing.T) {
+	t.Parallel()
+	config := reconcile.Config{
+		ConnectionID:      "connection-1",
+		APIBaseURL:        "http://127.0.0.1:9999",
+		CredentialRefKind: "environment",
+		CredentialLocator: "TEST_GITHUB_TOKEN",
+	}
+	factory := environmentHydrationReaderFactory(func(name string) (string, bool) {
+		if name != config.CredentialLocator {
+			t.Fatalf("lookup name = %q", name)
+		}
+		return "not-persisted-token", true
+	}, config)
+	reader, err := factory(context.Background(), config.ConnectionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader == nil {
+		t.Fatal("reader = nil")
+	}
+	_, err = factory(context.Background(), "other-connection")
+	if err == nil || !worker.IsPermanent(err) || !strings.Contains(err.Error(), "connection") {
+		t.Fatalf("wrong connection error = %v", err)
+	}
+}
+
+func TestScheduleShadowSchedulesReconciliationBeforeHydration(t *testing.T) {
+	t.Parallel()
+	calls := make([]string, 0, 2)
+	config := reconcile.Config{ConnectionID: "connection-1"}
+	reconciliation := reconciliationSchedulerFunc(func(_ context.Context, got reconcile.Config) (sqlite.EnsureJobResult, error) {
+		if got != config {
+			t.Fatalf("reconciliation config = %#v, want %#v", got, config)
+		}
+		calls = append(calls, "reconcile")
+		return sqlite.EnsureJobResult{}, nil
+	})
+	hydration := hydrationSchedulerFunc(func(_ context.Context, connectionID string) ([]sqlite.EnsureJobResult, error) {
+		if connectionID != config.ConnectionID {
+			t.Fatalf("hydration connection = %q, want %q", connectionID, config.ConnectionID)
+		}
+		calls = append(calls, "hydrate")
+		return nil, nil
+	})
+	if err := scheduleShadow(context.Background(), reconciliation, hydration, config); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(calls, ","), "reconcile,hydrate"; got != want {
+		t.Fatalf("schedule order = %q, want %q", got, want)
+	}
+}
+
+func TestNewRegistersBothShadowWorkerHandlers(t *testing.T) {
+	cfg := config.Default()
+	cfg.DatabasePath = filepath.Join(t.TempDir(), "control-plane.db")
+	cfg.MigrationMode = config.MigrationApply
+	service, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = service.Close() }()
+
+	runner, ok := service.jobRunner.(*worker.Runner)
+	if !ok {
+		t.Fatalf("jobRunner = %T, want *worker.Runner", service.jobRunner)
+	}
+	router, ok := runner.Handler.(*worker.Router)
+	if !ok {
+		t.Fatalf("worker handler = %T, want *worker.Router", runner.Handler)
+	}
+	for _, job := range []sqlite.Job{
+		{Kind: reconcileworker.ReconcileJobKind, Payload: []byte(`{}`)},
+		{Kind: hydrateworker.HydrateJobKind, Payload: []byte(`{}`)},
+	} {
+		err := router.Handle(context.Background(), job)
+		if err == nil || !worker.IsPermanent(err) || strings.Contains(err.Error(), "unknown job kind") {
+			t.Fatalf("router.Handle(%q) error = %v", job.Kind, err)
+		}
 	}
 }
 

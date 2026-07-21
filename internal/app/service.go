@@ -16,6 +16,8 @@ import (
 
 	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
 	"github.com/sephriot/code-reviewer/internal/api"
+	"github.com/sephriot/code-reviewer/internal/application/hydrate"
+	"github.com/sephriot/code-reviewer/internal/application/hydrateworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/application/reconcileworker"
 	"github.com/sephriot/code-reviewer/internal/config"
@@ -37,6 +39,14 @@ type runtimeRunner interface {
 }
 
 type scheduleFunc func(context.Context) error
+
+type reconciliationScheduler interface {
+	Schedule(context.Context, reconcile.Config) (storagesqlite.EnsureJobResult, error)
+}
+
+type hydrationScheduler interface {
+	Schedule(context.Context, string) ([]storagesqlite.EnsureJobResult, error)
+}
 
 // New prepares a service and enforces migration policy before it can listen.
 func New(ctx context.Context, cfg config.Config) (*Service, error) {
@@ -98,9 +108,25 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		Store:     store,
 		NewReader: environmentReaderFactory(os.LookupEnv),
 	}
+	hydrateHandler := hydrateworker.Handler{
+		Store: store,
+		NewReader: environmentHydrationReaderFactory(os.LookupEnv, reconcile.Config{
+			ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
+			APIBaseURL:        cfg.ShadowReconciliation.APIBaseURL,
+			CredentialRefKind: "environment",
+			CredentialLocator: cfg.ShadowReconciliation.TokenEnvironment,
+		}),
+	}
+	router, err := worker.NewRouter(map[string]worker.Handler{
+		reconcileworker.ReconcileJobKind: reconcileHandler,
+		hydrateworker.HydrateJobKind:     hydrateHandler,
+	})
+	if err != nil {
+		return closeOnError(fmt.Errorf("configure worker handlers: %w", err))
+	}
 	runner := &worker.Runner{
 		Store:   store,
-		Handler: reconcileHandler,
+		Handler: router,
 		Owner:   workerOwner(),
 	}
 	service := &Service{store: store, server: server, jobRunner: runner}
@@ -111,12 +137,10 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 			CredentialRefKind: "environment",
 			CredentialLocator: cfg.ShadowReconciliation.TokenEnvironment,
 		}
-		scheduler := reconcileworker.Scheduler{Store: store}
+		reconciliationScheduler := reconcileworker.Scheduler{Store: store}
+		hydrationScheduler := hydrateworker.Scheduler{Store: store}
 		service.schedule = func(ctx context.Context) error {
-			if _, err := scheduler.Schedule(ctx, reconciliationConfig); err != nil {
-				return fmt.Errorf("schedule shadow reconciliation: %w", err)
-			}
-			return nil
+			return scheduleShadow(ctx, reconciliationScheduler, hydrationScheduler, reconciliationConfig)
 		}
 		service.scheduleInterval = cfg.ShadowReconciliation.Interval
 	}
@@ -231,6 +255,21 @@ func runScheduler(ctx context.Context, interval time.Duration, schedule schedule
 	}
 }
 
+func scheduleShadow(
+	ctx context.Context,
+	reconciliation reconciliationScheduler,
+	hydration hydrationScheduler,
+	reconciliationConfig reconcile.Config,
+) error {
+	if _, err := reconciliation.Schedule(ctx, reconciliationConfig); err != nil {
+		return fmt.Errorf("schedule shadow reconciliation: %w", err)
+	}
+	if _, err := hydration.Schedule(ctx, reconciliationConfig.ConnectionID); err != nil {
+		return fmt.Errorf("schedule canonical hydration: %w", err)
+	}
+	return nil
+}
+
 func environmentReaderFactory(lookup func(string) (string, bool)) reconcileworker.ReaderFactory {
 	return func(_ context.Context, reconciliationConfig reconcile.Config) (githubadapter.Reader, error) {
 		if reconciliationConfig.CredentialRefKind != "environment" {
@@ -248,6 +287,27 @@ func environmentReaderFactory(lookup func(string) (string, bool)) reconcileworke
 			return nil, worker.Permanent(fmt.Errorf("create GitHub read client: %w", err))
 		}
 		return reader, nil
+	}
+}
+
+func environmentHydrationReaderFactory(
+	lookup func(string) (string, bool),
+	reconciliationConfig reconcile.Config,
+) hydrateworker.ReaderFactory {
+	reconciliationReader := environmentReaderFactory(lookup)
+	return func(ctx context.Context, connectionID string) (hydrate.Reader, error) {
+		if connectionID != reconciliationConfig.ConnectionID {
+			return nil, worker.Permanent(fmt.Errorf("GitHub hydration connection %q is not configured", connectionID))
+		}
+		reader, err := reconciliationReader(ctx, reconciliationConfig)
+		if err != nil {
+			return nil, err
+		}
+		hydrationReader, ok := reader.(hydrate.Reader)
+		if !ok {
+			return nil, worker.Permanent(errors.New("GitHub read client does not support canonical hydration"))
+		}
+		return hydrationReader, nil
 	}
 }
 
