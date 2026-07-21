@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -75,6 +76,79 @@ func TestDatabaseMigrateUsesEnvironmentThenCLIOverride(t *testing.T) {
 	}
 	if _, err := os.Stat(overridePath); err != nil {
 		t.Fatalf("CLI override database was not created: %v", err)
+	}
+}
+
+func TestProfileCreateStoresImmutableVersionFromBoundedFiles(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "control-plane.db")
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"db", "migrate", "--database", databasePath, "--apply"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	instructions := filepath.Join(directory, "instructions.txt")
+	settings := filepath.Join(directory, "settings.json")
+	if err := os.WriteFile(instructions, []byte("Review carefully."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"model":"test","timeout_seconds":30}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	err := run(context.Background(), []string{
+		"profile", "create", "--database", databasePath, "--key", "default", "--version", "1", "--name", "Default",
+		"--instructions-file", instructions, "--settings-file", settings,
+	}, &output, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		ProfileKey string `json:"ProfileKey"`
+		Version    int    `json:"Version"`
+		Created    bool   `json:"Created"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ProfileKey != "default" || result.Version != 1 || !result.Created || strings.Contains(output.String(), "Review carefully") {
+		t.Fatalf("profile create output = %s", output.String())
+	}
+}
+
+func TestManualControlRejectsSecretBearingInput(t *testing.T) {
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"profile", "create", "--token=never-store"}, &output, &output); err == nil || !strings.Contains(err.Error(), "cannot carry secrets") {
+		t.Fatalf("secret flag error = %v", err)
+	}
+	databasePath := filepath.Join(t.TempDir(), "control-plane.db")
+	if err := run(context.Background(), []string{"db", "migrate", "--database", databasePath, "--apply"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	instructions := filepath.Join(directory, "instructions.txt")
+	settings := filepath.Join(directory, "settings.json")
+	if err := os.WriteFile(instructions, []byte("Review carefully."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"api_token":"never-store"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run(context.Background(), []string{
+		"profile", "create", "--database", databasePath, "--key", "default", "--version", "1", "--name", "Default",
+		"--instructions-file", instructions, "--settings-file", settings,
+	}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "secret-bearing") || strings.Contains(err.Error(), "never-store") {
+		t.Fatalf("secret settings error = %v", err)
+	}
+}
+
+func TestManualReviewQueueNeverAcceptsPerRunEngineArguments(t *testing.T) {
+	var output bytes.Buffer
+	err := run(context.Background(), []string{
+		"review", "queue", "--engine-argv-file", "/tmp/engine.json",
+	}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("per-run engine argv error = %v", err)
 	}
 }
 

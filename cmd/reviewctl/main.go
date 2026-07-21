@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -30,7 +32,7 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 2 {
-		return errors.New("usage: reviewctl <config|db|legacy|github> <command> [options]")
+		return errors.New("usage: reviewctl <config|db|legacy|github|profile|review> <command> [options]")
 	}
 	switch args[0] + " " + args[1] {
 	case "config validate":
@@ -51,9 +53,252 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return githubReconcile(ctx, args[2:], stdout, stderr)
 	case "github hydrate":
 		return githubHydrate(ctx, args[2:], stdout, stderr)
+	case "profile create":
+		return profileCreate(ctx, args[2:], stdout, stderr)
+	case "review queue":
+		return reviewQueue(ctx, args[2:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0]+" "+args[1])
 	}
+}
+
+const (
+	maxManualInputBytes = 64 << 10
+)
+
+func profileCreate(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := rejectSecretBearingManualArguments(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("profile create", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	key := flags.String("key", "", "stable profile key")
+	version := flags.Int("version", 0, "positive immutable profile version")
+	name := flags.String("name", "", "human-readable profile name")
+	descriptionFile := flags.String("description-file", "", "optional UTF-8 description file")
+	instructionsFile := flags.String("instructions-file", "", "UTF-8 instructions file")
+	settingsFile := flags.String("settings-file", "", "optional JSON object settings file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*key) == "" || *version <= 0 || strings.TrimSpace(*name) == "" || *instructionsFile == "" {
+		return errors.New("--key, positive --version, --name, and --instructions-file are required")
+	}
+	instructions, err := readBoundedRegularFile(*instructionsFile, maxManualInputBytes)
+	if err != nil {
+		return fmt.Errorf("read profile instructions: %w", err)
+	}
+	description := []byte(nil)
+	if *descriptionFile != "" {
+		description, err = readBoundedRegularFile(*descriptionFile, maxManualInputBytes)
+		if err != nil {
+			return fmt.Errorf("read profile description: %w", err)
+		}
+	}
+	settings := []byte(`{}`)
+	if *settingsFile != "" {
+		settings, err = readBoundedRegularFile(*settingsFile, maxManualInputBytes)
+		if err != nil {
+			return fmt.Errorf("read profile settings: %w", err)
+		}
+	}
+	if err := rejectSecretBearingJSON(settings); err != nil {
+		return fmt.Errorf("profile settings: %w", err)
+	}
+	store, err := openCurrentControlPlane(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	result, err := store.CreateReviewProfileVersion(ctx, storagesqlite.CreateReviewProfileVersionInput{
+		ProfileKey: *key, Version: *version, Name: *name, Description: string(description),
+		Instructions: string(instructions), SettingsJSON: settings, CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, result)
+}
+
+func reviewQueue(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := rejectSecretBearingManualArguments(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("review queue", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	connectionID := flags.String("connection-id", "", "local GitHub connection identity")
+	owner := flags.String("owner", "", "GitHub repository owner")
+	repository := flags.String("repository", "", "GitHub repository name")
+	number := flags.Int("number", 0, "positive pull request number")
+	profileKey := flags.String("profile-key", "", "immutable review profile key")
+	profileVersion := flags.Int("profile-version", 0, "positive immutable review profile version")
+	accessMode := flags.String("access-mode", "diff_only", "diff_only, selected_files, or read_only_worktree")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*connectionID) == "" || strings.TrimSpace(*owner) == "" || strings.TrimSpace(*repository) == "" || *number <= 0 || strings.TrimSpace(*profileKey) == "" || *profileVersion <= 0 {
+		return errors.New("--connection-id, --owner, --repository, positive --number, --profile-key, and positive --profile-version are required")
+	}
+	engineConfig := []byte(`{"engine_source":"reviewd_config"}`)
+	store, err := openCurrentControlPlane(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	coordinate, err := store.ResolveReviewPullRequest(ctx, *connectionID, *owner, *repository, *number)
+	if err != nil {
+		return err
+	}
+	profile, err := store.ResolveReviewProfileVersion(ctx, *profileKey, *profileVersion)
+	if err != nil {
+		return err
+	}
+	triggerSHA := manualQueueTriggerSHA256(coordinate, profile, *accessMode)
+	queued, err := store.QueueReviewRun(ctx, storagesqlite.PrepareReviewRunInput{
+		ConnectionID: coordinate.ConnectionID, PullRequestID: coordinate.PullRequestID,
+		ProfileID: profile.ProfileID, ProfileVersionID: profile.ProfileVersionID,
+		TriggerKind: "manual", TriggerSHA256: triggerSHA, CorrelationID: "reviewctl-manual",
+		EngineKind: "cli", EngineConfigJSON: engineConfig, AccessMode: *accessMode,
+		RequestedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, queued)
+}
+
+func openCurrentControlPlane(ctx context.Context, path string) (*storagesqlite.Store, error) {
+	readOnly, err := storagesqlite.OpenReadOnly(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	status, statusErr := readOnly.SchemaStatus(ctx)
+	closeErr := readOnly.Close()
+	if statusErr != nil {
+		return nil, statusErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if status.Current != status.Latest || status.Current < 7 || status.Pending != 0 {
+		return nil, fmt.Errorf("manual review control requires current schema at version 7 or newer: current=%d latest=%d pending=%d", status.Current, status.Latest, status.Pending)
+	}
+	return storagesqlite.Open(ctx, path)
+}
+
+func readBoundedRegularFile(path string, maximum int64) ([]byte, error) {
+	if strings.TrimSpace(path) == "" || maximum <= 0 {
+		return nil, errors.New("file path is invalid")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maximum {
+		return nil, errors.New("file must be regular and within size limit")
+	}
+	contents, err := io.ReadAll(io.LimitReader(file, maximum+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(contents)) > maximum {
+		return nil, errors.New("file exceeds size limit")
+	}
+	return contents, nil
+}
+
+func manualQueueTriggerSHA256(coordinate storagesqlite.ReviewPullRequestCoordinate, profile storagesqlite.ReviewProfileVersionCoordinate, accessMode string) string {
+	value, _ := json.Marshal(struct {
+		FormatVersion    int    `json:"format_version"`
+		ConnectionID     string `json:"connection_id"`
+		PullRequestID    string `json:"pull_request_id"`
+		ProfileID        string `json:"profile_id"`
+		ProfileVersionID string `json:"profile_version_id"`
+		AccessMode       string `json:"access_mode"`
+	}{1, coordinate.ConnectionID, coordinate.PullRequestID, profile.ProfileID, profile.ProfileVersionID, accessMode})
+	digest := sha256.Sum256(value)
+	return hex.EncodeToString(digest[:])
+}
+
+func rejectSecretBearingManualArguments(args []string) error {
+	for _, argument := range args {
+		if !strings.HasPrefix(argument, "-") {
+			continue
+		}
+		name, _, _ := strings.Cut(strings.TrimLeft(argument, "-"), "=")
+		if secretBearingName(name) {
+			return errors.New("manual control arguments cannot carry secrets")
+		}
+	}
+	return nil
+}
+
+func rejectSecretBearingJSON(raw []byte) error {
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return errors.New("must be valid JSON")
+	}
+	if err := rejectSecretBearingJSONValue(value); err != nil {
+		return err
+	}
+	return nil
+}
+
+func rejectSecretBearingJSONValue(value any) error {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			if secretBearingName(key) {
+				return errors.New("cannot contain secret-bearing key")
+			}
+			if err := rejectSecretBearingJSONValue(nested); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if err := rejectSecretBearingJSONValue(nested); err != nil {
+				return err
+			}
+		}
+	case string:
+		if containsLikelySecret(typed) {
+			return errors.New("cannot contain secret value")
+		}
+	}
+	return nil
+}
+
+func secretBearingName(value string) bool {
+	value = strings.ToLower(strings.ReplaceAll(value, "-", "_"))
+	for _, marker := range []string{"token", "password", "secret", "credential", "authorization", "api_key", "apikey", "private_key"} {
+		if strings.Contains(value, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsLikelySecret(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(value, "ghp_") || strings.HasPrefix(value, "github_pat_") || strings.HasPrefix(value, "sk-") || strings.Contains(value, "token=") || strings.Contains(value, "password=") || strings.Contains(value, "secret=")
 }
 
 func githubHydrate(ctx context.Context, args []string, stdout, stderr io.Writer) error {
