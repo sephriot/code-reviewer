@@ -1,6 +1,7 @@
 package legacy
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -123,6 +125,73 @@ func ReadSnapshot(ctx context.Context, path string) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("finish legacy snapshot: %w", err)
 	}
 	return snapshot, nil
+}
+
+// ValidateSnapshot proves that canonical bytes, raw rows, extracted fields,
+// revision identities, groups, counts, and warnings all describe one dataset.
+func ValidateSnapshot(snapshot Snapshot) error {
+	if snapshot.RowFormatVersion != rowFormatVersion {
+		return fmt.Errorf("unsupported legacy row format %d", snapshot.RowFormatVersion)
+	}
+	rebuilt := Snapshot{
+		Path: snapshot.Path, RowFormatVersion: rowFormatVersion,
+		TableCounts: make(map[string]int64, len(requiredTables)),
+	}
+	payload := rowsetPayload{RowFormatVersion: rowFormatVersion, Tables: make([]tablePayload, 0, len(requiredTables))}
+	for _, table := range requiredTables {
+		inputRows := make([]Row, 0)
+		for _, row := range snapshot.Rows {
+			if row.Table == table {
+				inputRows = append(inputRows, row)
+			}
+		}
+		sort.Slice(inputRows, func(i, j int) bool { return inputRows[i].ID < inputRows[j].ID })
+		rawRows := make([]json.RawMessage, 0, len(inputRows))
+		for _, supplied := range inputRows {
+			var raw map[string]any
+			if err := json.Unmarshal(supplied.RawJSON, &raw); err != nil {
+				return fmt.Errorf("decode legacy row %s/%d: %w", table, supplied.ID, err)
+			}
+			extracted, err := extractRow(table, raw, supplied.RawJSON)
+			if err != nil {
+				return err
+			}
+			rebuilt.Rows = append(rebuilt.Rows, extracted)
+			rawRows = append(rawRows, supplied.RawJSON)
+		}
+		rebuilt.TableCounts[table] = int64(len(inputRows))
+		rebuilt.TotalRows += int64(len(inputRows))
+		payload.Tables = append(payload.Tables, tablePayload{Name: table, Rows: rawRows})
+	}
+	if rebuilt.TotalRows != int64(len(snapshot.Rows)) {
+		return errors.New("snapshot contains an unknown legacy table")
+	}
+	resolveRevisions(&rebuilt)
+	groupRows(&rebuilt)
+	canonical, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode canonical legacy rowset: %w", err)
+	}
+	digest := sha256.Sum256(canonical)
+	rebuilt.CanonicalJSON = canonical
+	rebuilt.RowsetSHA256 = hex.EncodeToString(digest[:])
+
+	if !bytes.Equal(rebuilt.CanonicalJSON, snapshot.CanonicalJSON) || rebuilt.RowsetSHA256 != snapshot.RowsetSHA256 {
+		return errors.New("snapshot canonical rowset does not match raw rows")
+	}
+	if rebuilt.TotalRows != snapshot.TotalRows || !reflect.DeepEqual(rebuilt.TableCounts, snapshot.TableCounts) {
+		return errors.New("snapshot counts do not match raw rows")
+	}
+	if !reflect.DeepEqual(rebuilt.Rows, snapshot.Rows) {
+		return errors.New("snapshot derived row fields do not match raw rows")
+	}
+	if !reflect.DeepEqual(rebuilt.Groups, snapshot.Groups) {
+		return errors.New("snapshot pull-request groups do not match raw rows")
+	}
+	if !reflect.DeepEqual(rebuilt.Warnings, snapshot.Warnings) {
+		return errors.New("snapshot warnings do not match raw rows")
+	}
+	return nil
 }
 
 func validateSourcePath(path string) (string, error) {

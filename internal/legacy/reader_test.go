@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -243,6 +244,34 @@ func TestReadSnapshotRequiresAllKnownTablesAndDoesNotCreateMissingFile(t *testin
 			t.Fatalf("source file was created or unexpected stat error: %v", statErr)
 		}
 	})
+}
+
+func TestValidateSnapshotRejectsUnboundRawAndDerivedData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	createLegacyReaderFixture(t, path)
+	snapshot, err := ReadSnapshot(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSnapshot(snapshot); err != nil {
+		t.Fatalf("ValidateSnapshot(valid) error = %v", err)
+	}
+
+	changedRaw := snapshot
+	changedRaw.Rows = append([]Row(nil), snapshot.Rows...)
+	changedRaw.Rows[0].RawJSON = json.RawMessage(`{"id":4,"repository":"attacker/repo"}`)
+	digest := sha256.Sum256(changedRaw.Rows[0].RawJSON)
+	changedRaw.Rows[0].SHA256 = hex.EncodeToString(digest[:])
+	if err := ValidateSnapshot(changedRaw); err == nil {
+		t.Fatal("ValidateSnapshot accepted raw rows not bound to canonical rowset")
+	}
+
+	changedDerived := snapshot
+	changedDerived.Rows = append([]Row(nil), snapshot.Rows...)
+	changedDerived.Rows[0].Repository = "attacker/repo"
+	if err := ValidateSnapshot(changedDerived); err == nil {
+		t.Fatal("ValidateSnapshot accepted derived fields not bound to raw rows")
+	}
 }
 
 func createLegacyReaderFixture(t *testing.T, path string) {

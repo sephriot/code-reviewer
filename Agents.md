@@ -3,6 +3,15 @@
 ## Overview
 The code reviewer is an asynchronous service that watches GitHub pull requests and coordinates focused agents to triage, review, and surface decisions. The orchestration follows the architecture documented in `README.md` and the web workflow described in `WEB_UI_README.md`.
 
+## Version 2 Transition
+
+- `docs/GREENFIELD_PRODUCT_DESIGN.md` is the normative ground-up product and architecture design.
+- The new Go control plane lives under `cmd/`, `internal/`, and `migrations/sqlite/`; the Python application remains the legacy behavior reference during migration.
+- `data/reviews.db` is legacy state and must remain read-only during migration. Version 2 uses a separate database such as `data/control-plane.db`.
+- Legacy import accepts only a backup with a verified format-v1 manifest. Plan mode is read-only; writes require `--apply`.
+- Every legacy row is retained in `migration_ledger` and `legacy_snapshot_rows`. Legacy revision identities are non-publishable and import must create no job, domain-event, outbox, or GitHub publication work.
+- Reusing a stable source ID is idempotent for identical input and fails closed if any source row checksum changes.
+
 Core behaviors:
 - Poll GitHub for review requests using minimal metadata and avoid reprocessing the same commit.
 - Delegate code analysis to the configured LLM CLI via structured prompts.

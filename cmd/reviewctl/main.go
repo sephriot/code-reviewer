@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/sephriot/code-reviewer/internal/config"
+	"github.com/sephriot/code-reviewer/internal/legacy"
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 )
 
@@ -38,9 +39,119 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return databaseVerifyBackup(ctx, args[2:], stdout, stderr)
 	case "legacy inspect":
 		return legacyInspect(ctx, args[2:], stdout, stderr)
+	case "legacy import":
+		return legacyImport(ctx, args[2:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0]+" "+args[1])
 	}
+}
+
+func legacyImport(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("legacy import", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	source := flags.String("source", "", "manifest-verified legacy backup database")
+	manifestPath := flags.String("manifest", "", "backup manifest JSON")
+	sourceID := flags.String("source-id", "", "stable legacy source identity")
+	displayName := flags.String("source-name", "", "human-readable legacy source name")
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	apply := flags.Bool("apply", false, "write the validated import plan")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *source == "" {
+		return errors.New("--source is required and must name a backup")
+	}
+	if *sourceID == "" {
+		return errors.New("--source-id is required")
+	}
+	if *manifestPath == "" {
+		*manifestPath = *source + ".manifest.json"
+	}
+	if *displayName == "" {
+		*displayName = *sourceID
+	}
+	if same, err := sameFile(*source, cfg.DatabasePath); err != nil {
+		return err
+	} else if same {
+		return errors.New("legacy source and control-plane target are the same file")
+	}
+
+	manifest, err := storagesqlite.VerifyLegacyBackup(ctx, *source, *manifestPath)
+	if err != nil {
+		return fmt.Errorf("verify import source: %w", err)
+	}
+	snapshot, err := legacy.ReadSnapshot(ctx, *source)
+	if err != nil {
+		return fmt.Errorf("read import source: %w", err)
+	}
+	if _, err := storagesqlite.VerifyLegacyBackup(ctx, *source, *manifestPath); err != nil {
+		return fmt.Errorf("reverify import source after snapshot read: %w", err)
+	}
+	if isLegacy, err := storagesqlite.IsLegacyDatabase(ctx, cfg.DatabasePath); err != nil {
+		return err
+	} else if isLegacy {
+		return errors.New("refusing to import into a legacy database")
+	}
+
+	store, err := storagesqlite.OpenReadOnly(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	status, err := store.SchemaStatus(ctx)
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
+	if status.Current != status.Latest || status.Pending != 0 {
+		_ = store.Close()
+		return fmt.Errorf("control-plane schema is not current: current=%d latest=%d pending=%d", status.Current, status.Latest, status.Pending)
+	}
+	if *apply {
+		if err := store.Close(); err != nil {
+			return err
+		}
+		store, err = storagesqlite.Open(ctx, cfg.DatabasePath)
+		if err != nil {
+			return err
+		}
+	}
+	defer func() { _ = store.Close() }()
+
+	input := storagesqlite.LegacyImportInput{
+		SourceID:     *sourceID,
+		DisplayName:  *displayName,
+		SourceReport: manifest.Backup,
+		Snapshot:     snapshot,
+	}
+	var report storagesqlite.LegacyImportReport
+	if *apply {
+		report, err = store.ImportLegacy(ctx, input)
+	} else {
+		report, err = store.PlanLegacyImport(ctx, input)
+	}
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, report)
+}
+
+func sameFile(leftPath, rightPath string) (bool, error) {
+	left, err := os.Stat(leftPath)
+	if err != nil {
+		return false, fmt.Errorf("stat legacy source: %w", err)
+	}
+	right, err := os.Stat(rightPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("stat control-plane target: %w", err)
+	}
+	return os.SameFile(left, right), nil
 }
 
 func databaseVerifyBackup(ctx context.Context, args []string, stdout, stderr io.Writer) error {

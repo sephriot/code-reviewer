@@ -2,6 +2,34 @@
 
 An automated GitHub PR code review system using Claude Code. This tool monitors for new pull requests where you're assigned as a reviewer and automatically performs code reviews using Claude AI.
 
+## Version 2 rebuild status
+
+The replacement control plane is being built in Go from the ground-up design in [docs/GREENFIELD_PRODUCT_DESIGN.md](docs/GREENFIELD_PRODUCT_DESIGN.md). The Python service remains the legacy reference implementation and must not run against its database while a final backup is being made.
+
+The current Go slice provides configuration validation, health checks, additive SQLite migrations, durable jobs/events/outbox primitives, and a lossless legacy import boundary. Imported revisions are permanently non-publishable; importing creates no jobs, events, outbox entries, or GitHub effects, and requires `publication_mode=disabled`.
+
+```bash
+go run ./cmd/reviewctl db migrate --database data/control-plane.db --apply
+go run ./cmd/reviewctl db backup \
+  --source data/reviews.db \
+  --destination data/backups/reviews-v2-import.db
+go run ./cmd/reviewctl db verify-backup \
+  --backup data/backups/reviews-v2-import.db
+
+# Plan first (read-only), then explicitly apply the idempotent import.
+go run ./cmd/reviewctl legacy import \
+  --source data/backups/reviews-v2-import.db \
+  --source-id legacy-python-reviews-v1 \
+  --database data/control-plane.db
+go run ./cmd/reviewctl legacy import \
+  --source data/backups/reviews-v2-import.db \
+  --source-id legacy-python-reviews-v1 \
+  --database data/control-plane.db \
+  --apply
+```
+
+Never use `data/reviews.db` as the v2 target. The import command rejects source/target aliases, verifies the backup before and after its read snapshot, and fails closed on changed source-row checksums or incomplete coverage.
+
 ## Features
 
 - 🔍 **Smart PR Monitoring**: Detects new review requests and code changes

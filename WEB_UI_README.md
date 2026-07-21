@@ -1,5 +1,7 @@
 # Web UI for Code Review Management
 
+> This document describes the legacy Python dashboard. The Go version 2 control plane is under construction from `docs/GREENFIELD_PRODUCT_DESIGN.md`; its unified inbox UI is not implemented yet. Imported legacy history is preserved in the separate v2 database but is not served by this dashboard.
+
 The code reviewer now includes an optional web UI that provides a dashboard for managing PR reviews, especially for handling `approve_with_comments` actions that require human confirmation.
 
 ## Features
