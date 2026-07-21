@@ -70,6 +70,20 @@ type PrepareReviewRunResult struct {
 	Created        bool
 }
 
+// QueueReviewRunResult identifies the immutable review attempt and its single
+// durable execution job. Repeating identical facts returns the same records.
+type QueueReviewRunResult struct {
+	IntentID       string
+	RunID          string
+	RunContextID   string
+	IdempotencyKey string
+	Created        bool
+	JobID          string
+	JobCreated     bool
+}
+
+const reviewExecutionJobKind = "review.execute.v1"
+
 // LoadCurrentCanonicalReviewTarget returns the evidence selected by the
 // current projection. It fails closed if stored identity or manifest proof is
 // inconsistent, rather than allowing a review to use unverified evidence.
@@ -153,89 +167,189 @@ func (s *Store) PrepareReviewRun(ctx context.Context, input PrepareReviewRunInpu
 
 	var result PrepareReviewRunResult
 	err = withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
-		if err := requireReviewPreparationPublicationDisabled(ctx, conn); err != nil {
-			return err
-		}
-		target, err := loadCurrentCanonicalReviewTarget(ctx, conn, normalized.ConnectionID, normalized.PullRequestID)
-		if err != nil {
-			return err
-		}
-		if err := requireReviewProfileVersion(ctx, conn, normalized.ProfileID, normalized.ProfileVersionID); err != nil {
-			return err
-		}
-
-		idempotencyKey := normalized.IdempotencyKey
-		if idempotencyKey == "" {
-			idempotencyKey = reviewRunIdempotencyKey(target, normalized)
-		}
-		existing, found, err := loadPreparedReviewRun(ctx, conn, idempotencyKey)
-		if err != nil {
-			return err
-		}
-		if found {
-			if !preparedReviewRunMatches(existing, target, normalized) {
-				return fmt.Errorf("%w: key=%q", ErrReviewRunConflict, idempotencyKey)
-			}
-			result = PrepareReviewRunResult{
-				IntentID:       existing.IntentID,
-				RunID:          existing.RunID,
-				RunContextID:   existing.RunContextID,
-				IdempotencyKey: idempotencyKey,
-			}
-			return nil
-		}
-
-		preparedAt := normalized.RequestedAt.UTC().UnixMicro()
-		intentID := stableID("review-intent", idempotencyKey)
-		runID := stableID("review-run", intentID, "1")
-		contextID := stableID("review-run-context", runID)
-		if _, err := conn.ExecContext(ctx, `
-INSERT INTO review_intents(
- id, connection_id, repository_id, pull_request_id, revision_id, observation_id,
- profile_id, profile_version_id, trigger_kind, idempotency_key, trigger_sha256,
- user_context_sha256, correlation_id, requested_at_us, created_at_us)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
-			intentID, target.ConnectionID, target.RepositoryID, target.PullRequestID, target.RevisionID, target.ObservationID,
-			normalized.ProfileID, normalized.ProfileVersionID, normalized.TriggerKind, idempotencyKey, normalized.TriggerSHA256,
-			normalized.UserContextSHA256, normalized.CorrelationID, preparedAt, preparedAt); err != nil {
-			return fmt.Errorf("insert review intent: %w", err)
-		}
-		if _, err := conn.ExecContext(ctx, `
-INSERT INTO review_runs(
- id, intent_id, connection_id, pull_request_id, revision_id, observation_id,
- attempt_number, engine_kind, engine_config_json, started_at_us, created_at_us)
-VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-			runID, intentID, target.ConnectionID, target.PullRequestID, target.RevisionID, target.ObservationID,
-			normalized.EngineKind, normalized.EngineConfigJSON, preparedAt, preparedAt); err != nil {
-			return fmt.Errorf("insert review run: %w", err)
-		}
-		for sequence, kind := range []string{"queued", "preparing"} {
-			if _, err := conn.ExecContext(ctx, `
-INSERT INTO review_run_events(id, run_id, sequence, event_kind, payload_json, occurred_at_us, created_at_us)
-VALUES (?, ?, ?, ?, '{}', ?, ?)`,
-				stableID("review-run-event", runID, fmt.Sprintf("%d", sequence+1)), runID, sequence+1, kind, preparedAt, preparedAt); err != nil {
-				return fmt.Errorf("insert review run %s event: %w", kind, err)
-			}
-		}
-		if _, err := conn.ExecContext(ctx, `
-INSERT INTO review_run_contexts(
- id, run_id, intent_id, pull_request_id, revision_id, observation_id,
- context_format_version, access_mode, manifest_sha256, manifest_json, created_at_us)
-VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-			contextID, runID, intentID, target.PullRequestID, target.RevisionID, target.ObservationID,
-			normalized.AccessMode, target.ManifestSHA256, target.ManifestJSON, preparedAt); err != nil {
-			return fmt.Errorf("insert review run context: %w", err)
-		}
-		result = PrepareReviewRunResult{
-			IntentID: intentID, RunID: runID, RunContextID: contextID,
-			IdempotencyKey: idempotencyKey, Created: true,
-		}
-		return nil
+		var prepareErr error
+		result, prepareErr = prepareReviewRunOnConnection(ctx, conn, normalized)
+		return prepareErr
 	})
 	if err != nil {
 		return PrepareReviewRunResult{}, fmt.Errorf("prepare review run: %w", err)
 	}
 	return result, nil
+}
+
+// QueueReviewRun atomically prepares the first immutable review attempt and
+// queues precisely one execution job. The job payload carries only the run
+// identity; its stable dedupe proof is stored in the job's dedupe_key column.
+func (s *Store) QueueReviewRun(ctx context.Context, input PrepareReviewRunInput) (QueueReviewRunResult, error) {
+	normalized, err := normalizePrepareReviewRunInput(input)
+	if err != nil {
+		return QueueReviewRunResult{}, err
+	}
+
+	var result QueueReviewRunResult
+	err = withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
+		prepared, err := prepareReviewRunOnConnection(ctx, conn, normalized)
+		if err != nil {
+			return err
+		}
+		job, err := ensureReviewExecutionJob(ctx, conn, prepared.RunID, normalized.RequestedAt)
+		if err != nil {
+			return err
+		}
+		result = QueueReviewRunResult{
+			IntentID: prepared.IntentID, RunID: prepared.RunID, RunContextID: prepared.RunContextID,
+			IdempotencyKey: prepared.IdempotencyKey, Created: prepared.Created,
+			JobID: job.ID, JobCreated: job.Created,
+		}
+		return nil
+	})
+	if err != nil {
+		return QueueReviewRunResult{}, fmt.Errorf("queue review run: %w", err)
+	}
+	return result, nil
+}
+
+func prepareReviewRunOnConnection(ctx context.Context, conn *sql.Conn, normalized normalizedPrepareReviewRunInput) (PrepareReviewRunResult, error) {
+	if err := requireReviewPreparationPublicationDisabled(ctx, conn); err != nil {
+		return PrepareReviewRunResult{}, err
+	}
+	target, err := loadCurrentCanonicalReviewTarget(ctx, conn, normalized.ConnectionID, normalized.PullRequestID)
+	if err != nil {
+		return PrepareReviewRunResult{}, err
+	}
+	if err := requireReviewProfileVersion(ctx, conn, normalized.ProfileID, normalized.ProfileVersionID); err != nil {
+		return PrepareReviewRunResult{}, err
+	}
+
+	idempotencyKey := normalized.IdempotencyKey
+	if idempotencyKey == "" {
+		idempotencyKey = reviewRunIdempotencyKey(target, normalized)
+	}
+	existing, found, err := loadPreparedReviewRun(ctx, conn, idempotencyKey)
+	if err != nil {
+		return PrepareReviewRunResult{}, err
+	}
+	if found {
+		if !preparedReviewRunMatches(existing, target, normalized) {
+			return PrepareReviewRunResult{}, fmt.Errorf("%w: key=%q", ErrReviewRunConflict, idempotencyKey)
+		}
+		return PrepareReviewRunResult{
+			IntentID: existing.IntentID, RunID: existing.RunID, RunContextID: existing.RunContextID,
+			IdempotencyKey: idempotencyKey,
+		}, nil
+	}
+
+	preparedAt := normalized.RequestedAt.UTC().UnixMicro()
+	intentID := stableID("review-intent", idempotencyKey)
+	runID := stableID("review-run", intentID, "1")
+	contextID := stableID("review-run-context", runID)
+	if _, err := conn.ExecContext(ctx, `
+INSERT INTO review_intents(
+ id, connection_id, repository_id, pull_request_id, revision_id, observation_id,
+ profile_id, profile_version_id, trigger_kind, idempotency_key, trigger_sha256,
+ user_context_sha256, correlation_id, requested_at_us, created_at_us)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
+		intentID, target.ConnectionID, target.RepositoryID, target.PullRequestID, target.RevisionID, target.ObservationID,
+		normalized.ProfileID, normalized.ProfileVersionID, normalized.TriggerKind, idempotencyKey, normalized.TriggerSHA256,
+		normalized.UserContextSHA256, normalized.CorrelationID, preparedAt, preparedAt); err != nil {
+		return PrepareReviewRunResult{}, fmt.Errorf("insert review intent: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `
+INSERT INTO review_runs(
+ id, intent_id, connection_id, pull_request_id, revision_id, observation_id,
+ attempt_number, engine_kind, engine_config_json, started_at_us, created_at_us)
+VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+		runID, intentID, target.ConnectionID, target.PullRequestID, target.RevisionID, target.ObservationID,
+		normalized.EngineKind, normalized.EngineConfigJSON, preparedAt, preparedAt); err != nil {
+		return PrepareReviewRunResult{}, fmt.Errorf("insert review run: %w", err)
+	}
+	for sequence, kind := range []string{"queued", "preparing"} {
+		if _, err := conn.ExecContext(ctx, `
+INSERT INTO review_run_events(id, run_id, sequence, event_kind, payload_json, occurred_at_us, created_at_us)
+VALUES (?, ?, ?, ?, '{}', ?, ?)`,
+			stableID("review-run-event", runID, fmt.Sprintf("%d", sequence+1)), runID, sequence+1, kind, preparedAt, preparedAt); err != nil {
+			return PrepareReviewRunResult{}, fmt.Errorf("insert review run %s event: %w", kind, err)
+		}
+	}
+	if _, err := conn.ExecContext(ctx, `
+INSERT INTO review_run_contexts(
+ id, run_id, intent_id, pull_request_id, revision_id, observation_id,
+ context_format_version, access_mode, manifest_sha256, manifest_json, created_at_us)
+VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+		contextID, runID, intentID, target.PullRequestID, target.RevisionID, target.ObservationID,
+		normalized.AccessMode, target.ManifestSHA256, target.ManifestJSON, preparedAt); err != nil {
+		return PrepareReviewRunResult{}, fmt.Errorf("insert review run context: %w", err)
+	}
+	return PrepareReviewRunResult{
+		IntentID: intentID, RunID: runID, RunContextID: contextID,
+		IdempotencyKey: idempotencyKey, Created: true,
+	}, nil
+}
+
+func reviewExecutionJobDedupeKey(runID string) string {
+	return reviewExecutionJobKind + ":" + runID
+}
+
+type reviewExecutionJobPayload struct {
+	RunID string `json:"run_id"`
+}
+
+func ensureReviewExecutionJob(ctx context.Context, conn *sql.Conn, runID string, availableAt time.Time) (EnsureJobResult, error) {
+	dedupeKey := reviewExecutionJobDedupeKey(runID)
+	payload, err := json.Marshal(reviewExecutionJobPayload{RunID: runID})
+	if err != nil {
+		return EnsureJobResult{}, fmt.Errorf("encode review execution job payload: %w", err)
+	}
+
+	rows, err := conn.QueryContext(ctx, `
+SELECT id, resource_type, resource_id, payload_json
+FROM jobs
+WHERE kind = ? AND dedupe_key = ?
+ORDER BY created_at_us, id`, reviewExecutionJobKind, dedupeKey)
+	if err != nil {
+		return EnsureJobResult{}, fmt.Errorf("load review execution job: %w", err)
+	}
+	defer rows.Close()
+	var existing struct {
+		id           string
+		resourceType sql.NullString
+		resourceID   sql.NullString
+		payload      []byte
+	}
+	if rows.Next() {
+		if err := rows.Scan(&existing.id, &existing.resourceType, &existing.resourceID, &existing.payload); err != nil {
+			return EnsureJobResult{}, fmt.Errorf("scan review execution job: %w", err)
+		}
+		if rows.Next() {
+			return EnsureJobResult{}, errors.New("review execution job dedupe is not unique")
+		}
+		if err := rows.Err(); err != nil {
+			return EnsureJobResult{}, fmt.Errorf("iterate review execution jobs: %w", err)
+		}
+		if existing.resourceType.String != "review_run" || existing.resourceID.String != runID || !bytes.Equal(existing.payload, payload) {
+			return EnsureJobResult{}, fmt.Errorf("%w: kind=%q dedupe_key=%q", ErrJobConflict, reviewExecutionJobKind, dedupeKey)
+		}
+		return EnsureJobResult{ID: existing.id}, nil
+	}
+	if err := rows.Err(); err != nil {
+		return EnsureJobResult{}, fmt.Errorf("iterate review execution jobs: %w", err)
+	}
+
+	id, err := newID("job")
+	if err != nil {
+		return EnsureJobResult{}, err
+	}
+	job, err := normalizedJobInput(JobInput{
+		Kind: reviewExecutionJobKind, ResourceType: "review_run", ResourceID: runID,
+		DedupeKey: dedupeKey, Payload: payload, AvailableAt: availableAt, MaxAttempts: 3,
+	})
+	if err != nil {
+		return EnsureJobResult{}, err
+	}
+	if err := insertJob(ctx, conn, id, job, availableAt.UTC().UnixMicro()); err != nil {
+		return EnsureJobResult{}, err
+	}
+	return EnsureJobResult{ID: id, Created: true}, nil
 }
 
 type normalizedPrepareReviewRunInput struct {

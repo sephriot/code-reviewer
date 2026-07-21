@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -181,6 +182,147 @@ func TestPrepareReviewRunRequiresCurrentCanonicalTarget(t *testing.T) {
 	}
 	for _, table := range []string{"review_intents", "review_runs", "review_run_contexts", "review_run_events"} {
 		assertTableCount(t, ctx, store.db, table, 0)
+	}
+}
+
+func TestQueueReviewRunAtomicallyPreparesAndQueuesOneExecutionJob(t *testing.T) {
+	ctx := context.Background()
+	store, _ := seedCurrentCanonicalReviewTarget(t, ctx)
+	seedReviewProfileVersion(t, ctx, store, "profile-1", "profile-version-1")
+
+	queued, err := store.QueueReviewRun(ctx, testPrepareReviewRunInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued.Created || !queued.JobCreated || queued.IntentID == "" || queued.RunID == "" || queued.RunContextID == "" || queued.JobID == "" {
+		t.Fatalf("queued = %+v", queued)
+	}
+	for _, table := range []string{"review_intents", "review_runs", "review_run_contexts", "jobs"} {
+		assertTableCount(t, ctx, store.db, table, 1)
+	}
+	assertTableCount(t, ctx, store.db, "review_run_events", 2)
+	for _, table := range []string{"domain_events", "outbox", "assessments"} {
+		assertTableCount(t, ctx, store.db, table, 0)
+	}
+
+	var kind, resourceType, resourceID, dedupeKey string
+	var payload []byte
+	if err := store.db.QueryRowContext(ctx, `
+SELECT kind, resource_type, resource_id, dedupe_key, payload_json
+FROM jobs WHERE id = ?`, queued.JobID).Scan(&kind, &resourceType, &resourceID, &dedupeKey, &payload); err != nil {
+		t.Fatal(err)
+	}
+	wantDedupeKey := reviewExecutionJobDedupeKey(queued.RunID)
+	if kind != reviewExecutionJobKind || resourceType != "review_run" || resourceID != queued.RunID || dedupeKey != wantDedupeKey ||
+		string(payload) != `{"run_id":"`+queued.RunID+`"}` {
+		t.Fatalf("job = kind=%q resource=%q/%q dedupe=%q payload=%s", kind, resourceType, resourceID, dedupeKey, payload)
+	}
+}
+
+func TestQueueReviewRunIsIdempotentAndQueuesExistingPreparedRun(t *testing.T) {
+	ctx := context.Background()
+	store, _ := seedCurrentCanonicalReviewTarget(t, ctx)
+	seedReviewProfileVersion(t, ctx, store, "profile-1", "profile-version-1")
+	input := testPrepareReviewRunInput()
+	prepared, err := store.PrepareReviewRun(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := store.QueueReviewRun(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.RequestedAt = input.RequestedAt.Add(time.Hour)
+	second, err := store.QueueReviewRun(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Created || !first.JobCreated || second.Created || second.JobCreated ||
+		first.IntentID != prepared.IntentID || first.RunID != prepared.RunID ||
+		first.JobID != second.JobID {
+		t.Fatalf("prepared=%+v first=%+v second=%+v", prepared, first, second)
+	}
+	for _, table := range []string{"review_intents", "review_runs", "review_run_contexts", "jobs"} {
+		assertTableCount(t, ctx, store.db, table, 1)
+	}
+}
+
+func TestQueueReviewRunRollsBackPreparationWhenJobDedupeConflicts(t *testing.T) {
+	ctx := context.Background()
+	store, _ := seedCurrentCanonicalReviewTarget(t, ctx)
+	seedReviewProfileVersion(t, ctx, store, "profile-1", "profile-version-1")
+	input := testPrepareReviewRunInput()
+	input.IdempotencyKey = "queue-conflict"
+	runID := stableID("review-run", stableID("review-intent", input.IdempotencyKey), "1")
+	if _, err := store.EnqueueJob(ctx, JobInput{
+		Kind: reviewExecutionJobKind, ResourceType: "review_run", ResourceID: runID,
+		DedupeKey: reviewExecutionJobDedupeKey(runID), Payload: []byte(`{"run_id":"different"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := store.QueueReviewRun(ctx, input)
+	if !errors.Is(err, ErrJobConflict) {
+		t.Fatalf("error = %v", err)
+	}
+	for _, table := range []string{"review_intents", "review_runs", "review_run_contexts", "review_run_events"} {
+		assertTableCount(t, ctx, store.db, table, 0)
+	}
+	assertTableCount(t, ctx, store.db, "jobs", 1)
+}
+
+func TestQueueReviewRunIsConcurrentIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store, _ := seedCurrentCanonicalReviewTarget(t, ctx)
+	seedReviewProfileVersion(t, ctx, store, "profile-1", "profile-version-1")
+
+	start := make(chan struct{})
+	results := make(chan QueueReviewRunResult, 4)
+	errors := make(chan error, 4)
+	var group sync.WaitGroup
+	for range 4 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			result, err := store.QueueReviewRun(ctx, testPrepareReviewRunInput())
+			if err != nil {
+				errors <- err
+				return
+			}
+			results <- result
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(results)
+	close(errors)
+	for err := range errors {
+		t.Fatalf("QueueReviewRun: %v", err)
+	}
+
+	var intentID, runID, jobID string
+	created, jobsCreated := 0, 0
+	for result := range results {
+		if intentID == "" {
+			intentID, runID, jobID = result.IntentID, result.RunID, result.JobID
+		}
+		if result.IntentID != intentID || result.RunID != runID || result.JobID != jobID {
+			t.Fatalf("result identities differ: %+v", result)
+		}
+		if result.Created {
+			created++
+		}
+		if result.JobCreated {
+			jobsCreated++
+		}
+	}
+	if created != 1 || jobsCreated != 1 {
+		t.Fatalf("created = %d jobsCreated = %d", created, jobsCreated)
+	}
+	for _, table := range []string{"review_intents", "review_runs", "review_run_contexts", "jobs"} {
+		assertTableCount(t, ctx, store.db, table, 1)
 	}
 }
 
