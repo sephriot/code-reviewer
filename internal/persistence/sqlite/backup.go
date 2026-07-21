@@ -39,11 +39,12 @@ type DatabaseReport struct {
 
 // BackupManifest proves which logical snapshot was written.
 type BackupManifest struct {
-	CreatedAtUTC string         `json:"created_at_utc"`
-	SourceBefore DatabaseReport `json:"source_before"`
-	SourceAfter  DatabaseReport `json:"source_after"`
-	Backup       DatabaseReport `json:"backup"`
-	ManifestPath string         `json:"manifest_path"`
+	FormatVersion int            `json:"format_version"`
+	CreatedAtUTC  string         `json:"created_at_utc"`
+	SourceBefore  DatabaseReport `json:"source_before"`
+	SourceAfter   DatabaseReport `json:"source_after"`
+	Backup        DatabaseReport `json:"backup"`
+	ManifestPath  string         `json:"manifest_path"`
 }
 
 // InspectLegacy validates and summarizes a legacy code-reviewer database.
@@ -171,11 +172,12 @@ func BackupLegacy(ctx context.Context, source, destination string) (manifest Bac
 		return BackupManifest{}, fmt.Errorf("verify published backup: %w", err)
 	}
 	manifest = BackupManifest{
-		CreatedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
-		SourceBefore: sourceBefore,
-		SourceAfter:  sourceAfter,
-		Backup:       backupReport,
-		ManifestPath: manifestPath,
+		FormatVersion: 1,
+		CreatedAtUTC:  time.Now().UTC().Format(time.RFC3339Nano),
+		SourceBefore:  sourceBefore,
+		SourceAfter:   sourceAfter,
+		Backup:        backupReport,
+		ManifestPath:  manifestPath,
 	}
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -212,6 +214,36 @@ func BackupLegacy(ctx context.Context, source, destination string) (manifest Bac
 		_ = os.Remove(manifestPath)
 		_ = os.Remove(absDestination)
 		return BackupManifest{}, fmt.Errorf("remove temporary backup manifest: %w", err)
+	}
+	return manifest, nil
+}
+
+// VerifyLegacyBackup verifies a manifest and the exact backup it describes.
+func VerifyLegacyBackup(ctx context.Context, databasePath, manifestPath string) (BackupManifest, error) {
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return BackupManifest{}, fmt.Errorf("read backup manifest: %w", err)
+	}
+	if len(data) > 1<<20 {
+		return BackupManifest{}, errors.New("backup manifest exceeds 1 MiB")
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	var manifest BackupManifest
+	if err := decoder.Decode(&manifest); err != nil {
+		return BackupManifest{}, fmt.Errorf("decode backup manifest: %w", err)
+	}
+	if manifest.FormatVersion != 1 {
+		return BackupManifest{}, fmt.Errorf("unsupported backup manifest version %d", manifest.FormatVersion)
+	}
+	report, err := InspectLegacy(ctx, databasePath)
+	if err != nil {
+		return BackupManifest{}, err
+	}
+	if report.SHA256 != manifest.Backup.SHA256 ||
+		report.SizeBytes != manifest.Backup.SizeBytes ||
+		!equivalentLogicalDatabase(report, manifest.Backup) {
+		return BackupManifest{}, errors.New("backup does not match manifest")
 	}
 	return manifest, nil
 }

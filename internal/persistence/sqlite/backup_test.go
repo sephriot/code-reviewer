@@ -50,9 +50,40 @@ func TestBackupLegacyCreatesVerifiedSnapshotAndManifest(t *testing.T) {
 	if persisted.Backup.SHA256 != manifest.Backup.SHA256 {
 		t.Fatal("persisted manifest does not describe returned backup")
 	}
+	if persisted.FormatVersion != 1 {
+		t.Fatalf("manifest version = %d, want 1", persisted.FormatVersion)
+	}
+	if _, err := VerifyLegacyBackup(ctx, destination, manifest.ManifestPath); err != nil {
+		t.Fatalf("verify backup: %v", err)
+	}
 
 	if _, err := BackupLegacy(ctx, source, destination); !errors.Is(err, ErrDestinationExists) {
 		t.Fatalf("second backup error = %v, want ErrDestinationExists", err)
+	}
+}
+
+func TestVerifyLegacyBackupRejectsChangedContentWithSameRowCount(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "legacy.db")
+	createLegacyFixture(t, source)
+	destination := filepath.Join(dir, "backup.db")
+	manifest, err := BackupLegacy(ctx, source, destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE pr_reviews SET repository = 'changed/repo' WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyLegacyBackup(ctx, destination, manifest.ManifestPath); err == nil {
+		t.Fatal("changed backup matched original manifest")
 	}
 }
 

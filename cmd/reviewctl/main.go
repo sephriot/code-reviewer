@@ -34,11 +34,34 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return databaseMigrate(ctx, args[2:], stdout, stderr)
 	case "db backup":
 		return databaseBackup(ctx, args[2:], stdout, stderr)
+	case "db verify-backup":
+		return databaseVerifyBackup(ctx, args[2:], stdout, stderr)
 	case "legacy inspect":
 		return legacyInspect(ctx, args[2:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0]+" "+args[1])
 	}
+}
+
+func databaseVerifyBackup(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("db verify-backup", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	backup := flags.String("backup", "", "legacy backup database")
+	manifest := flags.String("manifest", "", "backup manifest JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *backup == "" {
+		return errors.New("--backup is required")
+	}
+	if *manifest == "" {
+		*manifest = *backup + ".manifest.json"
+	}
+	verified, err := storagesqlite.VerifyLegacyBackup(ctx, *backup, *manifest)
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, verified)
 }
 
 func validateConfig(stdout io.Writer) error {

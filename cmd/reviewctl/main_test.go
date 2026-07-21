@@ -40,7 +40,7 @@ func TestDatabaseMigrateThenStatus(t *testing.T) {
 	if err := run(context.Background(), []string{"db", "migrate", "--database", path, "--apply"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), `"current": 1`) {
+	if !strings.Contains(output.String(), `"current": 2`) {
 		t.Fatalf("migration output = %s", output.String())
 	}
 	output.Reset()
