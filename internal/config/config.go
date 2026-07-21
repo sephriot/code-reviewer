@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -20,6 +21,16 @@ const (
 	EnvMigrationMode = "REVIEWD_MIGRATION_MODE"
 	// EnvPublicationMode controls external publication.
 	EnvPublicationMode = "REVIEWD_PUBLICATION_MODE"
+	// EnvShadowReconcileEnabled enables read-only GitHub reconciliation.
+	EnvShadowReconcileEnabled = "REVIEWD_SHADOW_RECONCILE_ENABLED"
+	// EnvGitHubConnectionID identifies the locally configured GitHub connection.
+	EnvGitHubConnectionID = "REVIEWD_GITHUB_CONNECTION_ID"
+	// EnvGitHubAPIBaseURL overrides the GitHub API endpoint for shadow reads.
+	EnvGitHubAPIBaseURL = "REVIEWD_GITHUB_API_BASE_URL"
+	// EnvGitHubTokenEnvironment names, but never contains, the token environment variable.
+	EnvGitHubTokenEnvironment = "REVIEWD_GITHUB_TOKEN_ENVIRONMENT"
+	// EnvShadowReconcileInterval controls how often shadow reconciliation is enqueued.
+	EnvShadowReconcileInterval = "REVIEWD_SHADOW_RECONCILE_INTERVAL"
 )
 
 // MigrationMode controls how reviewd treats pending schema migrations at startup.
@@ -42,10 +53,21 @@ const (
 
 // Config contains startup-only control-plane settings.
 type Config struct {
-	DatabasePath    string          `json:"database_path"`
-	ListenAddress   string          `json:"listen_address"`
-	MigrationMode   MigrationMode   `json:"migration_mode"`
-	PublicationMode PublicationMode `json:"publication_mode"`
+	DatabasePath         string                     `json:"database_path"`
+	ListenAddress        string                     `json:"listen_address"`
+	MigrationMode        MigrationMode              `json:"migration_mode"`
+	PublicationMode      PublicationMode            `json:"publication_mode"`
+	ShadowReconciliation ShadowReconciliationConfig `json:"shadow_reconciliation"`
+}
+
+// ShadowReconciliationConfig configures opt-in, GET-only GitHub observation.
+// TokenEnvironment is a reference to process environment, never a secret value.
+type ShadowReconciliationConfig struct {
+	Enabled          bool          `json:"enabled"`
+	ConnectionID     string        `json:"connection_id"`
+	APIBaseURL       string        `json:"api_base_url"`
+	TokenEnvironment string        `json:"token_environment"`
+	Interval         time.Duration `json:"interval"`
 }
 
 // Default returns the safe local bootstrap configuration.
@@ -55,6 +77,10 @@ func Default() Config {
 		ListenAddress:   "127.0.0.1:8080",
 		MigrationMode:   MigrationCheck,
 		PublicationMode: PublicationDisabled,
+		ShadowReconciliation: ShadowReconciliationConfig{
+			APIBaseURL: "https://api.github.com",
+			Interval:   5 * time.Minute,
+		},
 	}
 }
 
@@ -94,6 +120,29 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			return Config{}, fmt.Errorf("%s: %w", EnvPublicationMode, err)
 		}
 	}
+	if value, ok := lookup(EnvShadowReconcileEnabled); ok {
+		enabled, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: must be true or false", EnvShadowReconcileEnabled)
+		}
+		cfg.ShadowReconciliation.Enabled = enabled
+	}
+	if value, ok := lookup(EnvGitHubConnectionID); ok {
+		cfg.ShadowReconciliation.ConnectionID = strings.TrimSpace(value)
+	}
+	if value, ok := lookup(EnvGitHubAPIBaseURL); ok {
+		cfg.ShadowReconciliation.APIBaseURL = strings.TrimSpace(value)
+	}
+	if value, ok := lookup(EnvGitHubTokenEnvironment); ok {
+		cfg.ShadowReconciliation.TokenEnvironment = strings.TrimSpace(value)
+	}
+	if value, ok := lookup(EnvShadowReconcileInterval); ok {
+		interval, err := time.ParseDuration(strings.TrimSpace(value))
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", EnvShadowReconcileInterval, err)
+		}
+		cfg.ShadowReconciliation.Interval = interval
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -112,7 +161,10 @@ func (cfg Config) Validate() error {
 	if err := validateMigrationMode(cfg.MigrationMode); err != nil {
 		return err
 	}
-	return validatePublicationMode(cfg.PublicationMode)
+	if err := validatePublicationMode(cfg.PublicationMode); err != nil {
+		return err
+	}
+	return validateShadowReconciliation(cfg.ShadowReconciliation)
 }
 
 func validateDatabasePath(path string) error {
@@ -152,6 +204,25 @@ func validateMigrationMode(mode MigrationMode) error {
 func validatePublicationMode(mode PublicationMode) error {
 	if mode != PublicationDisabled {
 		return fmt.Errorf("publication mode must be %q in this release", PublicationDisabled)
+	}
+	return nil
+}
+
+func validateShadowReconciliation(cfg ShadowReconciliationConfig) error {
+	if cfg.Interval <= 0 {
+		return errors.New("shadow reconciliation interval must be positive")
+	}
+	if !cfg.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(cfg.ConnectionID) == "" {
+		return errors.New("shadow reconciliation connection ID is required when enabled")
+	}
+	if strings.TrimSpace(cfg.APIBaseURL) == "" {
+		return errors.New("shadow reconciliation GitHub API URL is required when enabled")
+	}
+	if strings.TrimSpace(cfg.TokenEnvironment) == "" {
+		return errors.New("shadow reconciliation token environment is required when enabled")
 	}
 	return nil
 }

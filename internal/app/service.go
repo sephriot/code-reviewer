@@ -8,18 +8,35 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
+	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
 	"github.com/sephriot/code-reviewer/internal/api"
+	"github.com/sephriot/code-reviewer/internal/application/reconcile"
+	"github.com/sephriot/code-reviewer/internal/application/reconcileworker"
 	"github.com/sephriot/code-reviewer/internal/config"
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
+	"github.com/sephriot/code-reviewer/internal/worker"
 )
 
 // Service owns the control-plane database and HTTP server.
 type Service struct {
-	store  *storagesqlite.Store
-	server *http.Server
+	store            *storagesqlite.Store
+	server           *http.Server
+	jobRunner        runtimeRunner
+	schedule         scheduleFunc
+	scheduleInterval time.Duration
 }
+
+type runtimeRunner interface {
+	Run(context.Context) error
+}
+
+type scheduleFunc func(context.Context) error
 
 // New prepares a service and enforces migration policy before it can listen.
 func New(ctx context.Context, cfg config.Config) (*Service, error) {
@@ -77,7 +94,33 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
-	return &Service{store: store, server: server}, nil
+	reconcileHandler := reconcileworker.Handler{
+		Store:     store,
+		NewReader: environmentReaderFactory(os.LookupEnv),
+	}
+	runner := &worker.Runner{
+		Store:   store,
+		Handler: reconcileHandler,
+		Owner:   workerOwner(),
+	}
+	service := &Service{store: store, server: server, jobRunner: runner}
+	if cfg.ShadowReconciliation.Enabled {
+		reconciliationConfig := reconcile.Config{
+			ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
+			APIBaseURL:        cfg.ShadowReconciliation.APIBaseURL,
+			CredentialRefKind: "environment",
+			CredentialLocator: cfg.ShadowReconciliation.TokenEnvironment,
+		}
+		scheduler := reconcileworker.Scheduler{Store: store}
+		service.schedule = func(ctx context.Context) error {
+			if _, err := scheduler.Schedule(ctx, reconciliationConfig); err != nil {
+				return fmt.Errorf("schedule shadow reconciliation: %w", err)
+			}
+			return nil
+		}
+		service.scheduleInterval = cfg.ShadowReconciliation.Interval
+	}
+	return service, nil
 }
 
 // Run listens until the context is canceled or the server fails.
@@ -91,6 +134,12 @@ func (s *Service) Run(ctx context.Context, logger *slog.Logger) error {
 	}
 	logger.Info("reviewd listening", "address", listener.Addr().String(), "publication_mode", "disabled")
 
+	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
+	defer cancelRuntime()
+	backgroundErrors := make(chan error, 2)
+	var background sync.WaitGroup
+	s.startBackground(runtimeCtx, &background, backgroundErrors)
+
 	serveError := make(chan error, 1)
 	go func() {
 		serveError <- s.server.Serve(listener)
@@ -98,21 +147,116 @@ func (s *Service) Run(ctx context.Context, logger *slog.Logger) error {
 
 	select {
 	case err := <-serveError:
+		cancelRuntime()
+		background.Wait()
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return fmt.Errorf("serve control API: %w", err)
+	case err := <-backgroundErrors:
+		cancelRuntime()
+		shutdownErr := s.shutdownServer()
+		serveErr := <-serveError
+		background.Wait()
+		if shutdownErr != nil {
+			return fmt.Errorf("runtime failed: %w; shut down control API: %v", err, shutdownErr)
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			return fmt.Errorf("runtime failed: %w; serve control API during shutdown: %v", err, serveErr)
+		}
+		return fmt.Errorf("run control-plane runtime: %w", err)
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := s.server.Shutdown(shutdownCtx); err != nil {
+		cancelRuntime()
+		if err := s.shutdownServer(); err != nil {
+			background.Wait()
 			return fmt.Errorf("shut down control API: %w", err)
 		}
 		if err := <-serveError; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			background.Wait()
 			return fmt.Errorf("serve control API during shutdown: %w", err)
 		}
+		background.Wait()
 		return nil
 	}
+}
+
+func (s *Service) startBackground(ctx context.Context, group *sync.WaitGroup, errorsCh chan<- error) {
+	if s.jobRunner != nil {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if err := s.jobRunner.Run(ctx); err != nil && ctx.Err() == nil {
+				errorsCh <- fmt.Errorf("run worker: %w", err)
+			}
+		}()
+	}
+	if s.schedule != nil {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if err := runScheduler(ctx, s.scheduleInterval, s.schedule); err != nil && ctx.Err() == nil {
+				errorsCh <- err
+			}
+		}()
+	}
+}
+
+func (s *Service) shutdownServer() error {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return s.server.Shutdown(shutdownCtx)
+}
+
+func runScheduler(ctx context.Context, interval time.Duration, schedule scheduleFunc) error {
+	if schedule == nil {
+		return nil
+	}
+	if interval <= 0 {
+		return errors.New("shadow reconciliation schedule interval must be positive")
+	}
+	if err := schedule(ctx); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := schedule(ctx); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func environmentReaderFactory(lookup func(string) (string, bool)) reconcileworker.ReaderFactory {
+	return func(_ context.Context, reconciliationConfig reconcile.Config) (githubadapter.Reader, error) {
+		if reconciliationConfig.CredentialRefKind != "environment" {
+			return nil, worker.Permanent(fmt.Errorf("unsupported GitHub credential reference kind %q", reconciliationConfig.CredentialRefKind))
+		}
+		if lookup == nil {
+			return nil, worker.Permanent(errors.New("GitHub environment credential lookup is required"))
+		}
+		token, ok := lookup(reconciliationConfig.CredentialLocator)
+		if !ok || strings.TrimSpace(token) == "" {
+			return nil, worker.Permanent(fmt.Errorf("GitHub token environment %q is not set", reconciliationConfig.CredentialLocator))
+		}
+		reader, err := githubadapter.NewClient(reconciliationConfig.APIBaseURL, token, nil)
+		if err != nil {
+			return nil, worker.Permanent(fmt.Errorf("create GitHub read client: %w", err))
+		}
+		return reader, nil
+	}
+}
+
+func workerOwner() string {
+	hostname, err := os.Hostname()
+	if err != nil || strings.TrimSpace(hostname) == "" {
+		hostname = "unknown-host"
+	}
+	return "reviewd:" + hostname + ":" + strconv.Itoa(os.Getpid())
 }
 
 // Close releases service resources.

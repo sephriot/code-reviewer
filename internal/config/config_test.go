@@ -21,6 +21,9 @@ func TestDefault(t *testing.T) {
 	if got.PublicationMode != PublicationDisabled {
 		t.Errorf("PublicationMode = %q, want %q", got.PublicationMode, PublicationDisabled)
 	}
+	if got.ShadowReconciliation.Enabled {
+		t.Error("ShadowReconciliation.Enabled = true, want false")
+	}
 	if err := got.Validate(); err != nil {
 		t.Fatalf("Default().Validate() error = %v", err)
 	}
@@ -30,10 +33,15 @@ func TestLoad(t *testing.T) {
 	t.Parallel()
 
 	values := map[string]string{
-		EnvDatabasePath:    "/var/lib/reviewd/control-plane.db",
-		EnvListenAddress:   "[::1]:9090",
-		EnvMigrationMode:   "apply",
-		EnvPublicationMode: "disabled",
+		EnvDatabasePath:            "/var/lib/reviewd/control-plane.db",
+		EnvListenAddress:           "[::1]:9090",
+		EnvMigrationMode:           "apply",
+		EnvPublicationMode:         "disabled",
+		EnvShadowReconcileEnabled:  "true",
+		EnvGitHubConnectionID:      "github:local",
+		EnvGitHubAPIBaseURL:        "https://api.github.com",
+		EnvGitHubTokenEnvironment:  "TEST_GITHUB_TOKEN",
+		EnvShadowReconcileInterval: "2m",
 	}
 	got, err := Load(func(key string) (string, bool) {
 		value, ok := values[key]
@@ -53,6 +61,10 @@ func TestLoad(t *testing.T) {
 	}
 	if got.PublicationMode != PublicationDisabled {
 		t.Errorf("PublicationMode = %q, want %q", got.PublicationMode, PublicationDisabled)
+	}
+	if !got.ShadowReconciliation.Enabled || got.ShadowReconciliation.ConnectionID != "github:local" ||
+		got.ShadowReconciliation.TokenEnvironment != "TEST_GITHUB_TOKEN" || got.ShadowReconciliation.Interval.String() != "2m0s" {
+		t.Errorf("ShadowReconciliation = %#v", got.ShadowReconciliation)
 	}
 }
 
@@ -147,6 +159,20 @@ func TestValidate(t *testing.T) {
 				cfg.PublicationMode = "enabled"
 			},
 			wantError: "publication mode",
+		},
+		{
+			name: "enabled reconciliation needs connection configuration",
+			mutate: func(cfg *Config) {
+				cfg.ShadowReconciliation.Enabled = true
+			},
+			wantError: "shadow reconciliation connection ID",
+		},
+		{
+			name: "reconciliation interval must be positive",
+			mutate: func(cfg *Config) {
+				cfg.ShadowReconciliation.Interval = 0
+			},
+			wantError: "shadow reconciliation interval",
 		},
 	}
 

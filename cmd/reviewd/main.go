@@ -29,6 +29,11 @@ func run() error {
 	flag.StringVar(&cfg.ListenAddress, "listen", cfg.ListenAddress, "loopback listen address")
 	migrationMode := string(cfg.MigrationMode)
 	flag.StringVar(&migrationMode, "migrations", migrationMode, "migration mode: check or apply")
+	flag.BoolVar(&cfg.ShadowReconciliation.Enabled, "shadow-reconcile", cfg.ShadowReconciliation.Enabled, "enable GET-only GitHub reconciliation")
+	flag.StringVar(&cfg.ShadowReconciliation.ConnectionID, "github-connection-id", cfg.ShadowReconciliation.ConnectionID, "local GitHub connection ID")
+	flag.StringVar(&cfg.ShadowReconciliation.APIBaseURL, "github-api-url", cfg.ShadowReconciliation.APIBaseURL, "GitHub API base URL")
+	flag.StringVar(&cfg.ShadowReconciliation.TokenEnvironment, "github-token-environment", cfg.ShadowReconciliation.TokenEnvironment, "environment variable containing the GitHub token")
+	flag.DurationVar(&cfg.ShadowReconciliation.Interval, "shadow-reconcile-interval", cfg.ShadowReconciliation.Interval, "shadow reconciliation enqueue interval")
 	flag.Parse()
 	cfg.MigrationMode = config.MigrationMode(migrationMode)
 	if err := cfg.Validate(); err != nil {
