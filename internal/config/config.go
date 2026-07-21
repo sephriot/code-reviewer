@@ -2,8 +2,11 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,6 +34,10 @@ const (
 	EnvGitHubTokenEnvironment = "REVIEWD_GITHUB_TOKEN_ENVIRONMENT"
 	// EnvShadowReconcileInterval controls how often shadow reconciliation is enqueued.
 	EnvShadowReconcileInterval = "REVIEWD_SHADOW_RECONCILE_INTERVAL"
+	// EnvReviewExecutionEnabled enables local, read-only CLI review execution.
+	EnvReviewExecutionEnabled = "REVIEWD_REVIEW_EXECUTION_ENABLED"
+	// EnvReviewEngineArgv supplies the trusted review engine command as a JSON argv array.
+	EnvReviewEngineArgv = "REVIEWD_REVIEW_ENGINE_ARGV"
 )
 
 // MigrationMode controls how reviewd treats pending schema migrations at startup.
@@ -58,6 +65,7 @@ type Config struct {
 	MigrationMode        MigrationMode              `json:"migration_mode"`
 	PublicationMode      PublicationMode            `json:"publication_mode"`
 	ShadowReconciliation ShadowReconciliationConfig `json:"shadow_reconciliation"`
+	ReviewExecution      ReviewExecutionConfig      `json:"review_execution"`
 }
 
 // ShadowReconciliationConfig configures opt-in, GET-only GitHub observation.
@@ -68,6 +76,14 @@ type ShadowReconciliationConfig struct {
 	APIBaseURL       string        `json:"api_base_url"`
 	TokenEnvironment string        `json:"token_environment"`
 	Interval         time.Duration `json:"interval"`
+}
+
+// ReviewExecutionConfig configures a local review engine. EngineArgv is
+// executed directly and never interpreted by a shell. Its GitHub read access
+// always reuses the configured shadow-reconciliation connection.
+type ReviewExecutionConfig struct {
+	Enabled    bool     `json:"enabled"`
+	EngineArgv []string `json:"engine_argv"`
 }
 
 // Default returns the safe local bootstrap configuration.
@@ -143,6 +159,20 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		}
 		cfg.ShadowReconciliation.Interval = interval
 	}
+	if value, ok := lookup(EnvReviewExecutionEnabled); ok {
+		enabled, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: must be true or false", EnvReviewExecutionEnabled)
+		}
+		cfg.ReviewExecution.Enabled = enabled
+	}
+	if value, ok := lookup(EnvReviewEngineArgv); ok {
+		argv, err := parseEngineArgv(value)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", EnvReviewEngineArgv, err)
+		}
+		cfg.ReviewExecution.EngineArgv = argv
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -164,7 +194,10 @@ func (cfg Config) Validate() error {
 	if err := validatePublicationMode(cfg.PublicationMode); err != nil {
 		return err
 	}
-	return validateShadowReconciliation(cfg.ShadowReconciliation)
+	if err := validateShadowReconciliation(cfg.ShadowReconciliation); err != nil {
+		return err
+	}
+	return validateReviewExecution(cfg.ReviewExecution, cfg.ShadowReconciliation)
 }
 
 func validateDatabasePath(path string) error {
@@ -223,6 +256,44 @@ func validateShadowReconciliation(cfg ShadowReconciliationConfig) error {
 	}
 	if strings.TrimSpace(cfg.TokenEnvironment) == "" {
 		return errors.New("shadow reconciliation token environment is required when enabled")
+	}
+	return nil
+}
+
+func parseEngineArgv(value string) ([]string, error) {
+	decoder := json.NewDecoder(bytes.NewBufferString(value))
+	var argv []string
+	if err := decoder.Decode(&argv); err != nil || argv == nil {
+		return nil, errors.New("must be a JSON argv array")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return nil, errors.New("must contain one JSON argv array")
+	} else if !errors.Is(err, io.EOF) {
+		return nil, errors.New("must contain one JSON argv array")
+	}
+	for _, argument := range argv {
+		if strings.ContainsRune(argument, 0) {
+			return nil, errors.New("argv cannot contain NUL")
+		}
+	}
+	return append([]string(nil), argv...), nil
+}
+
+func validateReviewExecution(review ReviewExecutionConfig, shadow ShadowReconciliationConfig) error {
+	if !review.Enabled {
+		return nil
+	}
+	if !shadow.Enabled {
+		return errors.New("review execution requires enabled shadow reconciliation")
+	}
+	if len(review.EngineArgv) == 0 || strings.TrimSpace(review.EngineArgv[0]) == "" {
+		return errors.New("review execution engine argv is required when enabled")
+	}
+	for _, argument := range review.EngineArgv {
+		if strings.ContainsRune(argument, 0) {
+			return errors.New("review execution engine argv cannot contain NUL")
+		}
 	}
 	return nil
 }

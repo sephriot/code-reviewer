@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/sephriot/code-reviewer/internal/application/hydrateworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/application/reconcileworker"
+	"github.com/sephriot/code-reviewer/internal/application/reviewworker"
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 	"github.com/sephriot/code-reviewer/internal/worker"
@@ -163,6 +165,33 @@ func TestEnvironmentHydrationReaderFactoryUsesConfiguredReadOnlyConnection(t *te
 	}
 }
 
+func TestEnvironmentReviewReaderFactoryUsesConfiguredReadOnlyConnection(t *testing.T) {
+	t.Parallel()
+	reconciliationConfig := reconcile.Config{
+		ConnectionID:      "connection-1",
+		APIBaseURL:        "http://127.0.0.1:9999",
+		CredentialRefKind: "environment",
+		CredentialLocator: "TEST_GITHUB_TOKEN",
+	}
+	factory := environmentReviewReaderFactory(func(name string) (string, bool) {
+		if name != reconciliationConfig.CredentialLocator {
+			t.Fatalf("lookup name = %q", name)
+		}
+		return "not-persisted-token", true
+	}, reconciliationConfig)
+	reader, err := factory(context.Background(), reconciliationConfig.ConnectionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader == nil {
+		t.Fatal("reader = nil")
+	}
+	_, err = factory(context.Background(), "other-connection")
+	if err == nil || !worker.IsPermanent(err) || !strings.Contains(err.Error(), "connection") {
+		t.Fatalf("wrong connection error = %v", err)
+	}
+}
+
 func TestScheduleShadowSchedulesReconciliationBeforeHydration(t *testing.T) {
 	t.Parallel()
 	calls := make([]string, 0, 2)
@@ -215,6 +244,65 @@ func TestNewRegistersBothShadowWorkerHandlers(t *testing.T) {
 		if err == nil || !worker.IsPermanent(err) || strings.Contains(err.Error(), "unknown job kind") {
 			t.Fatalf("router.Handle(%q) error = %v", job.Kind, err)
 		}
+	}
+}
+
+func TestNewRegistersReviewWorkerOnlyWhenFullyEnabled(t *testing.T) {
+	newConfig := func() config.Config {
+		cfg := config.Default()
+		cfg.DatabasePath = filepath.Join(t.TempDir(), "control-plane.db")
+		cfg.MigrationMode = config.MigrationApply
+		cfg.ShadowReconciliation = config.ShadowReconciliationConfig{
+			Enabled: true, ConnectionID: "github:local", APIBaseURL: "https://api.github.com",
+			TokenEnvironment: "TEST_GITHUB_TOKEN", Interval: time.Minute,
+		}
+		return cfg
+	}
+
+	t.Run("disabled", func(t *testing.T) {
+		service, err := New(context.Background(), newConfig())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = service.Close() }()
+		router := service.jobRunner.(*worker.Runner).Handler.(*worker.Router)
+		err = router.Handle(context.Background(), sqlite.Job{Kind: reviewworker.ExecuteJobKind, Payload: []byte(`{}`)})
+		if err == nil || !worker.IsPermanent(err) || !strings.Contains(err.Error(), "unknown job kind") {
+			t.Fatalf("disabled review route error = %v", err)
+		}
+	})
+
+	t.Run("enabled", func(t *testing.T) {
+		cfg := newConfig()
+		cfg.ReviewExecution = config.ReviewExecutionConfig{Enabled: true, EngineArgv: []string{os.Args[0]}}
+		service, err := New(context.Background(), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = service.Close() }()
+		router := service.jobRunner.(*worker.Runner).Handler.(*worker.Router)
+		err = router.Handle(context.Background(), sqlite.Job{Kind: reviewworker.ExecuteJobKind, Payload: []byte(`{}`)})
+		if err == nil || !worker.IsPermanent(err) || strings.Contains(err.Error(), "unknown job kind") {
+			t.Fatalf("enabled review route error = %v", err)
+		}
+	})
+}
+
+func TestNewRejectsUnavailableReviewEngine(t *testing.T) {
+	cfg := config.Default()
+	cfg.DatabasePath = filepath.Join(t.TempDir(), "control-plane.db")
+	cfg.MigrationMode = config.MigrationApply
+	cfg.ShadowReconciliation = config.ShadowReconciliationConfig{
+		Enabled: true, ConnectionID: "github:local", APIBaseURL: "https://api.github.com",
+		TokenEnvironment: "TEST_GITHUB_TOKEN", Interval: time.Minute,
+	}
+	cfg.ReviewExecution = config.ReviewExecutionConfig{Enabled: true, EngineArgv: []string{"does-not-exist-review-engine"}}
+	service, err := New(context.Background(), cfg)
+	if service != nil {
+		_ = service.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "configure review engine") {
+		t.Fatalf("New() error = %v", err)
 	}
 }
 

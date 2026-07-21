@@ -14,12 +14,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sephriot/code-reviewer/internal/adapters/engine"
 	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
 	"github.com/sephriot/code-reviewer/internal/api"
 	"github.com/sephriot/code-reviewer/internal/application/hydrate"
 	"github.com/sephriot/code-reviewer/internal/application/hydrateworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/application/reconcileworker"
+	"github.com/sephriot/code-reviewer/internal/application/reviewbundle"
+	"github.com/sephriot/code-reviewer/internal/application/reviewexecute"
+	"github.com/sephriot/code-reviewer/internal/application/reviewworker"
 	"github.com/sephriot/code-reviewer/internal/config"
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 	"github.com/sephriot/code-reviewer/internal/worker"
@@ -117,10 +121,18 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 			CredentialLocator: cfg.ShadowReconciliation.TokenEnvironment,
 		}),
 	}
-	router, err := worker.NewRouter(map[string]worker.Handler{
+	handlers := map[string]worker.Handler{
 		reconcileworker.ReconcileJobKind: reconcileHandler,
 		hydrateworker.HydrateJobKind:     hydrateHandler,
-	})
+	}
+	if cfg.ReviewExecution.Enabled {
+		reviewHandler, err := newReviewExecutionHandler(cfg, store)
+		if err != nil {
+			return closeOnError(err)
+		}
+		handlers[reviewworker.ExecuteJobKind] = reviewHandler
+	}
+	router, err := worker.NewRouter(handlers)
 	if err != nil {
 		return closeOnError(fmt.Errorf("configure worker handlers: %w", err))
 	}
@@ -145,6 +157,26 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		service.scheduleInterval = cfg.ShadowReconciliation.Interval
 	}
 	return service, nil
+}
+
+func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (reviewworker.Handler, error) {
+	adapter, err := engine.New(engine.Config{Argv: cfg.ReviewExecution.EngineArgv})
+	if err != nil {
+		return reviewworker.Handler{}, fmt.Errorf("configure review engine: %w", err)
+	}
+	reconciliationConfig := reconcile.Config{
+		ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
+		APIBaseURL:        cfg.ShadowReconciliation.APIBaseURL,
+		CredentialRefKind: "environment",
+		CredentialLocator: cfg.ShadowReconciliation.TokenEnvironment,
+	}
+	executor := reviewexecute.Service{
+		Targets:   store,
+		NewReader: environmentReviewReaderFactory(os.LookupEnv, reconciliationConfig),
+		Engine:    adapter,
+		Recorder:  store,
+	}
+	return reviewworker.Handler{Executor: executor, Events: store}, nil
 }
 
 // Run listens until the context is canceled or the server fails.
@@ -308,6 +340,27 @@ func environmentHydrationReaderFactory(
 			return nil, worker.Permanent(errors.New("GitHub read client does not support canonical hydration"))
 		}
 		return hydrationReader, nil
+	}
+}
+
+func environmentReviewReaderFactory(
+	lookup func(string) (string, bool),
+	reconciliationConfig reconcile.Config,
+) reviewexecute.ReaderFactory {
+	reconciliationReader := environmentReaderFactory(lookup)
+	return func(ctx context.Context, connectionID string) (reviewbundle.Reader, error) {
+		if connectionID != reconciliationConfig.ConnectionID {
+			return nil, worker.Permanent(fmt.Errorf("GitHub review connection %q is not configured", connectionID))
+		}
+		reader, err := reconciliationReader(ctx, reconciliationConfig)
+		if err != nil {
+			return nil, err
+		}
+		reviewReader, ok := reader.(reviewbundle.Reader)
+		if !ok {
+			return nil, worker.Permanent(errors.New("GitHub read client does not support review evidence"))
+		}
+		return reviewReader, nil
 	}
 }
 

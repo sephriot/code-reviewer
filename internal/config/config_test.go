@@ -42,6 +42,8 @@ func TestLoad(t *testing.T) {
 		EnvGitHubAPIBaseURL:        "https://api.github.com",
 		EnvGitHubTokenEnvironment:  "TEST_GITHUB_TOKEN",
 		EnvShadowReconcileInterval: "2m",
+		EnvReviewExecutionEnabled:  "true",
+		EnvReviewEngineArgv:        `["/usr/local/bin/review-engine","--json"]`,
 	}
 	got, err := Load(func(key string) (string, bool) {
 		value, ok := values[key]
@@ -65,6 +67,24 @@ func TestLoad(t *testing.T) {
 	if !got.ShadowReconciliation.Enabled || got.ShadowReconciliation.ConnectionID != "github:local" ||
 		got.ShadowReconciliation.TokenEnvironment != "TEST_GITHUB_TOKEN" || got.ShadowReconciliation.Interval.String() != "2m0s" {
 		t.Errorf("ShadowReconciliation = %#v", got.ShadowReconciliation)
+	}
+	if !got.ReviewExecution.Enabled || len(got.ReviewExecution.EngineArgv) != 2 ||
+		got.ReviewExecution.EngineArgv[0] != "/usr/local/bin/review-engine" {
+		t.Errorf("ReviewExecution = %#v", got.ReviewExecution)
+	}
+}
+
+func TestLoadRejectsMalformedEngineArgv(t *testing.T) {
+	t.Parallel()
+
+	_, err := Load(func(key string) (string, bool) {
+		if key == EnvReviewEngineArgv {
+			return `{"not":"argv"}`, true
+		}
+		return "", false
+	})
+	if err == nil || !strings.Contains(err.Error(), EnvReviewEngineArgv) {
+		t.Fatalf("Load() error = %v, want error naming %s", err, EnvReviewEngineArgv)
 	}
 }
 
@@ -173,6 +193,23 @@ func TestValidate(t *testing.T) {
 				cfg.ShadowReconciliation.Interval = 0
 			},
 			wantError: "shadow reconciliation interval",
+		},
+		{
+			name: "review execution needs the configured reader connection",
+			mutate: func(cfg *Config) {
+				cfg.ReviewExecution = ReviewExecutionConfig{Enabled: true, EngineArgv: []string{"review-engine"}}
+			},
+			wantError: "review execution requires enabled shadow reconciliation",
+		},
+		{
+			name: "review execution needs an engine argv",
+			mutate: func(cfg *Config) {
+				cfg.ShadowReconciliation.Enabled = true
+				cfg.ShadowReconciliation.ConnectionID = "github:local"
+				cfg.ShadowReconciliation.TokenEnvironment = "TEST_GITHUB_TOKEN"
+				cfg.ReviewExecution.Enabled = true
+			},
+			wantError: "review execution engine argv",
 		},
 	}
 
