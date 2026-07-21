@@ -99,7 +99,7 @@ func testCanonicalRevision(t *testing.T) canonical.Revision {
 		HeadSHA: projectionHeadSHA, BaseSHA: projectionBaseSHA, Complete: true,
 		Files: []canonical.FileChange{{
 			Path: "internal/example.go", Status: "modified", BaseBlobSHA: projectionBaseSHA,
-			HeadBlobSHA: projectionHeadSHA, BaseMode: "100644", HeadMode: "100644", Patch: []byte("-old\n+new\n"),
+			HeadBlobSHA: projectionHeadSHA, BaseMode: "100644", HeadMode: "100644", Patch: []byte("-old\n+new\n"), PatchPresent: true,
 		}},
 	})
 	if err != nil {

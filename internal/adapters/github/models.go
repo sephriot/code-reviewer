@@ -87,3 +87,38 @@ type PullRequestDiffResult struct {
 	NotModified bool      `json:"not_modified"`
 	RateLimit   RateLimit `json:"rate_limit"`
 }
+
+// PullRequestFile is one provider-reported changed path. PatchPresent
+// distinguishes an omitted patch from an intentionally empty text patch.
+type PullRequestFile struct {
+	Path         string `json:"path"`
+	PreviousPath string `json:"previous_path,omitempty"`
+	Status       string `json:"status"`
+	SHA          string `json:"sha"`
+	Patch        []byte `json:"-"`
+	PatchPresent bool   `json:"patch_present"`
+}
+
+// PullRequestFilesPage is one complete page from GitHub's changed-file list.
+type PullRequestFilesPage struct {
+	Files        []PullRequestFile `json:"files"`
+	NextPage     int               `json:"next_page,omitempty"`
+	LimitReached bool              `json:"limit_reached"`
+	RateLimit    RateLimit         `json:"rate_limit"`
+}
+
+// GitTreeEntry is a non-directory Git object from a recursive tree read.
+type GitTreeEntry struct {
+	Path       string `json:"path"`
+	SHA        string `json:"sha"`
+	Mode       string `json:"mode"`
+	ObjectType string `json:"object_type"`
+}
+
+// GitTreeResult preserves GitHub's truncation signal. A truncated tree cannot
+// prove complete canonical diff coverage.
+type GitTreeResult struct {
+	Entries   []GitTreeEntry `json:"entries"`
+	Truncated bool           `json:"truncated"`
+	RateLimit RateLimit      `json:"rate_limit"`
+}

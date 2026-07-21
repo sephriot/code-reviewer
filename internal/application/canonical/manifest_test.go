@@ -9,15 +9,15 @@ func TestBuildIsOrderAndLineEndingStable(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	base := strings.Repeat("b", 40)
 	left, err := Build(Input{HeadSHA: head, BaseSHA: base, Complete: true, Files: []FileChange{
-		{Path: "z.txt", Status: "modified", BaseBlobSHA: base, HeadBlobSHA: head, BaseMode: "100644", HeadMode: "100644", Patch: []byte("-old\r\n+new\r\n")},
-		{Path: "a.txt", Status: "added", HeadBlobSHA: head, HeadMode: "100644", Patch: []byte("+new\n")},
+		{Path: "z.txt", Status: "modified", BaseBlobSHA: base, HeadBlobSHA: head, BaseMode: "100644", HeadMode: "100644", Patch: []byte("-old\r\n+new\r\n"), PatchPresent: true},
+		{Path: "a.txt", Status: "added", HeadBlobSHA: head, HeadMode: "100644", Patch: []byte("+new\n"), PatchPresent: true},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	right, err := Build(Input{HeadSHA: head, BaseSHA: base, Complete: true, Files: []FileChange{
-		{Path: "a.txt", Status: "added", HeadBlobSHA: head, HeadMode: "100644", Patch: []byte("+new\n")},
-		{Path: "z.txt", Status: "modified", BaseBlobSHA: base, HeadBlobSHA: head, BaseMode: "100644", HeadMode: "100644", Patch: []byte("-old\n+new\n")},
+		{Path: "a.txt", Status: "added", HeadBlobSHA: head, HeadMode: "100644", Patch: []byte("+new\n"), PatchPresent: true},
+		{Path: "z.txt", Status: "modified", BaseBlobSHA: base, HeadBlobSHA: head, BaseMode: "100644", HeadMode: "100644", Patch: []byte("-old\n+new\n"), PatchPresent: true},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -48,11 +48,22 @@ func TestValidateRejectsMalformedOrNonCanonicalManifest(t *testing.T) {
 	if _, err := Validate([]byte(`{"version":1,"head_sha":"` + head + `","base_sha":"` + base + `","files":[{}]}`)); err == nil {
 		t.Fatal("Validate accepted malformed file entry")
 	}
-	revision, err := Build(Input{HeadSHA: head, BaseSHA: base, Complete: true, Files: []FileChange{{Path: "a", Status: "added", HeadBlobSHA: head, HeadMode: "100644", Patch: []byte("+a\n")}}})
+	revision, err := Build(Input{HeadSHA: head, BaseSHA: base, Complete: true, Files: []FileChange{{Path: "a", Status: "added", HeadBlobSHA: head, HeadMode: "100644", Patch: []byte("+a\n"), PatchPresent: true}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Validate(append(revision.Manifest, ' ')); err == nil {
 		t.Fatal("Validate accepted non-canonical serialization")
+	}
+}
+
+func TestBuildRejectsAbsentTextPatch(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	base := strings.Repeat("b", 40)
+	if _, err := Build(Input{HeadSHA: head, BaseSHA: base, Complete: true, Files: []FileChange{{Path: "a", Status: "added", HeadBlobSHA: head, HeadMode: "100644"}}}); err == nil {
+		t.Fatal("Build accepted omitted text patch")
+	}
+	if _, err := Build(Input{HeadSHA: head, BaseSHA: base, Complete: true, Files: []FileChange{{Path: "a", Status: "added", HeadBlobSHA: head, HeadMode: "100644", Binary: true}}}); err == nil {
+		t.Fatal("Build accepted unverified binary patch omission")
 	}
 }

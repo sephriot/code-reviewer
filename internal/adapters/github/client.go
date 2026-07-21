@@ -18,10 +18,12 @@ import (
 )
 
 const (
-	apiVersion       = "2022-11-28"
-	defaultUserAgent = "code-reviewer-v2"
-	maxResponseBytes = 4 << 20
-	maxDiffBytes     = 32 << 20
+	apiVersion              = "2022-11-28"
+	defaultUserAgent        = "code-reviewer-v2"
+	maxResponseBytes        = 4 << 20
+	maxDiffBytes            = 32 << 20
+	maxTreeBytes            = 8 << 20
+	maxPullRequestFilePages = 30
 )
 
 // HTTPError is a non-success GitHub response without credential disclosure.
@@ -57,8 +59,16 @@ type DiffReader interface {
 	GetPullRequestDiff(context.Context, string, string, int, string) (PullRequestDiffResult, error)
 }
 
+// HydrationReader exposes full changed-path and tree facts needed to prove a
+// canonical revision. It has no write capability.
+type HydrationReader interface {
+	GetPullRequestFiles(context.Context, string, string, int, int) (PullRequestFilesPage, error)
+	GetGitTree(context.Context, string, string, string) (GitTreeResult, error)
+}
+
 var _ Reader = (*Client)(nil)
 var _ DiffReader = (*Client)(nil)
+var _ HydrationReader = (*Client)(nil)
 
 // NewClient constructs a GET-only client. Plain HTTP is accepted only for a
 // loopback test server.
@@ -194,6 +204,132 @@ func (c *Client) GetPullRequestDiff(ctx context.Context, owner, repository strin
 	return PullRequestDiffResult{Bytes: body, SHA256: hex.EncodeToString(digest[:]), ETag: metadata.etag, RateLimit: metadata.rateLimit}, nil
 }
 
+// GetPullRequestFiles reads one bounded page of GitHub's changed-file list.
+// Callers must follow NextPage and fail closed at GitHub's 3,000-file limit.
+func (c *Client) GetPullRequestFiles(ctx context.Context, owner, repository string, number, page int) (PullRequestFilesPage, error) {
+	if !validCoordinates(owner, repository, number) || page < 1 || page > maxPullRequestFilePages {
+		return PullRequestFilesPage{}, errors.New("valid repository coordinates, PR number, and page are required")
+	}
+	parameters := url.Values{"per_page": {"100"}, "page": {strconv.Itoa(page)}}
+	var response []struct {
+		Path         string  `json:"filename"`
+		PreviousPath string  `json:"previous_filename"`
+		Status       string  `json:"status"`
+		SHA          string  `json:"sha"`
+		Patch        *string `json:"patch"`
+	}
+	metadata, err := c.getJSON(ctx, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repository)+"/pulls/"+strconv.Itoa(number)+"/files", parameters, "", &response)
+	if err != nil {
+		return PullRequestFilesPage{}, err
+	}
+	if len(response) > 100 {
+		return PullRequestFilesPage{}, errors.New("GitHub pull request files response exceeds page limit")
+	}
+	result := PullRequestFilesPage{RateLimit: metadata.rateLimit}
+	paths := make(map[string]struct{}, len(response))
+	for _, item := range response {
+		file, err := normalizePullRequestFile(item.Path, item.PreviousPath, item.Status, item.SHA, item.Patch)
+		if err != nil {
+			return PullRequestFilesPage{}, err
+		}
+		if _, exists := paths[file.Path]; exists {
+			return PullRequestFilesPage{}, errors.New("GitHub pull request files response contains duplicate path")
+		}
+		paths[file.Path] = struct{}{}
+		result.Files = append(result.Files, file)
+	}
+	result.NextPage, err = nextPage(metadata.link, page)
+	if err != nil {
+		return PullRequestFilesPage{}, err
+	}
+	result.LimitReached = page == maxPullRequestFilePages && len(result.Files) == 100
+	return result, nil
+}
+
+// GetGitTree reads every non-directory entry reachable from an exact commit
+// SHA. Truncated remains explicit so callers cannot treat partial coverage as
+// canonical proof.
+func (c *Client) GetGitTree(ctx context.Context, owner, repository, commitSHA string) (GitTreeResult, error) {
+	if owner == "" || repository == "" || strings.Contains(owner, "/") || strings.Contains(repository, "/") || !validSHA(commitSHA) {
+		return GitTreeResult{}, errors.New("valid repository coordinates and commit SHA are required")
+	}
+	var response struct {
+		Truncated bool `json:"truncated"`
+		Tree      []struct {
+			Path string `json:"path"`
+			Mode string `json:"mode"`
+			Type string `json:"type"`
+			SHA  string `json:"sha"`
+		} `json:"tree"`
+	}
+	metadata, err := c.getJSONLimit(ctx, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repository)+"/git/trees/"+commitSHA, url.Values{"recursive": {"1"}}, "", &response, maxTreeBytes)
+	if err != nil {
+		return GitTreeResult{}, err
+	}
+	result := GitTreeResult{Truncated: response.Truncated, RateLimit: metadata.rateLimit}
+	paths := make(map[string]struct{}, len(response.Tree))
+	for _, item := range response.Tree {
+		if item.Type == "tree" {
+			continue
+		}
+		if (item.Type != "blob" && item.Type != "commit") || !validRepositoryPath(item.Path) || !validSHA(item.SHA) || !validMode(item.Mode) {
+			return GitTreeResult{}, errors.New("GitHub tree response contains malformed entry")
+		}
+		if _, exists := paths[item.Path]; exists {
+			return GitTreeResult{}, errors.New("GitHub tree response contains duplicate path")
+		}
+		paths[item.Path] = struct{}{}
+		result.Entries = append(result.Entries, GitTreeEntry{Path: item.Path, SHA: item.SHA, Mode: item.Mode, ObjectType: item.Type})
+	}
+	return result, nil
+}
+
+func normalizePullRequestFile(path, previousPath, status, sha string, patch *string) (PullRequestFile, error) {
+	if !validRepositoryPath(path) || (previousPath != "" && !validRepositoryPath(previousPath)) || !validSHA(sha) {
+		return PullRequestFile{}, errors.New("GitHub pull request files response contains malformed file")
+	}
+	if status != "added" && status != "modified" && status != "removed" && status != "renamed" {
+		return PullRequestFile{}, errors.New("GitHub pull request files response contains unsupported status")
+	}
+	if status == "renamed" && previousPath == "" {
+		return PullRequestFile{}, errors.New("GitHub renamed file response lacks previous path")
+	}
+	file := PullRequestFile{Path: path, PreviousPath: previousPath, Status: status, SHA: sha}
+	if patch != nil {
+		file.PatchPresent = true
+		file.Patch = []byte(*patch)
+	}
+	return file, nil
+}
+
+func validCoordinates(owner, repository string, number int) bool {
+	return owner != "" && repository != "" && !strings.Contains(owner, "/") && !strings.Contains(repository, "/") && number > 0
+}
+
+func validRepositoryPath(value string) bool {
+	return value != "" && !strings.HasPrefix(value, "/") && !strings.Contains(value, "\\") && !strings.Contains(value, "\x00") && !strings.Contains(value, "../") && value != ".."
+}
+
+func validSHA(value string) bool {
+	if len(value) != 40 || strings.ToLower(value) != value {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func validMode(value string) bool {
+	if len(value) != 6 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '7' {
+			return false
+		}
+	}
+	return true
+}
+
 type responseMetadata struct {
 	etag        string
 	link        string
@@ -202,6 +338,10 @@ type responseMetadata struct {
 }
 
 func (c *Client) getJSON(ctx context.Context, path string, parameters url.Values, etag string, target any) (responseMetadata, error) {
+	return c.getJSONLimit(ctx, path, parameters, etag, target, maxResponseBytes)
+}
+
+func (c *Client) getJSONLimit(ctx context.Context, path string, parameters url.Values, etag string, target any, maximum int64) (responseMetadata, error) {
 	endpoint := *c.baseURL
 	endpoint.Path = strings.TrimRight(c.baseURL.Path, "/") + path
 	endpoint.RawQuery = parameters.Encode()
@@ -235,12 +375,12 @@ func (c *Client) getJSON(ctx context.Context, path string, parameters url.Values
 		metadata.notModified = true
 		return metadata, nil
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+	body, err := io.ReadAll(io.LimitReader(response.Body, maximum+1))
 	if err != nil {
 		return responseMetadata{}, fmt.Errorf("read GitHub response: %w", err)
 	}
-	if len(body) > maxResponseBytes {
-		return responseMetadata{}, errors.New("GitHub response exceeds 4 MiB")
+	if len(body) > int(maximum) {
+		return responseMetadata{}, fmt.Errorf("GitHub response exceeds %d MiB", maximum>>20)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return responseMetadata{}, githubHTTPError(response, body, c.token)

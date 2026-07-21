@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -62,6 +63,130 @@ func TestGetPullRequestDiffRejectsOversizedResponse(t *testing.T) {
 	client, _ := NewClient(server.URL, "test-token", server.Client())
 	if _, err := client.GetPullRequestDiff(context.Background(), "acme", "widgets", 42, ""); err == nil || !strings.Contains(err.Error(), "exceeds 32 MiB") {
 		t.Fatalf("oversized diff error = %v", err)
+	}
+}
+
+func TestGetPullRequestFilesPreservesPagesAndPatchPresence(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls++
+		if request.URL.Path != "/repos/acme/widgets/pulls/42/files" || request.URL.Query().Get("per_page") != "100" {
+			t.Errorf("request = %s", request.URL)
+		}
+		if calls == 1 {
+			if request.URL.Query().Get("page") != "1" {
+				t.Errorf("page = %q", request.URL.Query().Get("page"))
+			}
+			response.Header().Set("Link", `<`+serverURL(request)+`/repos/acme/widgets/pulls/42/files?per_page=100&page=2>; rel="next"`)
+			_, _ = response.Write([]byte(`[{"filename":"new.txt","status":"added","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","patch":"+new\n"}]`))
+			return
+		}
+		if request.URL.Query().Get("page") != "2" {
+			t.Errorf("page = %q", request.URL.Query().Get("page"))
+		}
+		_, _ = response.Write([]byte(`[{"filename":"renamed.txt","previous_filename":"old.txt","status":"renamed","sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]`))
+	}))
+	defer server.Close()
+	client, _ := NewClient(server.URL, "test-token", server.Client())
+	first, err := client.GetPullRequestFiles(context.Background(), "acme", "widgets", 42, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.NextPage != 2 || len(first.Files) != 1 || !first.Files[0].PatchPresent || string(first.Files[0].Patch) != "+new\n" {
+		t.Fatalf("first page = %+v", first)
+	}
+	second, err := client.GetPullRequestFiles(context.Background(), "acme", "widgets", 42, first.NextPage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.NextPage != 0 || len(second.Files) != 1 || second.Files[0].PreviousPath != "old.txt" || second.Files[0].PatchPresent {
+		t.Fatalf("second page = %+v", second)
+	}
+}
+
+func TestGetPullRequestFilesRejectsAmbiguousProviderFacts(t *testing.T) {
+	tests := []string{
+		`[{"filename":"x","status":"changed","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]`,
+		`[{"filename":"renamed","status":"renamed","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]`,
+		`[{"filename":"same","status":"added","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"filename":"same","status":"added","sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]`,
+	}
+	for _, body := range tests {
+		t.Run(body[:20], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) { _, _ = response.Write([]byte(body)) }))
+			defer server.Close()
+			client, _ := NewClient(server.URL, "test-token", server.Client())
+			if _, err := client.GetPullRequestFiles(context.Background(), "acme", "widgets", 42, 1); err == nil {
+				t.Fatal("GetPullRequestFiles accepted ambiguous provider facts")
+			}
+		})
+	}
+}
+
+func TestGetPullRequestFilesMarksGitHubFileLimitAsIncomplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("page") != "30" {
+			t.Errorf("page = %q", request.URL.Query().Get("page"))
+		}
+		_, _ = response.Write([]byte("["))
+		for index := 0; index < 100; index++ {
+			if index > 0 {
+				_, _ = response.Write([]byte(","))
+			}
+			_, _ = fmt.Fprintf(response, `{"filename":"file-%d","status":"added","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, index)
+		}
+		_, _ = response.Write([]byte("]"))
+	}))
+	defer server.Close()
+	client, _ := NewClient(server.URL, "test-token", server.Client())
+	page, err := client.GetPullRequestFiles(context.Background(), "acme", "widgets", 42, maxPullRequestFilePages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !page.LimitReached || page.NextPage != 0 || len(page.Files) != 100 {
+		t.Fatalf("page = %+v", page)
+	}
+	if _, err := client.GetPullRequestFiles(context.Background(), "acme", "widgets", 42, maxPullRequestFilePages+1); err == nil {
+		t.Fatal("GetPullRequestFiles accepted page beyond GitHub file limit")
+	}
+}
+
+func TestGetPullRequestFilesRejectsOverfilledProviderPage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte("["))
+		for index := 0; index < 101; index++ {
+			if index > 0 {
+				_, _ = response.Write([]byte(","))
+			}
+			_, _ = fmt.Fprintf(response, `{"filename":"file-%d","status":"added","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`, index)
+		}
+		_, _ = response.Write([]byte("]"))
+	}))
+	defer server.Close()
+	client, _ := NewClient(server.URL, "test-token", server.Client())
+	if _, err := client.GetPullRequestFiles(context.Background(), "acme", "widgets", 42, 1); err == nil {
+		t.Fatal("GetPullRequestFiles accepted an overfilled provider page")
+	}
+}
+
+func TestGetGitTreePreservesTruncationAndLeafFacts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/repos/acme/widgets/git/trees/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || request.URL.Query().Get("recursive") != "1" {
+			t.Errorf("request = %s", request.URL)
+		}
+		_, _ = response.Write([]byte(`{"truncated":true,"tree":[
+          {"path":"directory","mode":"040000","type":"tree","sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+          {"path":"file.txt","mode":"100644","type":"blob","sha":"cccccccccccccccccccccccccccccccccccccccc"},
+          {"path":"module","mode":"160000","type":"commit","sha":"dddddddddddddddddddddddddddddddddddddddd"}
+        ]}`))
+	}))
+	defer server.Close()
+	client, _ := NewClient(server.URL, "test-token", server.Client())
+	tree, err := client.GetGitTree(context.Background(), "acme", "widgets", strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tree.Truncated || len(tree.Entries) != 2 || tree.Entries[0].Path != "file.txt" || tree.Entries[1].ObjectType != "commit" {
+		t.Fatalf("tree = %+v", tree)
 	}
 }
 

@@ -26,6 +26,7 @@ type FileChange struct {
 	HeadMode     string
 	Binary       bool
 	Patch        []byte
+	PatchPresent bool
 }
 
 // Input is the complete, verified source needed for canonical identity.
@@ -160,11 +161,12 @@ func normalizeFile(file FileChange) (manifestEntry, error) {
 		return manifestEntry{}, errors.New("canonical revision contains invalid file mode")
 	}
 	entry := manifestEntry{Path: file.Path, PreviousPath: file.PreviousPath, Status: file.Status, BaseBlobSHA: file.BaseBlobSHA, HeadBlobSHA: file.HeadBlobSHA, BaseMode: file.BaseMode, HeadMode: file.HeadMode, Binary: file.Binary}
-	if !file.Binary {
-		patch := strings.ReplaceAll(string(file.Patch), "\r\n", "\n")
-		digest := sha256.Sum256([]byte(patch))
-		entry.PatchSHA256 = hex.EncodeToString(digest[:])
+	if file.Binary || !file.PatchPresent {
+		return manifestEntry{}, errors.New("canonical revision requires verified patch coverage")
 	}
+	patch := strings.ReplaceAll(string(file.Patch), "\r\n", "\n")
+	digest := sha256.Sum256([]byte(patch))
+	entry.PatchSHA256 = hex.EncodeToString(digest[:])
 	return entry, nil
 }
 
@@ -184,12 +186,8 @@ func validateManifestEntry(entry manifestEntry) error {
 	if entry.Status != "removed" && (!validSHA(entry.HeadBlobSHA) || !validMode(entry.HeadMode)) {
 		return errors.New("missing head blob or mode")
 	}
-	if entry.Binary {
-		if entry.PatchSHA256 != "" {
-			return errors.New("binary file cannot contain patch digest")
-		}
-	} else if !validDigest(entry.PatchSHA256) {
-		return errors.New("text file requires patch digest")
+	if entry.Binary || !validDigest(entry.PatchSHA256) {
+		return errors.New("canonical manifest requires verified patch digest")
 	}
 	return nil
 }
