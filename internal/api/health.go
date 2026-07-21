@@ -37,13 +37,17 @@ type healthResponse struct {
 // NewHealthHandler returns the liveness and readiness routes.
 func NewHealthHandler(readiness Readiness) http.Handler {
 	mux := http.NewServeMux()
+	registerHealthRoutes(mux, readiness)
+	return mux
+}
+
+func registerHealthRoutes(mux *http.ServeMux, readiness Readiness) {
 	mux.HandleFunc("GET /api/v1/health/live", func(response http.ResponseWriter, _ *http.Request) {
 		writeJSON(response, http.StatusOK, healthResponse{Status: "live"})
 	})
 	mux.HandleFunc("GET /api/v1/health/ready", func(response http.ResponseWriter, request *http.Request) {
 		handleReady(response, request, readiness)
 	})
-	return mux
 }
 
 func handleReady(response http.ResponseWriter, request *http.Request, readiness Readiness) {

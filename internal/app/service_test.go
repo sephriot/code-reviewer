@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,6 +102,26 @@ func TestNewAppliesMigrationsOnlyWhenConfigured(t *testing.T) {
 	}
 	if err := service.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNewWiresReadOnlyControlEndpoints(t *testing.T) {
+	cfg := config.Default()
+	cfg.DatabasePath = filepath.Join(t.TempDir(), "control-plane.db")
+	cfg.MigrationMode = config.MigrationApply
+	service, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = service.Close() }()
+	for _, path := range []string{
+		"/api/v1/inbox", "/api/inbox", "/api/v1/pull-requests/pr-1/timeline?connection_id=connection-1",
+	} {
+		response := httptest.NewRecorder()
+		service.server.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body=%s", path, response.Code, response.Body.String())
+		}
 	}
 }
 

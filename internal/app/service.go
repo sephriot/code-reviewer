@@ -91,7 +91,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		))
 	}
 
-	health := api.NewHealthHandler(api.Readiness{
+	controlAPI := api.NewControlHandler(api.Readiness{
 		Ping: store.Ping,
 		SchemaStatus: func(ctx context.Context) (api.SchemaStatus, error) {
 			status, err := store.SchemaStatus(ctx)
@@ -101,10 +101,10 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 				Pending: status.Pending,
 			}, err
 		},
-	})
+	}, api.ControlOptions{Reader: store})
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
-		Handler:           health,
+		Handler:           controlAPI,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}
