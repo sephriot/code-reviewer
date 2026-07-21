@@ -14,6 +14,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/sephriot/code-reviewer/internal/application/assessment"
+	"github.com/sephriot/code-reviewer/internal/application/canonical"
+	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 )
 
 func TestDatabaseMigrateRequiresExplicitApply(t *testing.T) {
@@ -47,7 +52,7 @@ func TestDatabaseMigrateThenStatus(t *testing.T) {
 	if err := run(context.Background(), []string{"db", "migrate", "--database", path, "--apply"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), `"current": 7`) {
+	if !strings.Contains(output.String(), `"current": 8`) {
 		t.Fatalf("migration output = %s", output.String())
 	}
 	output.Reset()
@@ -150,6 +155,210 @@ func TestManualReviewQueueNeverAcceptsPerRunEngineArguments(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
 		t.Fatalf("per-run engine argv error = %v", err)
 	}
+}
+
+func TestPolicyEvaluateRecordsCurrentAssessmentWithoutPublication(t *testing.T) {
+	databasePath, assessmentID, ruleVersionID := seedPolicyEvaluationCandidate(t)
+	var output bytes.Buffer
+	err := run(context.Background(), []string{
+		"policy", "evaluate", "--database", databasePath,
+		"--assessment-id", assessmentID, "--rule-key", "assigned-default", "--rule-version-id", ruleVersionID,
+	}, &output, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Outcome struct {
+			Disposition string
+		}
+		Evaluation struct {
+			PolicyEvaluationID string
+			ProposalID         string
+			Created            bool
+		}
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome.Disposition != "propose_changes" || result.Evaluation.PolicyEvaluationID == "" || result.Evaluation.ProposalID == "" || !result.Evaluation.Created {
+		t.Fatalf("policy evaluate output = %s", output.String())
+	}
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	assertCLIQueryCount(t, database, "policy_evaluations", 1)
+	assertCLIQueryCount(t, database, "proposals", 1)
+	assertCLIQueryCount(t, database, "proposal_revisions", 1)
+	for _, table := range []string{"decisions", "publication_effects", "publication_attempts", "jobs", "domain_events", "outbox"} {
+		assertCLIQueryCount(t, database, table, 0)
+	}
+}
+
+func TestPolicyEvaluateRejectsStaleAssessmentWithoutRecording(t *testing.T) {
+	databasePath, assessmentID, ruleVersionID := seedPolicyEvaluationCandidate(t)
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	if _, err := database.Exec(`UPDATE pull_request_projection_state SET current_revision_id = NULL WHERE pull_request_id = 'pr-1'`); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err = run(context.Background(), []string{
+		"policy", "evaluate", "--database", databasePath,
+		"--assessment-id", assessmentID, "--rule-key", "assigned-default", "--rule-version-id", ruleVersionID,
+	}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "policy evaluation target") {
+		t.Fatalf("stale assessment error = %v", err)
+	}
+	for _, table := range []string{"policy_evaluations", "proposals", "decisions", "publication_effects", "publication_attempts", "jobs", "domain_events", "outbox"} {
+		assertCLIQueryCount(t, database, table, 0)
+	}
+}
+
+func TestPolicyEvaluateRequiresInputsAndCurrentSchema(t *testing.T) {
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"policy", "evaluate"}, &output, &output); err == nil || !strings.Contains(err.Error(), "--assessment-id") {
+		t.Fatalf("missing arguments error = %v", err)
+	}
+	if err := run(context.Background(), []string{"policy", "evaluate", "--token=never-store"}, &output, &output); err == nil || !strings.Contains(err.Error(), "cannot carry secrets") {
+		t.Fatalf("secret argument error = %v", err)
+	}
+	databasePath := filepath.Join(t.TempDir(), "control-plane.db")
+	if err := run(context.Background(), []string{"db", "migrate", "--database", databasePath, "--apply"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 8`); err != nil {
+		t.Fatal(err)
+	}
+	err = run(context.Background(), []string{
+		"policy", "evaluate", "--database", databasePath,
+		"--assessment-id", "assessment-1", "--rule-key", "assigned-default", "--rule-version-id", "rule-version-1",
+	}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "current schema") {
+		t.Fatalf("outdated schema error = %v", err)
+	}
+	assertCLIQueryCount(t, database, "policy_evaluations", 0)
+}
+
+func seedPolicyEvaluationCandidate(t *testing.T) (databasePath, assessmentID, ruleVersionID string) {
+	t.Helper()
+	ctx := context.Background()
+	databasePath = filepath.Join(t.TempDir(), "control-plane.db")
+	var output bytes.Buffer
+	if err := run(ctx, []string{"db", "migrate", "--database", databasePath, "--apply"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headSHA := strings.Repeat("a", 40)
+	baseSHA := strings.Repeat("b", 40)
+	digest := strings.Repeat("c", 64)
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO connections(
+ id, provider, mode, auth_kind, api_base_url, account_login, account_database_id,
+ credential_ref_kind, credential_locator, state, permissions_json, created_at_us, updated_at_us)
+VALUES ('connection-1', 'github', 'local_user', 'github_cli', 'https://api.github.com', 'reviewer', 9001,
+ 'github_cli', 'github-cli', 'active', '{"pull_requests":"read"}', 1, 1)`, nil},
+		{`INSERT INTO repositories(id, github_node_id, full_name, owner_login, name, created_at_us, updated_at_us, github_id)
+VALUES ('repo-1', 'R_1', 'owner/repo', 'owner', 'repo', 1, 1, 1001)`, nil},
+		{`INSERT INTO connection_repositories(
+ connection_id, repository_id, github_repository_id, github_node_id, access_state, permissions_json, created_at_us, updated_at_us)
+VALUES ('connection-1', 'repo-1', 1001, 'R_1', 'active', '{"pull":"read"}', 2, 2)`, nil},
+		{`INSERT INTO pull_requests(id, repository_id, github_id, number, title, author_login, html_url, state, created_at_us, updated_at_us)
+VALUES ('pr-1', 'repo-1', 2001, 42, 'Policy fixture', 'author', 'https://github.com/owner/repo/pull/42', 'open', 3, 3)`, nil},
+		{`INSERT INTO pull_request_observations(
+ id, connection_id, repository_id, pull_request_id, revision_id, head_sha, base_sha,
+ source_kind, source_priority, facts_format_version, facts_sha256, title, author_login,
+ author_database_id, body_sha256, labels_json, is_draft, base_ref, requested_reviewers_json,
+ relationship_set_json, github_state, github_updated_at_us, observed_at_us, created_at_us)
+VALUES ('observation-1', 'connection-1', 'repo-1', 'pr-1', NULL, ?, ?,
+ 'direct_refresh', 30, 1, ?, 'Policy fixture', 'author', 8001, ?, '[]', 0, 'main', '[]', '[]',
+ 'open', 10, 10, 10)`, []any{headSHA, baseSHA, digest, digest}},
+		{`INSERT INTO pull_request_projection_state(
+ pull_request_id, repository_id, connection_id, current_revision_id, current_observation_id, freshness, updated_at_us)
+VALUES ('pr-1', 'repo-1', 'connection-1', NULL, 'observation-1', 'fresh', 10)`, nil},
+	} {
+		if _, err := database.ExecContext(ctx, statement.query, statement.args...); err != nil {
+			_ = database.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storagesqlite.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	revision, err := canonical.Build(canonical.Input{
+		HeadSHA: headSHA, BaseSHA: baseSHA, Complete: true,
+		Files: []canonical.FileChange{{
+			Path: "internal/example.go", Status: "modified", BaseBlobSHA: baseSHA, HeadBlobSHA: headSHA,
+			BaseMode: "100644", HeadMode: "100644", Patch: []byte("-old\\n+new\\n"), PatchPresent: true,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AttachCanonicalRevision(ctx, storagesqlite.CanonicalRevisionInput{
+		ConnectionID: "connection-1", ObservationID: "observation-1", HeadSHA: headSHA, BaseSHA: baseSHA,
+		IdentityKey: revision.IdentityKey, ManifestSHA256: revision.ManifestSHA256, ManifestJSON: revision.Manifest,
+		EntryCount: revision.EntryCount, AttachedAt: time.Unix(20, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := store.CreateReviewProfileVersion(ctx, storagesqlite.CreateReviewProfileVersionInput{
+		ProfileKey: "default", Version: 1, Name: "Default", Instructions: "Review carefully.", SettingsJSON: []byte(`{}`), CreatedAt: time.Unix(21, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := store.PrepareReviewRun(ctx, storagesqlite.PrepareReviewRunInput{
+		ConnectionID: "connection-1", PullRequestID: "pr-1", ProfileID: profile.ProfileID, ProfileVersionID: profile.VersionID,
+		TriggerKind: "manual", TriggerSHA256: strings.Repeat("d", 64), EngineKind: "cli", EngineConfigJSON: []byte(`{}`),
+		AccessMode: "diff_only", RequestedAt: time.Unix(22, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	validated, err := assessment.Validate([]byte(`{"version":1,"verdict":"changes_required","summary":"Nil input can panic.","confidence":"high","limitations":[],"coverage":{"status":"complete","changed_files_total":1,"reviewed_files":1,"omitted":[]},"findings":[{"client_id":"nil-input","severity":"high","category":"correctness","message":"Guard optional input.","anchor":{"path":"internal/example.go","start_line":2,"end_line":2,"side":"RIGHT","sha":"`+headSHA+`"}}]}`), assessment.RevisionEvidence{
+		HeadSHA: headSHA, BaseSHA: baseSHA, Files: []assessment.FileEvidence{{Path: "internal/example.go", Right: []assessment.LineRange{{Start: 1, End: 2}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := store.RecordAssessment(ctx, storagesqlite.RecordAssessmentInput{RunID: prepared.RunID, Result: validated, RecordedAt: time.Unix(23, 0).UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policySet, err := store.CreatePolicySetGeneration(ctx, storagesqlite.PolicySetGenerationInput{
+		Generation: 1,
+		Rules: []storagesqlite.WatchRuleVersionInput{{
+			RuleKey: "assigned-default", Enabled: true, Priority: 1, TriggerKind: "manual", ExternalActionPolicy: "require_confirmation",
+			ProfileID: profile.ProfileID, ProfileVersionID: profile.VersionID, MatchJSON: []byte(`{}`), ReviewJSON: []byte(`{}`),
+			PublicationJSON: []byte(`{"allow_automatic_approval":false,"matrix":{"changes_required":"propose_changes"}}`),
+		}},
+		CreatedAt: time.Unix(24, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return databasePath, recorded.AssessmentID, policySet.RuleVersions[0].VersionID
 }
 
 func TestSameFileDetectsSymlinkAlias(t *testing.T) {

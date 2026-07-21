@@ -17,6 +17,7 @@ import (
 
 	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
 	"github.com/sephriot/code-reviewer/internal/application/hydrate"
+	"github.com/sephriot/code-reviewer/internal/application/policyevaluate"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/legacy"
@@ -32,7 +33,7 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 2 {
-		return errors.New("usage: reviewctl <config|db|legacy|github|profile|review> <command> [options]")
+		return errors.New("usage: reviewctl <config|db|legacy|github|profile|review|policy> <command> [options]")
 	}
 	switch args[0] + " " + args[1] {
 	case "config validate":
@@ -57,6 +58,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return profileCreate(ctx, args[2:], stdout, stderr)
 	case "review queue":
 		return reviewQueue(ctx, args[2:], stdout, stderr)
+	case "policy evaluate":
+		return policyEvaluate(ctx, args[2:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0]+" "+args[1])
 	}
@@ -175,6 +178,41 @@ func reviewQueue(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return err
 	}
 	return writeJSON(stdout, queued)
+}
+
+func policyEvaluate(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := rejectSecretBearingManualArguments(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("policy evaluate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	assessmentID := flags.String("assessment-id", "", "completed immutable assessment ID")
+	ruleKey := flags.String("rule-key", "", "active stable policy rule key")
+	ruleVersionID := flags.String("rule-version-id", "", "active immutable policy rule version ID")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*assessmentID) == "" || strings.TrimSpace(*ruleKey) == "" || strings.TrimSpace(*ruleVersionID) == "" {
+		return errors.New("--assessment-id, --rule-key, and --rule-version-id are required")
+	}
+	store, err := openCurrentControlPlane(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	result, err := (policyevaluate.Service{Reader: store, Recorder: store}).Evaluate(ctx, policyevaluate.Request{
+		AssessmentID: *assessmentID, RuleKey: *ruleKey, RuleVersionID: *ruleVersionID,
+		EvaluatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, result)
 }
 
 func openCurrentControlPlane(ctx context.Context, path string) (*storagesqlite.Store, error) {
