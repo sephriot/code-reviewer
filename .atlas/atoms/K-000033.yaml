@@ -1,0 +1,6 @@
+id: K-000033
+title: Reconciliation removals require same-generation direct proof
+type: decision
+confidence: high
+summary: Search absence never removes PR relationships; closure requires stable complete page coverage and a same-generation direct PR observation that is the selected non-regressive current fact. Partial, capped, incomplete, changing-total, count-mismatched, stale, or rate-limited generations may retain positives but cannot close.
+updated_at: 2026-07-21

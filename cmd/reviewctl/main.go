@@ -7,9 +7,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
+	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
+	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/legacy"
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
@@ -24,7 +29,7 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 2 {
-		return errors.New("usage: reviewctl <config|db|legacy> <command> [options]")
+		return errors.New("usage: reviewctl <config|db|legacy|github> <command> [options]")
 	}
 	switch args[0] + " " + args[1] {
 	case "config validate":
@@ -41,9 +46,125 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return legacyInspect(ctx, args[2:], stdout, stderr)
 	case "legacy import":
 		return legacyImport(ctx, args[2:], stdout, stderr)
+	case "github reconcile":
+		return githubReconcile(ctx, args[2:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0]+" "+args[1])
 	}
+}
+
+func githubReconcile(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("github reconcile", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	shadow := flags.Bool("shadow", false, "persist factual observations without scheduling or publication")
+	connectionID := flags.String("connection-id", "github-local", "stable local GitHub connection identity")
+	apiURL := flags.String("api-url", "https://api.github.com", "GitHub API base URL")
+	tokenEnvironment := flags.String("token-env", "", "environment variable containing the GitHub token (default GITHUB_TOKEN)")
+	tokenFile := flags.String("token-file", "", "file containing the GitHub token")
+	timeout := flags.Duration("http-timeout", 30*time.Second, "GitHub HTTP request timeout")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if !*shadow {
+		return errors.New("refusing reconciliation without --shadow")
+	}
+	if *connectionID == "" || *timeout <= 0 {
+		return errors.New("connection ID and positive HTTP timeout are required")
+	}
+	if *tokenFile != "" && *tokenEnvironment != "" {
+		return errors.New("--token-file and --token-env are mutually exclusive")
+	}
+
+	store, err := storagesqlite.OpenReadOnly(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	status, err := store.SchemaStatus(ctx)
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
+	if status.Current != status.Latest || status.Current < 3 || status.Pending != 0 {
+		_ = store.Close()
+		return fmt.Errorf("shadow reconciliation requires a current schema at version 3 or newer: current=%d latest=%d pending=%d", status.Current, status.Latest, status.Pending)
+	}
+	if err := store.Close(); err != nil {
+		return err
+	}
+	store, err = storagesqlite.Open(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+
+	token, referenceKind, locator, err := githubToken(*tokenEnvironment, *tokenFile)
+	if err != nil {
+		return err
+	}
+	client, err := githubadapter.NewClient(*apiURL, token, &http.Client{Timeout: *timeout})
+	if err != nil {
+		return err
+	}
+	service, err := reconcile.NewService(client, store)
+	if err != nil {
+		return err
+	}
+	report, err := service.Reconcile(ctx, reconcile.Config{
+		ConnectionID: *connectionID, APIBaseURL: *apiURL,
+		CredentialRefKind: referenceKind, CredentialLocator: locator,
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, report)
+}
+
+func githubToken(environmentName, filePath string) (token, referenceKind, locator string, err error) {
+	if filePath != "" {
+		file, openErr := os.Open(filePath)
+		if openErr != nil {
+			return "", "", "", fmt.Errorf("open GitHub token file: %w", openErr)
+		}
+		defer func() { _ = file.Close() }()
+		info, statErr := file.Stat()
+		if statErr != nil {
+			return "", "", "", fmt.Errorf("stat GitHub token file: %w", statErr)
+		}
+		if !info.Mode().IsRegular() || info.Size() > 64<<10 {
+			return "", "", "", errors.New("GitHub token file must be a regular file no larger than 64 KiB")
+		}
+		contents, readErr := io.ReadAll(io.LimitReader(file, (64<<10)+1))
+		if readErr != nil {
+			return "", "", "", fmt.Errorf("read GitHub token file: %w", readErr)
+		}
+		if len(contents) > 64<<10 {
+			return "", "", "", errors.New("GitHub token file must be no larger than 64 KiB")
+		}
+		token = strings.TrimSpace(string(contents))
+		absolute, pathErr := filepath.Abs(filePath)
+		if pathErr != nil {
+			return "", "", "", fmt.Errorf("resolve GitHub token file: %w", pathErr)
+		}
+		referenceKind, locator = "file", "file:"+absolute
+	} else {
+		if environmentName == "" {
+			environmentName = "GITHUB_TOKEN"
+		}
+		if environmentName == "" || strings.ContainsRune(environmentName, '=') {
+			return "", "", "", errors.New("GitHub token environment variable name is invalid")
+		}
+		token = strings.TrimSpace(os.Getenv(environmentName))
+		referenceKind, locator = "environment", "env:"+environmentName
+	}
+	if token == "" {
+		return "", "", "", errors.New("GitHub token reference resolved to an empty value")
+	}
+	return token, referenceKind, locator, nil
 }
 
 func legacyImport(ctx context.Context, args []string, stdout, stderr io.Writer) error {

@@ -6,7 +6,7 @@ An automated GitHub PR code review system using Claude Code. This tool monitors 
 
 The replacement control plane is being built in Go from the ground-up design in [docs/GREENFIELD_PRODUCT_DESIGN.md](docs/GREENFIELD_PRODUCT_DESIGN.md). The Python service remains the legacy reference implementation and must not run against its database while a final backup is being made.
 
-The current Go slice provides configuration validation, health checks, additive SQLite migrations, durable jobs/events/outbox primitives, a lossless legacy import boundary, canonical GitHub observation schema, and a GET-only GitHub adapter. Imported revisions are permanently non-publishable; importing creates no jobs, events, outbox entries, or GitHub effects, and requires `publication_mode=disabled`. Shadow reconciliation persistence and scheduling are the next implementation slice; GitHub publication is not implemented.
+The current Go slice provides configuration validation, health checks, additive SQLite migrations, durable jobs/events/outbox primitives, a lossless legacy import boundary, canonical GitHub observations, a GET-only GitHub adapter, and one-shot shadow reconciliation. Imported revisions are permanently non-publishable. Import and shadow reconciliation create no jobs, events, outbox entries, or GitHub effects, and require `publication_mode=disabled`. Scheduling and GitHub publication are not implemented.
 
 ```bash
 go run ./cmd/reviewctl db migrate --database data/control-plane.db --apply
@@ -26,9 +26,18 @@ go run ./cmd/reviewctl legacy import \
   --source-id legacy-python-reviews-v1 \
   --database data/control-plane.db \
   --apply
+
+# Observe assigned and authored open PRs without scheduling or publication.
+# The token value is read at runtime; only its environment reference is stored.
+GITHUB_TOKEN=... go run ./cmd/reviewctl github reconcile \
+  --database data/control-plane.db \
+  --connection-id github-local \
+  --shadow
 ```
 
 Never use `data/reviews.db` as the v2 target. The import command rejects source/target aliases, verifies the backup before and after its read snapshot, and fails closed on changed source-row checksums or incomplete coverage.
+
+Shadow reconciliation requires an existing, fully migrated control-plane database and an explicit `--shadow` flag. It searches every contiguous GitHub result page, refreshes authoritative PR detail, and stores metadata observations without inventing diff revisions. Partial, capped, incomplete, stale, or rate-limited generations may add observed facts but never close relationships. A relationship is closed only after a complete scan plus a same-generation, non-regressive direct PR observation proving removal or terminal state. Use `--token-env NAME` (default `GITHUB_TOKEN`) or `--token-file PATH`; literal token flags are intentionally unsupported.
 
 ## Features
 

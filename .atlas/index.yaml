@@ -1,4 +1,4 @@
-next_id: 33
+next_id: 34
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -449,4 +449,8 @@ entries:
 - id: K-000032
   title: SHOW_THINKING streams Cursor Agent events safely
   type: recipe
+  confidence: high
+- id: K-000033
+  title: Reconciliation removals require same-generation direct proof
+  type: decision
   confidence: high

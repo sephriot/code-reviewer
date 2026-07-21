@@ -14,6 +14,8 @@ The code reviewer is an asynchronous service that watches GitHub pull requests a
 - The Phase 1 GitHub adapter under `internal/adapters/github` is GET-only. Search results are candidates only; PR detail response IDs and `base.repo` provide canonical identity.
 - Metadata-only GitHub observations retain exact head/base facts but do not create `canonical_diff` revisions. A canonical revision requires a real diff hash in a later slice.
 - Partial reconciliation generations may add positive facts. Only complete, coverage-verified generations may remove relationships or advance a complete checkpoint.
+- `reviewctl github reconcile --shadow` is the only Phase 1 observation entrypoint. It requires an existing current control-plane database, `publication_mode=disabled`, a secret reference, and performs GET-only GitHub traffic with no jobs, events, outbox rows, or publication effects.
+- Search absence alone never closes a relationship. Closure requires a complete scan and a same-generation authoritative PR observation proving the relationship was removed or the PR became terminal.
 
 Core behaviors:
 - Poll GitHub for review requests using minimal metadata and avoid reprocessing the same commit.

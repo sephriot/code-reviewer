@@ -23,8 +23,8 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(applied) != 3 || applied[0] != 1 || applied[1] != 2 || applied[2] != 3 {
-		t.Fatalf("first migration result = %v, want [1 2 3]", applied)
+	if len(applied) != 4 || applied[0] != 1 || applied[1] != 2 || applied[2] != 3 || applied[3] != 4 {
+		t.Fatalf("first migration result = %v, want [1 2 3 4]", applied)
 	}
 
 	applied, err = store.ApplyMigrations(ctx)
@@ -39,7 +39,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Current != 3 || status.Latest != 3 || status.Pending != 0 {
+	if status.Current != 4 || status.Latest != 4 || status.Pending != 0 {
 		t.Fatalf("schema status = %+v", status)
 	}
 }
