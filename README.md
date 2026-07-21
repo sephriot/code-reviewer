@@ -6,7 +6,7 @@ An automated GitHub PR code review system using Claude Code. This tool monitors 
 
 The replacement control plane is being built in Go from the ground-up design in [docs/GREENFIELD_PRODUCT_DESIGN.md](docs/GREENFIELD_PRODUCT_DESIGN.md). The Python service remains the legacy reference implementation and must not run against its database while a final backup is being made.
 
-The current Go slice provides configuration validation, health checks, additive SQLite migrations, durable jobs/events/outbox primitives, and a lossless legacy import boundary. Imported revisions are permanently non-publishable; importing creates no jobs, events, outbox entries, or GitHub effects, and requires `publication_mode=disabled`.
+The current Go slice provides configuration validation, health checks, additive SQLite migrations, durable jobs/events/outbox primitives, a lossless legacy import boundary, canonical GitHub observation schema, and a GET-only GitHub adapter. Imported revisions are permanently non-publishable; importing creates no jobs, events, outbox entries, or GitHub effects, and requires `publication_mode=disabled`. Shadow reconciliation persistence and scheduling are the next implementation slice; GitHub publication is not implemented.
 
 ```bash
 go run ./cmd/reviewctl db migrate --database data/control-plane.db --apply

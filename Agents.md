@@ -11,6 +11,9 @@ The code reviewer is an asynchronous service that watches GitHub pull requests a
 - Legacy import accepts only a backup with a verified format-v1 manifest. Plan mode is read-only; writes require `--apply`.
 - Every legacy row is retained in `migration_ledger` and `legacy_snapshot_rows`. Legacy revision identities are non-publishable and import must create no job, domain-event, outbox, or GitHub publication work.
 - Reusing a stable source ID is idempotent for identical input and fails closed if any source row checksum changes.
+- The Phase 1 GitHub adapter under `internal/adapters/github` is GET-only. Search results are candidates only; PR detail response IDs and `base.repo` provide canonical identity.
+- Metadata-only GitHub observations retain exact head/base facts but do not create `canonical_diff` revisions. A canonical revision requires a real diff hash in a later slice.
+- Partial reconciliation generations may add positive facts. Only complete, coverage-verified generations may remove relationships or advance a complete checkpoint.
 
 Core behaviors:
 - Poll GitHub for review requests using minimal metadata and avoid reprocessing the same commit.

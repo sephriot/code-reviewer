@@ -133,8 +133,8 @@ func (s *Store) planLegacyImport(ctx context.Context, input LegacyImportInput) (
 	if err != nil {
 		return importPlan{}, err
 	}
-	if status.Current != 2 || status.Latest != 2 || status.Pending != 0 {
-		return importPlan{}, fmt.Errorf("legacy import requires schema version 2: current=%d latest=%d pending=%d", status.Current, status.Latest, status.Pending)
+	if status.Current < 2 || status.Current != status.Latest || status.Pending != 0 {
+		return importPlan{}, fmt.Errorf("legacy import requires a current schema at version 2 or newer: current=%d latest=%d pending=%d", status.Current, status.Latest, status.Pending)
 	}
 	var publicationMode string
 	if err := s.db.QueryRowContext(ctx, `SELECT value FROM system_state WHERE key = 'publication_mode'`).Scan(&publicationMode); err != nil {
