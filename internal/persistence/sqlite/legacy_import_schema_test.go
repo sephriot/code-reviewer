@@ -282,8 +282,8 @@ func TestLegacyImportMigrationPreservesFoundationRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 6 {
-		t.Fatalf("migration count = %d, want 6", len(migrations))
+	if len(migrations) != 7 {
+		t.Fatalf("migration count = %d, want 7", len(migrations))
 	}
 	if err := store.ensureMigrationTable(ctx); err != nil {
 		t.Fatal(err)
@@ -300,8 +300,8 @@ VALUES ('job-before-import-schema', 'test', '{}', 'queued', 1, 1, 1)`); err != n
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(applied) != 5 || applied[0] != 2 || applied[1] != 3 || applied[2] != 4 || applied[3] != 5 || applied[4] != 6 {
-		t.Fatalf("forward migration result = %v, want [2 3 4 5 6]", applied)
+	if len(applied) != 6 || applied[0] != 2 || applied[1] != 3 || applied[2] != 4 || applied[3] != 5 || applied[4] != 6 || applied[5] != 7 {
+		t.Fatalf("forward migration result = %v, want [2 3 4 5 6 7]", applied)
 	}
 	var count int
 	if err := store.db.QueryRowContext(ctx, `
