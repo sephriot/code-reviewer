@@ -38,9 +38,12 @@ type Store interface {
 // Request identifies the selected current observation to hydrate.
 type Request struct {
 	ConnectionID string
-	Owner        string
-	Repository   string
-	Number       int
+	// ObservationID optionally pins hydration to one immutable observation.
+	// Durable jobs set it so an old job cannot hydrate a newer observation.
+	ObservationID string
+	Owner         string
+	Repository    string
+	Number        int
 }
 
 // Result names the durable proof records created or reused by Hydrate.
@@ -72,7 +75,10 @@ func (s Service) Hydrate(ctx context.Context, request Request) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("find canonical hydration target: %w", err)
 	}
-	if target.ConnectionID != request.ConnectionID || !strings.EqualFold(target.Owner, request.Owner) || !strings.EqualFold(target.Repository, request.Repository) || target.Number != request.Number {
+	if target.ConnectionID != request.ConnectionID ||
+		(request.ObservationID != "" && target.ObservationID != request.ObservationID) ||
+		!strings.EqualFold(target.Owner, request.Owner) ||
+		!strings.EqualFold(target.Repository, request.Repository) || target.Number != request.Number {
 		return Result{}, errors.New("canonical hydration target does not match request")
 	}
 
