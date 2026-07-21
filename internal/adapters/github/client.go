@@ -3,6 +3,8 @@ package github
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,7 @@ const (
 	apiVersion       = "2022-11-28"
 	defaultUserAgent = "code-reviewer-v2"
 	maxResponseBytes = 4 << 20
+	maxDiffBytes     = 32 << 20
 )
 
 // HTTPError is a non-success GitHub response without credential disclosure.
@@ -48,7 +51,14 @@ type Reader interface {
 	GetPullRequest(context.Context, string, string, int, string) (PullRequestResult, error)
 }
 
+// DiffReader exposes bounded, read-only unified-diff retrieval separately
+// from metadata reconciliation.
+type DiffReader interface {
+	GetPullRequestDiff(context.Context, string, string, int, string) (PullRequestDiffResult, error)
+}
+
 var _ Reader = (*Client)(nil)
+var _ DiffReader = (*Client)(nil)
 
 // NewClient constructs a GET-only client. Plain HTTP is accepted only for a
 // loopback test server.
@@ -166,6 +176,24 @@ func (c *Client) GetPullRequest(ctx context.Context, owner, repository string, n
 	return PullRequestResult{PullRequest: &normalized, ETag: metadata.etag, RateLimit: metadata.rateLimit}, nil
 }
 
+// GetPullRequestDiff returns exact bounded unified-diff bytes for one PR.
+// Callers must combine it with complete file and tree coverage before using
+// it as a canonical revision identity.
+func (c *Client) GetPullRequestDiff(ctx context.Context, owner, repository string, number int, etag string) (PullRequestDiffResult, error) {
+	if owner == "" || repository == "" || strings.Contains(owner, "/") || strings.Contains(repository, "/") || number <= 0 {
+		return PullRequestDiffResult{}, errors.New("valid repository coordinates and PR number are required")
+	}
+	metadata, body, err := c.getBytes(ctx, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repository)+"/pulls/"+strconv.Itoa(number), etag)
+	if err != nil {
+		return PullRequestDiffResult{}, err
+	}
+	if metadata.notModified {
+		return PullRequestDiffResult{ETag: metadata.etag, NotModified: true, RateLimit: metadata.rateLimit}, nil
+	}
+	digest := sha256.Sum256(body)
+	return PullRequestDiffResult{Bytes: body, SHA256: hex.EncodeToString(digest[:]), ETag: metadata.etag, RateLimit: metadata.rateLimit}, nil
+}
+
 type responseMetadata struct {
 	etag        string
 	link        string
@@ -221,6 +249,49 @@ func (c *Client) getJSON(ctx context.Context, path string, parameters url.Values
 		return responseMetadata{}, fmt.Errorf("decode GitHub response: %w", err)
 	}
 	return metadata, nil
+}
+
+func (c *Client) getBytes(ctx context.Context, path, etag string) (responseMetadata, []byte, error) {
+	endpoint := *c.baseURL
+	endpoint.Path = strings.TrimRight(c.baseURL.Path, "/") + path
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return responseMetadata{}, nil, fmt.Errorf("create GitHub request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.token)
+	request.Header.Set("Accept", "application/vnd.github.diff")
+	request.Header.Set("X-GitHub-Api-Version", apiVersion)
+	request.Header.Set("User-Agent", c.userAgent)
+	if etag != "" {
+		request.Header.Set("If-None-Match", etag)
+	}
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return responseMetadata{}, nil, fmt.Errorf("read GitHub API: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	metadata := responseMetadata{etag: response.Header.Get("ETag"), rateLimit: responseRateLimit(response.Header)}
+	if response.StatusCode == http.StatusNotModified {
+		if etag == "" {
+			return responseMetadata{}, nil, errors.New("GitHub returned 304 without a conditional request")
+		}
+		if metadata.etag == "" {
+			metadata.etag = etag
+		}
+		metadata.notModified = true
+		return metadata, nil, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxDiffBytes+1))
+	if err != nil {
+		return responseMetadata{}, nil, fmt.Errorf("read GitHub diff: %w", err)
+	}
+	if len(body) > maxDiffBytes {
+		return responseMetadata{}, nil, errors.New("GitHub diff exceeds 32 MiB")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return responseMetadata{}, nil, githubHTTPError(response, body, c.token)
+	}
+	return metadata, body, nil
 }
 
 func githubHTTPError(response *http.Response, body []byte, token string) error {

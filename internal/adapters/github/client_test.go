@@ -2,6 +2,8 @@ package github
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +11,59 @@ import (
 	"testing"
 	"time"
 )
+
+func TestGetPullRequestDiffPreservesExactBytesAndConditionalETag(t *testing.T) {
+	diff := []byte("diff --git a/file.txt b/file.txt\n+hello\n")
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls++
+		if request.Method != http.MethodGet || request.URL.Path != "/repos/acme/widgets/pulls/42" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Accept") != "application/vnd.github.diff" {
+			t.Errorf("Accept = %q", request.Header.Get("Accept"))
+		}
+		if calls == 2 {
+			if request.Header.Get("If-None-Match") != `"diff-etag"` {
+				t.Errorf("If-None-Match = %q", request.Header.Get("If-None-Match"))
+			}
+			response.WriteHeader(http.StatusNotModified)
+			return
+		}
+		response.Header().Set("ETag", `"diff-etag"`)
+		_, _ = response.Write(diff)
+	}))
+	defer server.Close()
+	client, _ := NewClient(server.URL, "test-token", server.Client())
+	result, err := client.GetPullRequestDiff(context.Background(), "acme", "widgets", 42, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sha256.Sum256(diff)
+	if string(result.Bytes) != string(diff) || result.SHA256 != hex.EncodeToString(want[:]) || result.ETag != `"diff-etag"` {
+		t.Fatalf("diff result = %+v", result)
+	}
+	notModified, err := client.GetPullRequestDiff(context.Background(), "acme", "widgets", 42, result.ETag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !notModified.NotModified || notModified.ETag != result.ETag || notModified.SHA256 != "" || notModified.Bytes != nil {
+		t.Fatalf("not-modified result = %+v", notModified)
+	}
+}
+
+func TestGetPullRequestDiffRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Length", "33554433")
+		response.WriteHeader(http.StatusOK)
+		_, _ = response.Write(make([]byte, maxDiffBytes+1))
+	}))
+	defer server.Close()
+	client, _ := NewClient(server.URL, "test-token", server.Client())
+	if _, err := client.GetPullRequestDiff(context.Background(), "acme", "widgets", 42, ""); err == nil || !strings.Contains(err.Error(), "exceeds 32 MiB") {
+		t.Fatalf("oversized diff error = %v", err)
+	}
+}
 
 func TestNewClientAllowsOnlySecureOrLoopbackEndpoints(t *testing.T) {
 	if _, err := NewClient("http://example.com", "secret", nil); err == nil {

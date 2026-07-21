@@ -77,3 +77,13 @@ type PullRequestResult struct {
 	NotModified bool         `json:"not_modified"`
 	RateLimit   RateLimit    `json:"rate_limit"`
 }
+
+// PullRequestDiffResult holds an exact unified-diff response for later
+// canonicalization. It is not, by itself, a publishable revision identity.
+type PullRequestDiffResult struct {
+	Bytes       []byte    `json:"-"`
+	SHA256      string    `json:"sha256,omitempty"`
+	ETag        string    `json:"etag,omitempty"`
+	NotModified bool      `json:"not_modified"`
+	RateLimit   RateLimit `json:"rate_limit"`
+}
