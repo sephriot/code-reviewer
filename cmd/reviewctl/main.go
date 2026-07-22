@@ -20,6 +20,7 @@ import (
 	"github.com/sephriot/code-reviewer/internal/application/policyevaluate"
 	"github.com/sephriot/code-reviewer/internal/application/publishworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
+	"github.com/sephriot/code-reviewer/internal/application/watchschedule"
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/legacy"
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
@@ -59,6 +60,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return profileCreate(ctx, args[2:], stdout, stderr)
 	case "review queue":
 		return reviewQueue(ctx, args[2:], stdout, stderr)
+	case "review schedule":
+		return reviewSchedule(ctx, args[2:], stdout, stderr)
 	case "policy evaluate":
 		return policyEvaluate(ctx, args[2:], stdout, stderr)
 	case "policy apply":
@@ -516,6 +519,50 @@ func reviewQueue(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return err
 	}
 	return writeJSON(stdout, queued)
+}
+
+// reviewSchedule selects the first matching active watch rule for current
+// canonical evidence and queues work only when that rule is automatic.
+func reviewSchedule(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := rejectSecretBearingManualArguments(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("review schedule", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	connectionID := flags.String("connection-id", "", "local GitHub connection identity")
+	owner := flags.String("owner", "", "GitHub repository owner")
+	repository := flags.String("repository", "", "GitHub repository name")
+	number := flags.Int("number", 0, "positive pull request number")
+	accessMode := flags.String("access-mode", "diff_only", "diff_only, selected_files, or read_only_worktree")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*connectionID) == "" || strings.TrimSpace(*owner) == "" || strings.TrimSpace(*repository) == "" || *number <= 0 {
+		return errors.New("--connection-id, --owner, --repository, and positive --number are required")
+	}
+	store, err := openCurrentControlPlane(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	coordinate, err := store.ResolveReviewPullRequest(ctx, *connectionID, *owner, *repository, *number)
+	if err != nil {
+		return err
+	}
+	result, err := (watchschedule.Service{Store: store}).Schedule(ctx, watchschedule.Request{
+		ConnectionID: coordinate.ConnectionID, PullRequestID: coordinate.PullRequestID,
+		EngineKind: "cli", EngineConfigJSON: []byte(`{"engine_source":"reviewd_config"}`),
+		AccessMode: *accessMode, CorrelationID: "reviewctl-watch-rule", RequestedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, result)
 }
 
 func policyEvaluate(ctx context.Context, args []string, stdout, stderr io.Writer) error {

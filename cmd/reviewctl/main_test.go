@@ -243,6 +243,29 @@ func TestPolicyEvaluateRecordsCurrentAssessmentWithoutPublication(t *testing.T) 
 	}
 }
 
+func TestReviewScheduleSelectsRuleWithoutQueueingManualTrigger(t *testing.T) {
+	databasePath, _, _ := seedPolicyEvaluationCandidate(t)
+	var output bytes.Buffer
+	err := run(context.Background(), []string{
+		"review", "schedule", "--database", databasePath,
+		"--connection-id", "connection-1", "--owner", "owner", "--repository", "repo", "--number", "42",
+	}, &output, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Matched     bool   `json:"Matched"`
+		TriggerKind string `json:"TriggerKind"`
+		Queued      any    `json:"Queued"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Matched || result.TriggerKind != "manual" || result.Queued != nil {
+		t.Fatalf("review schedule output = %s", output.String())
+	}
+}
+
 func TestPolicyEvaluateRejectsStaleAssessmentWithoutRecording(t *testing.T) {
 	databasePath, assessmentID, ruleVersionID := seedPolicyEvaluationCandidate(t)
 	database, err := sql.Open("sqlite", databasePath)
