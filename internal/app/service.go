@@ -205,7 +205,7 @@ func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (r
 		Engine:    adapter,
 		Recorder:  store,
 	}
-	return reviewworker.Handler{Executor: executor, Events: store}, nil
+	return reviewworker.Handler{Executor: executor, Events: store, AutomaticPolicyStore: store}, nil
 }
 
 // Run listens until the context is canceled or the server fails.

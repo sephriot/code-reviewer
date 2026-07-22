@@ -14,7 +14,9 @@ import (
 
 	"github.com/sephriot/code-reviewer/internal/adapters/engine"
 	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
+	"github.com/sephriot/code-reviewer/internal/application/policyevaluate"
 	"github.com/sephriot/code-reviewer/internal/application/reviewexecute"
+	"github.com/sephriot/code-reviewer/internal/application/watchrule"
 	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 	"github.com/sephriot/code-reviewer/internal/worker"
 )
@@ -35,12 +37,21 @@ type RunEvents interface {
 	AppendReviewRunEvent(context.Context, sqlite.AppendReviewRunEventInput) (sqlite.AppendReviewRunEventResult, error)
 }
 
+// AutomaticPolicyStore supplies the bounded current-rule and immutable policy
+// evaluation capabilities used only after an automatic review succeeds.
+type AutomaticPolicyStore interface {
+	policyevaluate.Reader
+	policyevaluate.Recorder
+	LoadAutomaticWatchRuleTarget(context.Context, string, string) (sqlite.AutomaticWatchRuleTarget, error)
+}
+
 // Handler executes a single prepared review run. It has no GitHub publication
 // dependency and stores only fixed diagnostic codes for failures.
 type Handler struct {
-	Executor Executor
-	Events   RunEvents
-	Now      func() time.Time
+	Executor             Executor
+	Events               RunEvents
+	AutomaticPolicyStore AutomaticPolicyStore
+	Now                  func() time.Time
 }
 
 // Handle implements worker.Handler.
@@ -56,12 +67,58 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 		return h.recordFailure(ctx, runID, failureTerminal, "configuration_invalid")
 	}
 
-	_, err = h.Executor.Execute(ctx, runID)
+	execution, err := h.Executor.Execute(ctx, runID)
 	if err == nil {
+		if err := h.evaluateAutomaticPolicy(ctx, execution); err != nil {
+			// The assessment is already durably successful. Retrying this execution
+			// job would only try to execute an already-completed run, so fail this
+			// job permanently and leave publication unavailable.
+			return worker.Permanent(err)
+		}
 		return nil
 	}
 	result := classifyFailure(err)
 	return h.recordFailure(ctx, runID, result.kind, result.code)
+}
+
+func (h Handler) evaluateAutomaticPolicy(ctx context.Context, execution reviewexecute.Result) error {
+	if execution.Target.TriggerKind != "automatic" || h.AutomaticPolicyStore == nil {
+		return nil
+	}
+	connectionID := strings.TrimSpace(execution.Target.ConnectionID)
+	pullRequestID := strings.TrimSpace(execution.Target.PullRequestID)
+	if connectionID == "" || pullRequestID == "" || execution.Recorded.AssessmentID == "" {
+		return errors.New("successful automatic review lacks policy evaluation identity")
+	}
+	target, err := h.AutomaticPolicyStore.LoadAutomaticWatchRuleTarget(ctx, connectionID, pullRequestID)
+	if err != nil {
+		return fmt.Errorf("load automatic policy target: %w", err)
+	}
+	rules := make([]watchrule.Rule, len(target.Rules))
+	byVersion := make(map[string]sqlite.AutomaticWatchRule, len(target.Rules))
+	for index, rule := range target.Rules {
+		rules[index] = watchrule.Rule{ID: rule.VersionID, Enabled: true, Priority: rule.Priority, MatchJSON: rule.MatchJSON}
+		byVersion[rule.VersionID] = rule
+	}
+	selection, err := watchrule.Select(target.Facts, rules)
+	if err != nil {
+		return fmt.Errorf("select automatic policy rule: %w", err)
+	}
+	if !selection.Found {
+		return nil
+	}
+	rule := byVersion[selection.Rule.ID]
+	if rule.TriggerKind != "automatic" || rule.ProfileID != execution.Target.Profile.ProfileID ||
+		rule.ProfileVersionID != execution.Target.Profile.ProfileVersionID {
+		return nil
+	}
+	_, err = (policyevaluate.Service{Reader: h.AutomaticPolicyStore, Recorder: h.AutomaticPolicyStore, Now: h.Now}).Evaluate(ctx, policyevaluate.Request{
+		AssessmentID: execution.Recorded.AssessmentID, RuleKey: rule.RuleKey, RuleVersionID: rule.VersionID,
+	})
+	if err != nil {
+		return fmt.Errorf("evaluate automatic policy: %w", err)
+	}
+	return nil
 }
 
 type failureKind string

@@ -9,7 +9,9 @@ import (
 
 	"github.com/sephriot/code-reviewer/internal/adapters/engine"
 	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
+	"github.com/sephriot/code-reviewer/internal/application/assessment"
 	"github.com/sephriot/code-reviewer/internal/application/reviewexecute"
+	"github.com/sephriot/code-reviewer/internal/application/watchrule"
 	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 	"github.com/sephriot/code-reviewer/internal/worker"
 )
@@ -29,6 +31,78 @@ func TestHandlerExecutesPreparedRun(t *testing.T) {
 	}
 	if executed != "run-1" || len(events.inputs) != 0 {
 		t.Fatalf("executed=%q events=%+v", executed, events.inputs)
+	}
+}
+
+func TestHandlerEvaluatesCurrentMatchingAutomaticPolicy(t *testing.T) {
+	store := automaticPolicyStore{target: automaticWatchTarget("automatic", "profile-1", "profile-version-1")}
+	handler := Handler{
+		Executor: executorFunc(func(context.Context, string) (reviewexecute.Result, error) {
+			return automaticExecutionResult("automatic"), nil
+		}),
+		Events:               &eventRecorder{},
+		AutomaticPolicyStore: &store,
+		Now:                  func() time.Time { return time.Unix(7, 0).UTC() },
+	}
+	if err := handler.Handle(context.Background(), reviewJob(`{"run_id":"run-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.recorded) != 1 {
+		t.Fatalf("policy records=%+v", store.recorded)
+	}
+	recorded := store.recorded[0]
+	if recorded.AssessmentID != "assessment-1" || recorded.MatchedRuleID != "rule-1" ||
+		recorded.MatchedRuleVersionID != "rule-version-1" || recorded.CreatedAt != time.Unix(7, 0).UTC() {
+		t.Fatalf("recorded=%+v", recorded)
+	}
+}
+
+func TestHandlerSkipsAutomaticPolicyUnlessCurrentRuleAndProfileStillMatch(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		execution    string
+		trigger      string
+		profileID    string
+		profileVerID string
+	}{
+		{name: "manual execution", execution: "manual", trigger: "automatic", profileID: "profile-1", profileVerID: "profile-version-1"},
+		{name: "manual selected rule", execution: "automatic", trigger: "manual", profileID: "profile-1", profileVerID: "profile-version-1"},
+		{name: "profile changed", execution: "automatic", trigger: "automatic", profileID: "other", profileVerID: "profile-version-1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := automaticPolicyStore{target: automaticWatchTarget(test.trigger, test.profileID, test.profileVerID)}
+			handler := Handler{
+				Executor: executorFunc(func(context.Context, string) (reviewexecute.Result, error) {
+					return automaticExecutionResult(test.execution), nil
+				}),
+				Events:               &eventRecorder{},
+				AutomaticPolicyStore: &store,
+			}
+			if err := handler.Handle(context.Background(), reviewJob(`{"run_id":"run-1"}`)); err != nil {
+				t.Fatal(err)
+			}
+			if len(store.recorded) != 0 {
+				t.Fatalf("policy records=%+v", store.recorded)
+			}
+		})
+	}
+}
+
+func TestHandlerReturnsPolicySelectionErrorsAfterReviewSucceeds(t *testing.T) {
+	store := automaticPolicyStore{target: sqlite.AutomaticWatchRuleTarget{
+		ConnectionID: "connection-1", PullRequestID: "pr-1", Facts: watchrule.Facts{RepositoryID: 1},
+		Rules: []sqlite.AutomaticWatchRule{{VersionID: "rule-version-1", Priority: 0, MatchJSON: []byte(`{"unknown":true}`)}},
+	}}
+	handler := Handler{
+		Executor: executorFunc(func(context.Context, string) (reviewexecute.Result, error) {
+			return automaticExecutionResult("automatic"), nil
+		}),
+		Events:               &eventRecorder{},
+		AutomaticPolicyStore: &store,
+	}
+	err := handler.Handle(context.Background(), reviewJob(`{"run_id":"run-1"}`))
+	if err == nil || !worker.IsPermanent(err) || !strings.Contains(err.Error(), "select automatic policy rule") || len(store.recorded) != 0 {
+		t.Fatalf("err=%v records=%+v", err, store.recorded)
 	}
 }
 
@@ -129,3 +203,61 @@ func (r *eventRecorder) AppendReviewRunEvent(_ context.Context, input sqlite.App
 }
 
 func fmtError(err error) error { return errors.Join(errors.New("review execution failed"), err) }
+
+type automaticPolicyStore struct {
+	target   sqlite.AutomaticWatchRuleTarget
+	recorded []sqlite.RecordPolicyEvaluationInput
+}
+
+func (s *automaticPolicyStore) LoadAutomaticWatchRuleTarget(context.Context, string, string) (sqlite.AutomaticWatchRuleTarget, error) {
+	return s.target, nil
+}
+
+func (s *automaticPolicyStore) LoadPolicyEvaluationTarget(context.Context, string) (sqlite.PolicyEvaluationTarget, error) {
+	return automaticPolicyTarget(), nil
+}
+
+func (s *automaticPolicyStore) LoadActivePolicyRule(context.Context, string, string) (sqlite.ActivePolicyRule, error) {
+	return sqlite.ActivePolicyRule{
+		PolicySetID: "policy-set-1", RuleID: "rule-1", VersionID: "rule-version-1", RuleKey: "rule-key-1",
+		ProfileID: "profile-1", ProfileVersionID: "profile-version-1", PublicationJSON: []byte(`{}`),
+	}, nil
+}
+
+func (s *automaticPolicyStore) RecordPolicyEvaluation(_ context.Context, input sqlite.RecordPolicyEvaluationInput) (sqlite.RecordPolicyEvaluationResult, error) {
+	s.recorded = append(s.recorded, input)
+	return sqlite.RecordPolicyEvaluationResult{PolicyEvaluationID: "evaluation-1", ProposalID: "proposal-1", Created: true}, nil
+}
+
+func automaticWatchTarget(triggerKind, profileID, profileVersionID string) sqlite.AutomaticWatchRuleTarget {
+	return sqlite.AutomaticWatchRuleTarget{
+		ConnectionID: "connection-1", PullRequestID: "pr-1",
+		Facts: watchrule.Facts{RepositoryID: 1},
+		Rules: []sqlite.AutomaticWatchRule{{
+			PolicySetID: "policy-set-1", RuleID: "rule-1", VersionID: "rule-version-1", RuleKey: "rule-key-1",
+			Priority: 0, TriggerKind: triggerKind, ProfileID: profileID, ProfileVersionID: profileVersionID, MatchJSON: []byte(`{}`),
+		}},
+	}
+}
+
+func automaticExecutionResult(triggerKind string) reviewexecute.Result {
+	return reviewexecute.Result{
+		Target: sqlite.ReviewRunExecutionTarget{
+			TriggerKind: triggerKind, ConnectionID: "connection-1", PullRequestID: "pr-1",
+			Profile: sqlite.ReviewExecutionProfile{ProfileID: "profile-1", ProfileVersionID: "profile-version-1"},
+		},
+		Recorded: sqlite.RecordAssessmentResult{AssessmentID: "assessment-1"},
+	}
+}
+
+func automaticPolicyTarget() sqlite.PolicyEvaluationTarget {
+	coverage := assessment.Coverage{Status: assessment.CoverageComplete, ChangedFilesTotal: 1, ReviewedFiles: 1, Omitted: []assessment.Omission{}}
+	return sqlite.PolicyEvaluationTarget{
+		AssessmentID: "assessment-1", ProfileID: "profile-1", ProfileVersionID: "profile-version-1",
+		Assessment: assessment.Result{Assessment: assessment.Assessment{
+			Version: assessment.Version1, Verdict: assessment.VerdictPass, Summary: "no concerns", Confidence: assessment.ConfidenceHigh,
+			Limitations: []string{}, Coverage: coverage, Findings: []assessment.Finding{},
+		}, ValidationWarnings: []assessment.ValidationWarning{}},
+		Facts: sqlite.PolicyEvaluationFacts{EvidenceCurrent: true, Coverage: coverage},
+	}
+}
