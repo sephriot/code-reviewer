@@ -1,565 +1,272 @@
-# Code Reviewer
+# Code Reviewer — v2 control plane
 
-An automated GitHub PR code review system using Claude Code. This tool monitors for new pull requests where you're assigned as a reviewer and automatically performs code reviews using Claude AI.
+`reviewd` is a local Go control plane for evidence-bound GitHub pull-request review. It keeps an append-only SQLite record of observations, canonical diffs, review runs, assessments, policy evaluations, proposals, decisions, and simulated publication attempts.
 
-## Version 2 rebuild status
+This is a ground-up replacement. Legacy Python runtime, legacy dashboard, and `data/reviews.db` are not part of v2 operation.
 
-The replacement control plane is being built in Go from the ground-up design in [docs/GREENFIELD_PRODUCT_DESIGN.md](docs/GREENFIELD_PRODUCT_DESIGN.md). The Python service remains the legacy reference implementation and must not run against its database while a final backup is being made.
+## Safety model
 
-The current Go slice provides configuration validation, health checks, additive SQLite migrations, durable jobs/events/outbox primitives, a lossless legacy import boundary, canonical GitHub observations, a GET-only GitHub adapter, and one-shot shadow reconciliation. Imported revisions are permanently non-publishable. Import and shadow reconciliation create no jobs, events, outbox entries, or GitHub effects, and require `publication_mode=disabled`. Scheduling and GitHub publication are not implemented.
+- Use a separate v2 database: default `data/control-plane.db`.
+- `data/reviews.db` is legacy input only. Never point `reviewd` or v2 migrations at it.
+- GitHub traffic in this release is GET-only: discovery, PR detail, diff, file list, and tree reads.
+- Review engines receive a bounded JSON bundle through stdin, run in a fresh directory, and receive no GitHub credentials or inherited environment.
+- All review, policy, proposal, and publication records are immutable and tied to currently verified canonical evidence.
+- Real GitHub publication is unavailable. `disabled` is default; `simulated` records a local simulated attempt only. Neither mode can approve, comment on, or request changes on GitHub.
+
+## Prerequisites
+
+- Go version declared in [`go.mod`](go.mod)
+- A GitHub token only for optional GET-only reconciliation/hydration/review evidence reads
+- A trusted local review-engine executable only when enabling review execution
+
+Run tests:
 
 ```bash
-go run ./cmd/reviewctl db migrate --database data/control-plane.db --apply
+go test ./...
+```
+
+## Set up the control-plane database
+
+Create or advance only the v2 database. `--apply` is required for schema writes.
+
+```bash
+go run ./cmd/reviewctl db migrate \
+  --database data/control-plane.db \
+  --apply
+
+go run ./cmd/reviewctl db status \
+  --database data/control-plane.db
+```
+
+`reviewd` refuses to start with pending migrations. Let it apply known migrations during local bootstrap:
+
+```bash
+REVIEWD_DATABASE_PATH=data/control-plane.db \
+REVIEWD_MIGRATION_MODE=apply \
+go run ./cmd/reviewd
+```
+
+It listens only on loopback, default `127.0.0.1:8080`. Stop with `Ctrl-C`.
+
+## Import legacy history (optional)
+
+The v2 importer retains legacy rows as historical snapshots only. Imported revisions are permanently non-publishable and import creates no review jobs, events, outbox rows, or GitHub activity.
+
+First make a manifest-verified backup while the legacy app is stopped:
+
+```bash
 go run ./cmd/reviewctl db backup \
   --source data/reviews.db \
   --destination data/backups/reviews-v2-import.db
+
 go run ./cmd/reviewctl db verify-backup \
   --backup data/backups/reviews-v2-import.db
+```
 
-# Plan first (read-only), then explicitly apply the idempotent import.
+Plan is read-only. Apply only after checking its JSON result:
+
+```bash
 go run ./cmd/reviewctl legacy import \
   --source data/backups/reviews-v2-import.db \
   --source-id legacy-python-reviews-v1 \
   --database data/control-plane.db
+
 go run ./cmd/reviewctl legacy import \
   --source data/backups/reviews-v2-import.db \
   --source-id legacy-python-reviews-v1 \
   --database data/control-plane.db \
   --apply
+```
 
-# Observe assigned and authored open PRs without scheduling or publication.
-# The token value is read at runtime; only its environment reference is stored.
+The same source ID is idempotent only for unchanged source-row checksums. Any changed source row fails closed.
+
+## Observe GitHub safely
+
+Shadow reconciliation records factual PR metadata. It requires a current v2 database and explicit `--shadow`; it does not queue reviews or publish anything.
+
+```bash
 GITHUB_TOKEN=... go run ./cmd/reviewctl github reconcile \
   --database data/control-plane.db \
   --connection-id github-local \
-  --shadow
+  --shadow \
+  --token-env GITHUB_TOKEN
 ```
 
-Never use `data/reviews.db` as the v2 target. The import command rejects source/target aliases, verifies the backup before and after its read snapshot, and fails closed on changed source-row checksums or incomplete coverage.
+Tokens are read at execution time. Prefer `--token-env NAME`; `--token-file PATH` is also supported. Literal token flags are intentionally absent. Do not put token values in policy, profile, proposal, or command arguments.
 
-Shadow reconciliation requires an existing, fully migrated control-plane database and an explicit `--shadow` flag. It searches every contiguous GitHub result page, refreshes authoritative PR detail, and stores metadata observations without inventing diff revisions. Partial, capped, incomplete, stale, or rate-limited generations may add observed facts but never close relationships. A relationship is closed only after a complete scan plus a same-generation, non-regressive direct PR observation proving removal or terminal state. Use `--token-env NAME` (default `GITHUB_TOKEN`) or `--token-file PATH`; literal token flags are intentionally unsupported.
+Search results are candidates only. Reconciliation fetches authoritative PR detail and stores exact head/base facts. Incomplete, stale, capped, or rate-limited scans may add positive facts but cannot remove a relationship or advance a complete checkpoint.
 
-## Features
+### Attach canonical diff evidence
 
-- 🔍 **Smart PR Monitoring**: Detects new review requests and code changes
-- 🤖 **Automated Reviews**: Uses Claude Code for intelligent code analysis
-- 📝 **Customizable Prompts**: Tailor review criteria to your needs
-- ✅ **Multiple Actions**: Approve, request changes, or flag for human review
-- 💬 **Inline Comments**: Specific feedback on problematic code lines
-- 🔔 **Sound Notifications**: Audio alerts for PRs requiring human attention
-- 🌐 **Web Dashboard**: Optional web interface for managing pending approvals and review history
-- 🧠 **Smart Tracking**: Never reviews the same commit twice, automatically re-reviews when new commits are pushed
-- 🗄️ **Review History**: SQLite database tracks all review decisions with complete approval history
-- 🏃 **Dry Run Mode**: Test behavior without making actual PR actions
-- 🔄 **Continuous Monitoring**: Graceful shutdown with SIGTERM handling
-
-## Prerequisites
-
-- Python 3.8+
-- [Claude Code CLI](https://docs.anthropic.com/claude/docs/claude-code) installed and configured
-- GitHub Personal Access Token with appropriate permissions
-- Git repository access for the repositories you want to monitor
-
-## Installation
-
-1. Clone this repository:
-```bash
-git clone <repository-url>
-cd code-reviewer
-```
-
-2. Create and activate a virtual environment:
-```bash
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-# On Windows:
-# venv\Scripts\activate
-```
-
-3. Install the package in development mode:
-```bash
-pip install -e .
-```
-
-Or install dependencies directly:
-```bash
-pip install -r requirements.txt
-```
-
-## Configuration
-
-### Environment Variables
-
-Create a `.env` file in the project root:
-
-```env
-GITHUB_TOKEN=your_github_personal_access_token
-GITHUB_USERNAME=your_github_username
-PROMPT_FILE=prompts/review_prompt.txt
-REVIEW_TOOL=CLAUDE  # options: CLAUDE, CODEX, or AGENT
-# REVIEW_MODEL=CLAUDE  # Legacy alias; use REVIEW_TOOL for new configuration.
-# CLAUDE_MODEL=sonnet  # Claude CLI --model alias: opus, sonnet, or fable.
-# REVIEW_EFFORT=high  # Claude CLI only: low, medium, high, xhigh, max.
-#                     # Ignored (with a startup log line) for other models or invalid values.
-POLL_INTERVAL=60
-REVIEW_TIMEOUT=600
-# Set to 0 to disable the timeout
-LOG_LEVEL=INFO
-
-# Sound notifications
-SOUND_ENABLED=true
-# Master switch: false disables every sound event.
-# STARTUP_SOUNDS_ENABLED=false  # Disable startup demo sounds only.
-SPEECH_RATE=200  # macOS say speech rate in words per minute
-# SOUND_FILE=sounds/notification.wav
-
-# Timeout notifications
-TIMEOUT_SOUND_ENABLED=true
-# TIMEOUT_SOUND_FILE=sounds/review_timeout.wav
-
-# Own PRs monitoring
-OWN_PR_MODE=auto  # off (default), auto (review automatically), or manual
-#                 # (track in the web UI; review only when explicitly requested)
-# OWN_PR_ENABLED=true  # Legacy boolean: true=auto, false=off. Ignored when OWN_PR_MODE is set.
-# REPOSITORIES=owner/repo1,owner/repo2  # Same filter as regular PR monitoring
-
-# Own PR sound notifications
-OWN_PR_READY_SOUND_ENABLED=true
-# OWN_PR_READY_SOUND_FILE=sounds/pr_ready.wav
-OWN_PR_NEEDS_ATTENTION_SOUND_ENABLED=true
-# OWN_PR_NEEDS_ATTENTION_SOUND_FILE=sounds/pr_needs_attention.wav
-
-# Dry run mode
-DRY_RUN=false
-
-# Database path
-DATABASE_PATH=data/reviews.db
-
-# Web UI settings (optional)
-WEB_ENABLED=true
-WEB_HOST=127.0.0.1
-WEB_PORT=8000
-```
-
-### GitHub Token Setup
-
-#### Option 1: Use GitHub CLI (Recommended)
-
-If you have the GitHub CLI (`gh`) installed and authenticated:
+Hydration creates a canonical revision only after reading an exact text diff, verified file coverage, and base/head trees. Run it after an observation exists:
 
 ```bash
-# Get your token from GitHub CLI
-gh auth token
-
-# Automatically update your .env file
-sed -i.bak "s/GITHUB_TOKEN=.*/GITHUB_TOKEN=$(gh auth token)/" .env
+GITHUB_TOKEN=... go run ./cmd/reviewctl github hydrate \
+  --database data/control-plane.db \
+  --connection-id github-local \
+  --owner OWNER \
+  --repository REPOSITORY \
+  --number 42 \
+  --shadow \
+  --token-env GITHUB_TOKEN
 ```
 
-This uses the same authentication as your `gh` CLI, so no additional setup is needed.
-
-#### Option 2: Create Personal Access Token
-
-If you don't use GitHub CLI, create a Personal Access Token with these scopes:
-- `repo` (for private repositories)
-- `public_repo` (for public repositories) 
-- `pull_requests:read`
-- `pull_requests:write`
-
-### Configuration File (Optional)
-
-You can also use a YAML configuration file:
-
-```yaml
-# config/config.yaml
-github_token: "your_token_here"
-github_username: "your_username"
-prompt_file: "prompts/custom_prompt.txt"
-review_tool: "CLAUDE"  # options: CLAUDE, CODEX, or AGENT
-claude_model: "sonnet"  # optional Claude CLI --model alias: opus, sonnet, or fable
-poll_interval: 30
-review_timeout: 600
-log_level: "DEBUG"
-
-# Sound notifications
-sound_enabled: true
-speech_rate: 200  # macOS say speech rate in words per minute
-# sound_file: "sounds/notification.wav"
-
-# Review timeout notifications
-timeout_sound_enabled: true
-# timeout_sound_file: "sounds/review_timeout.wav"
-
-# Dry run and database
-dry_run: false
-database_path: "data/reviews.db"
-
-# Web UI settings (optional)
-web_enabled: true
-web_host: "127.0.0.1"
-web_port: 8000
-
-# Optional: Specific repositories to monitor (format: owner/repo)
-repositories:
-  - "owner/repo1"
-  - "owner/repo2"
-```
-
-## Usage
-
-### Basic Usage
+The daemon can continuously enqueue the same GET-only reconciliation and hydration work:
 
 ```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Using environment variables
-code-reviewer
-
-# Using command line options
-code-reviewer --github-token YOUR_TOKEN --github-username YOUR_USERNAME
-
-# Using configuration file
-code-reviewer --config config/config.yaml
-
-# Using custom prompt file
-code-reviewer --prompt prompts/my_custom_prompt.txt
-
-# Enable web UI dashboard
-code-reviewer --web-enabled
-
-# Run with web UI on custom host and port
-code-reviewer --web-enabled --web-host 0.0.0.0 --web-port 8080
+GITHUB_TOKEN=... \
+REVIEWD_DATABASE_PATH=data/control-plane.db \
+REVIEWD_MIGRATION_MODE=check \
+REVIEWD_SHADOW_RECONCILE_ENABLED=true \
+REVIEWD_GITHUB_CONNECTION_ID=github-local \
+REVIEWD_GITHUB_TOKEN_ENVIRONMENT=GITHUB_TOKEN \
+REVIEWD_SHADOW_RECONCILE_INTERVAL=5m \
+go run ./cmd/reviewd
 ```
 
-### Command Line Options
+`REVIEWD_GITHUB_TOKEN_ENVIRONMENT` contains a variable name, not a token. `REVIEWD_GITHUB_API_BASE_URL` defaults to `https://api.github.com`.
 
-- `--config, -c`: Path to configuration file
-- `--prompt, -p`: Path to prompt template file
-- `--github-token`: GitHub personal access token
-- `--github-username`: GitHub username to monitor
-- `--poll-interval`: Polling interval in seconds (default: 60)
-- `--review-timeout`: Maximum seconds allowed for an automated review before marking it for human attention (default: 600, use 0 to disable)
-- `--claude-model`: Claude CLI model alias for reviews (env: `CLAUDE_MODEL`): `opus`, `sonnet`, or `fable`
-- `--effort`: Reasoning effort for the review CLI (env: `REVIEW_EFFORT`). Claude CLI only — `low`, `medium`, `high`, `xhigh`, `max`. Other models or invalid values are logged at startup and ignored (tool default used).
-- `--tool`: Choose review CLI; `--model` remains a deprecated alias
-- `--sound-enabled/--no-sound`: Enable/disable sound notifications
-- `--startup-sounds/--no-startup-sounds`: Enable/disable startup demo sounds without affecting later notifications
-- `--speech-rate, -r`: Speech rate for macOS `say` TTS in words per minute (env: `SPEECH_RATE`, config: `speech_rate`; default: `200`)
-- `--sound-file`: Custom sound file for notifications
-- `--web-enabled/--no-web`: Enable/disable web UI dashboard
-- `--timeout-sound-enabled/--no-timeout-sound`: Enable/disable timeout notification sounds
-- `--timeout-sound-file`: Custom sound file for timeout notifications
-- `--web-host`: Web server host address (default: 127.0.0.1)
-- `--web-port`: Web server port (default: 8000)
-- `--dry-run`: Log actions instead of performing them
+## Review workflow
 
-## Customizing Review Prompts
+1. Reconcile and hydrate a PR until it has current canonical evidence.
+2. Create an immutable review profile version.
+3. Queue a manual review against that exact profile and evidence.
+4. Optionally run `reviewd` with a trusted local engine. The worker re-fetches and rebuilds evidence immediately before execution; drift fails the run rather than reviewing stale code.
+5. Validate and persist an assessment. Policy evaluation can render an immutable proposal. A human may append a new proposal revision and decide it.
 
-The default prompt is created at `prompts/review_prompt.txt`. You can customize it to match your review requirements:
+### Create a profile
+
+Profiles are immutable by `(key, version)`. Input files are bounded regular files; settings must be one JSON object.
+
+```bash
+go run ./cmd/reviewctl profile create \
+  --database data/control-plane.db \
+  --key baseline \
+  --version 1 \
+  --name "Baseline review" \
+  --description-file ./profile-description.txt \
+  --instructions-file ./profile-instructions.txt \
+  --settings-file ./profile-settings.json
+```
+
+Create a new version instead of editing an existing one.
+
+### Queue a review
+
+The PR coordinates must resolve to a current canonical revision. Allowed access modes are `diff_only`, `selected_files`, and `read_only_worktree`.
+
+```bash
+go run ./cmd/reviewctl review queue \
+  --database data/control-plane.db \
+  --connection-id github-local \
+  --owner OWNER \
+  --repository REPOSITORY \
+  --number 42 \
+  --profile-key baseline \
+  --profile-version 1 \
+  --access-mode diff_only
+```
+
+The command returns immutable intent/run identifiers and enqueues durable work. Without daemon review execution enabled, queued work remains durable but is not executed.
+
+### Enable local engine execution
+
+The engine command is a trusted JSON argv array, executed directly without a shell. It must read one review bundle JSON document from stdin and write exactly one assessment JSON document to stdout that satisfies the v1 contract. Its process environment is isolated: only `PATH`/locale values configured by adapter and per-run `HOME`/`TMPDIR` are available; GitHub credentials are not passed through.
+
+```bash
+GITHUB_TOKEN=... \
+REVIEWD_DATABASE_PATH=data/control-plane.db \
+REVIEWD_SHADOW_RECONCILE_ENABLED=true \
+REVIEWD_GITHUB_CONNECTION_ID=github-local \
+REVIEWD_GITHUB_TOKEN_ENVIRONMENT=GITHUB_TOKEN \
+REVIEWD_REVIEW_EXECUTION_ENABLED=true \
+REVIEWD_REVIEW_ENGINE_ARGV='["/absolute/path/to/review-engine","--json"]' \
+go run ./cmd/reviewd
+```
+
+Review execution requires enabled shadow reconciliation because it uses that configured GET-only connection to rebuild evidence.
+
+## Policy, proposal, and simulated publication
+
+`reviewctl policy evaluate` evaluates one completed assessment against an already persisted active immutable rule version:
+
+```bash
+go run ./cmd/reviewctl policy evaluate \
+  --database data/control-plane.db \
+  --assessment-id ASSESSMENT_ID \
+  --rule-key baseline-rule \
+  --rule-version-id RULE_VERSION_ID
+```
+
+Policy authoring is intentionally not exposed as a `reviewctl` command yet. The command does not match rules; it requires the caller to name the active rule/version. It produces only evidence-bound local records and, when appropriate, a policy proposal.
+
+Edit a policy-created proposal by appending a human revision, then record one human approval or rejection:
+
+```bash
+go run ./cmd/reviewctl proposal edit \
+  --database data/control-plane.db \
+  --proposal-id PROPOSAL_ID \
+  --body-file ./proposal.md \
+  --inline-comments-file ./inline-comments.json
+
+go run ./cmd/reviewctl proposal decide \
+  --database data/control-plane.db \
+  --proposal-revision-id PROPOSAL_REVISION_ID \
+  --decision approve \
+  --actor-id local-human \
+  --reason-file ./decision-reason.txt
+```
+
+Both commands reject likely secret-bearing arguments and file content. Decisions are immutable local evidence, not GitHub instructions.
+
+`REVIEWD_PUBLICATION_MODE` accepts only `disabled` (default) and `simulated`. In `simulated`, an already-authorized durable publication effect can produce one local `{"simulated":true}` attempt through the worker. There is no public effect-authorization CLI yet, and no code path in this release performs a GitHub write. Do not rely on this system to publish reviews.
+
+## Control API and dashboard
+
+Start `reviewd`, then open <http://127.0.0.1:8080/>. Dashboard is read-only and shows current attention plus immutable timeline records. It has no sign-in and no mutation controls; keep the listener on loopback.
+
+```bash
+curl http://127.0.0.1:8080/api/v1/health/live
+curl http://127.0.0.1:8080/api/v1/health/ready
+curl http://127.0.0.1:8080/api/v1/inbox?limit=50
+curl 'http://127.0.0.1:8080/api/v1/pull-requests/PULL_REQUEST_ID/timeline?connection_id=github-local'
+```
+
+`/api/inbox` and `/api/pull-requests/{id}/timeline` remain aliases. Both inbox and timeline support `limit` (1–100) and opaque `cursor`; timeline also requires `connection_id`.
+
+## Configuration reference
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `REVIEWD_DATABASE_PATH` | `data/control-plane.db` | Separate v2 SQLite database |
+| `REVIEWD_LISTEN_ADDRESS` | `127.0.0.1:8080` | Loopback-only API listener |
+| `REVIEWD_MIGRATION_MODE` | `check` | `check` or explicit `apply` |
+| `REVIEWD_PUBLICATION_MODE` | `disabled` | `disabled` or local-only `simulated` |
+| `REVIEWD_SHADOW_RECONCILE_ENABLED` | `false` | Enables GET-only scheduler |
+| `REVIEWD_GITHUB_CONNECTION_ID` | empty | Local connection identity; required when scheduler enabled |
+| `REVIEWD_GITHUB_API_BASE_URL` | `https://api.github.com` | GitHub REST API base URL |
+| `REVIEWD_GITHUB_TOKEN_ENVIRONMENT` | empty | Name of process variable holding token |
+| `REVIEWD_SHADOW_RECONCILE_INTERVAL` | `5m` | Positive scheduling interval |
+| `REVIEWD_REVIEW_EXECUTION_ENABLED` | `false` | Enables local CLI review worker |
+| `REVIEWD_REVIEW_ENGINE_ARGV` | empty | JSON argv array for trusted engine |
+
+Inspect effective non-secret configuration:
+
+```bash
+go run ./cmd/reviewctl config validate
+```
+
+## Command index
 
 ```text
-# Custom Code Review Prompt
-
-You are reviewing a pull request. Analyze the code and respond with JSON:
-
-{
-  "action": "approve_with_comment" | "approve_without_comment" | "request_changes" | "requires_human_review",
-  "comment": "Comment for approval",
-  "summary": "Summary for changes requested",
-  "reason": "Why human review is needed",
-  "comments": [
-    {
-      "file": "path/to/file.py",
-      "line": 42,
-      "message": "Specific feedback"
-    }
-  ]
-}
-
-PR Details:
-- Title: {title}
-- Author: {author}
-- Files: {changed_files}
-
-Focus on:
-1. Security vulnerabilities
-2. Performance issues  
-3. Code style consistency
-4. Test coverage
+reviewctl config validate
+reviewctl db status|migrate|backup|verify-backup
+reviewctl legacy inspect|import
+reviewctl github reconcile|hydrate
+reviewctl profile create
+reviewctl review queue
+reviewctl policy evaluate
+reviewctl proposal edit|decide
 ```
 
-## Advanced Usage
-
-### Dry Run Mode
-
-Test the system without making actual GitHub actions:
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Enable dry run mode
-code-reviewer --dry-run
-
-# Combine with other options
-code-reviewer --dry-run --no-sound --poll-interval 30
-```
-
-### Sound Notifications
-
-Configure audio alerts for PRs requiring human review:
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Enable sound (default)
-code-reviewer --sound-enabled
-
-# Disable sound notifications
-code-reviewer --no-sound
-
-# Use custom sound file
-code-reviewer --sound-file /path/to/notification.wav
-```
-
-### Text-to-Speech (TTS) Notifications
-
-Instead of audio files, you can use text-to-speech tools (like `say` on macOS or `espeak` on Linux) for vocal notifications. This is useful for hearing what type of notification is playing.
-
-**Format:** `tool:text to speak`
-
-```bash
-# macOS: Use 'say' command with custom message
-REVIEW_STARTED_SOUND_FILE="say:Review started for PR"
-APPROVAL_SOUND_FILE="say:PR approved!"
-SPEECH_RATE=175
-
-# Linux: Use 'espeak' command
-REVIEW_STARTED_SOUND_FILE="espeak:Review started"
-TIMEOUT_SOUND_FILE="espeak:Review timed out"
-
-# Use audio file (just specify the path)
-REVIEW_STARTED_SOUND_FILE="sounds/review_started.mp3"
-```
-
-**Template Placeholders:** You can include dynamic information in TTS messages using placeholders:
-
-| Placeholder | Description |
-|-------------|-------------|
-| `{repo}` | Repository name (owner/repo) |
-| `{pr_number}` | PR number |
-| `{author}` | PR author username |
-| `{title}` | PR title |
-
-```bash
-# Examples with templates
-SOUND_FILE="say:New review request for PR {title} in {repo} authored by {author}"
-APPROVAL_SOUND_FILE="say:PR {title} in {repo} has been approved"
-OWN_PR_READY_SOUND_FILE="say:Your own PR {title} in {repo} is ready!"
-OWN_PR_NEEDS_ATTENTION_SOUND_FILE="say:Your own PR {title} in {repo} needs attention!"
-```
-
-**Available sound file options:**
-
-| Environment Variable | Description |
-|---------------------|-------------|
-| `SOUND_FILE` | General notification sound |
-| `APPROVAL_SOUND_FILE` | PR approval sound |
-| `TIMEOUT_SOUND_FILE` | Review timeout sound |
-| `MERGED_OR_CLOSED_SOUND_FILE` | PR merged/closed sound |
-| `REVIEW_STARTED_SOUND_FILE` | Review started sound (new!) |
-| `OWN_PR_READY_SOUND_FILE` | Own PR ready for merge sound |
-| `OWN_PR_NEEDS_ATTENTION_SOUND_FILE` | Own PR needs attention sound |
-
-### Review Actions
-
-The system can take four different actions based on Claude's analysis:
-
-- **`approve_with_comment`**: Code is good with minor suggestions
-- **`approve_without_comment`**: Code is perfect and ready to merge  
-- **`request_changes`**: Code has issues that must be fixed
-- **`requires_human_review`**: Complex PR needing domain expertise (triggers sound notification)
-
-### Smart Review Tracking
-
-The system automatically tracks review history using commit SHA comparison:
-
-- ✅ **Never reviews the same commit twice**
-- 🔄 **Automatically re-reviews when new commits are pushed**
-- 🚫 **Permanently skips PRs marked for human review**
-- 📊 **Maintains complete audit trail in SQLite database with commit SHA tracking**
-- 🌐 **Web dashboard shows complete approval history with before/after comparisons**
-- 🔄 **Conditional pending approval overwrites**: Preserves approved/rejected reviews while updating pending ones for new commits
-
-### Web Dashboard Features
-
-When web UI is enabled (`--web-enabled` or `WEB_ENABLED=true`):
-
-- 🔔 **Review Requests**: See every PR found by the latest periodic review-request scan, even when repository or author filters exclude it from automatic review; on-demand reviews are acknowledged from SQLite immediately, then revalidate only the selected PR in the background
-- 🚨 **Operational Inbox**: Live counts for pending decisions, human reviews, and review requests link directly to their working queues
-- 📋 **Pending Approvals**: Review and approve/reject `approve_with_comments` actions before posting to GitHub
-- 👤 **Human Reviews**: View all PRs flagged for human attention with reasons and timestamps
-- 🧹 **Human Review Cleanup**: Closed or merged PRs leave the active human-review queue automatically while their review history remains available
-- 📚 **Unified History**: Completed, approved, rejected, merged/closed, and expired review records in one tab, including:
-  - Original vs final comments comparison
-  - Original vs final inline comments
-  - Original vs final review summaries
-  - Direct links to GitHub PRs
-- 🔄 **Real-time Updates**: JavaScript interface with automatic refresh
-- 📱 **Mobile Responsive**: Works on both desktop and mobile devices
-- ♿ **Keyboard Accessible**: Skip link, arrow-key tab navigation, live status announcements, and focus-managed approval/rejection dialog
-- 🧹 **Outdated Queue Cleanup**: Pending approvals auto-expire when a PR merges or closes, so the dashboard only shows actionable items
-
-Access the dashboard at `http://localhost:8000` (or your configured host/port).
-
-### Repository Filtering
-
-Limit monitoring to specific repositories:
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Via environment variable (comma-separated)
-REPOSITORIES=owner/repo1,owner/repo2 code-reviewer
-
-# Via config file
-repositories:
-  - "owner/repo1"
-  - "owner/repo2"
-```
-
-**Important**: Repository names must be in `owner/repo` format. Invalid formats will be ignored with a warning. These filters control automatic reviews; the web dashboard's Review Requests tab still lists every PR currently requesting your review.
-
-Examples:
-- ✅ `microsoft/vscode`
-- ✅ `facebook/react`  
-- ❌ `vscode` (missing owner)
-- ❌ `my-repo` (missing owner)
-
-## Running as a Service
-
-### Using systemd (Linux)
-
-Create a service file at `/etc/systemd/system/code-reviewer.service`:
-
-```ini
-[Unit]
-Description=Automated Code Reviewer
-After=network.target
-
-[Service]
-Type=simple
-User=your-user
-WorkingDirectory=/path/to/code-reviewer
-Environment=PATH=/path/to/code-reviewer/venv/bin
-ExecStart=/path/to/code-reviewer/venv/bin/code-reviewer
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
-```bash
-sudo systemctl enable code-reviewer
-sudo systemctl start code-reviewer
-```
-
-
-## Development
-
-### Running Tests
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Install development dependencies
-pip install -e .[dev]
-
-# Run tests
-pytest tests/
-
-# Run with coverage
-pytest --cov=src/code_reviewer tests/
-```
-
-### Code Quality
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Format code
-black src/ tests/
-
-# Lint code
-flake8 src/ tests/
-
-# Type checking
-mypy src/
-```
-
-## Architecture
-
-The application consists of several key components:
-
-- **main.py**: Entry point and application orchestration
-- **github_monitor.py**: Monitors GitHub for new PRs
-- **github_client.py**: GitHub API interactions
-- **claude_integration.py**: Claude Code integration
-- **config.py**: Configuration management
-
-## Troubleshooting
-
-### Common Issues
-
-1. **"GitHub API rate limit exceeded"**
-   - Increase `poll_interval` to reduce API calls
-   - Ensure your token has sufficient rate limits
-
-2. **"Claude Code command not found"**
-   - Install Claude Code CLI
-   - Ensure it's in your PATH
-
-3. **"Permission denied for repository"**
-   - Check your GitHub token permissions
-   - Verify you have access to the repositories
-
-### Logging
-
-Enable debug logging to troubleshoot issues:
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-LOG_LEVEL=DEBUG code-reviewer
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Run the test suite
-6. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+See [GREENFIELD_PRODUCT_DESIGN.md](docs/GREENFIELD_PRODUCT_DESIGN.md) for architecture and product rationale. [WEB_UI_README.md](WEB_UI_README.md) documents current control dashboard behavior.

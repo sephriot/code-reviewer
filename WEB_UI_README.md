@@ -1,264 +1,94 @@
-# Web UI for Code Review Management
+# Reviewd control dashboard
 
-> This document describes the legacy Python dashboard. The Go version 2 control plane is under construction from `docs/GREENFIELD_PRODUCT_DESIGN.md`; its unified inbox UI is not implemented yet. Imported legacy history is preserved in the separate v2 database but is not served by this dashboard.
+The v2 dashboard is a local, read-only view of durable control-plane state. It replaces none of GitHub’s review UI and does not expose legacy Python pending approvals.
 
-The code reviewer now includes an optional web UI that provides a dashboard for managing PR reviews, especially for handling `approve_with_comments` actions that require human confirmation.
+## Run it
 
-## Features
-
-### **Complete Review Request Queue**
-- Lists every PR from the latest successful periodic GitHub review-request scan
-- Reads the queue from SQLite so opening or refreshing the tab does not call GitHub
-- Ignores repository and author filters when listing attention items; those filters continue to control automatic reviews
-- Starts a review on demand from cached data with immediate UI feedback, optional context, and Claude model override; only the selected PR is revalidated with GitHub in the background
-- Claude model selector appears only when `REVIEW_TOOL=CLAUDE`; other review tools receive context without a Claude-only picker
-- Shows whether the current commit is unreviewed, already reviewed, or awaiting a dashboard decision
-
-### 🎯 **Human Review Dashboard**
-- View all PRs marked as `requires_human_review` with reasons
-- See timestamp and PR details for each human review requirement
-- Direct links to GitHub PRs for easy navigation
-- Automatically archives items once GitHub reports their PR as closed or merged
-
-### ✅ **Pending Approvals Workflow** 
-- **New Behavior**: `approve_with_comments` actions now create pending approvals instead of immediately posting to GitHub
-- **Smart Overwrite Logic**: Pending approvals are updated when new commits arrive, but approved/rejected reviews are preserved
-- Review proposed comments and inline feedback before posting
-- Edit comments before approval or reject with optional reason
-- Complete control over what gets posted to your GitHub PRs
-
-### 🧹 **Automatic Queue Cleanup**
-- Pending approvals are automatically marked as **Outdated** when the underlying PR is merged or closed
-- Keeps the dashboard focused on actionable work without manual cleanup
-
-### 📊 **Centralized Management**
-- Single dashboard to manage all review activities
-- Operational inbox shows live counts for pending decisions, human reviews, and review requests before tab navigation
-- Real-time updates of pending approvals and human reviews
-- Unified history for completed, approved, rejected, merged/closed, and expired items
-- Clean, responsive interface that works on desktop and mobile
-- Keyboard-accessible tab navigation (arrow keys, Home, End), skip link, and focus-managed confirmation dialog
-
-### 📚 **Approval History Tracking**
-- **Approved History**: View all approved reviews with original vs final comparison
-- **Rejected History**: See what would have been posted if you had approved
-- **Side-by-side Comparison**: Original Claude suggestions vs your final edits
-- **Complete Context**: PR details, inline comments, and direct GitHub links
-
-## Configuration
-
-### Environment Variables
-```bash
-# Enable web UI
-WEB_ENABLED=true
-
-# Web server settings (optional)
-WEB_HOST=127.0.0.1    # default: 127.0.0.1
-WEB_PORT=8000         # default: 8000
-```
-
-### Command Line Options
-```bash
-# Enable web UI
-./venv/bin/python -m src.code_reviewer.main --web-enabled
-
-# Customize host and port
-./venv/bin/python -m src.code_reviewer.main --web-enabled --web-host 0.0.0.0 --web-port 8080
-```
-
-### Configuration File (YAML)
-```yaml
-web_enabled: true
-web_host: "127.0.0.1"
-web_port: 8000
-```
-
-## Usage Workflow
-
-### 1. Start the Application
-```bash
-# Start with web UI enabled
-./venv/bin/python -m src.code_reviewer.main --web-enabled
-
-# The application will show:
-# - GitHub PR monitoring status
-# - Web UI URL (e.g., http://127.0.0.1:8000)
-```
-
-### 2. Monitor and Review
-When the system processes PRs:
-
-- **`approve_with_comments`** → Creates pending approval (requires your review)
-- **`approve_without_comment`** → Automatically approves (no web UI interaction)
-- **`request_changes`** → Creates a pending decision before posting changes
-- **`requires_human_review`** → Logged for your attention (visible in web UI)
-
-### 3. Web Dashboard Actions
-
-The operational inbox at the top links directly to pending decisions, human reviews, and review requests. Counts refresh from existing dashboard APIs; it does not change automatic-review filters or queue behavior.
-
-#### **Review Requests Tab**
-- Lists the latest successfully scanned GitHub review requests, independently of automatic-review filters
-- Keeps the previous snapshot when a GitHub scan fails and replaces it after the next successful scan
-- Starts a review or re-runs an existing review with optional context, immediately acknowledges it from SQLite, and revalidates only that PR with GitHub in the background
-- Links directly to the pull request on GitHub
-
-#### **Pending Approvals Tab**
-- **Review & Approve**: Edit proposed comment and post review to GitHub
-- **Reject**: Decline the approval with optional reason
-- **View PR**: Direct link to GitHub PR
-
-#### **Human Reviews Tab**
-- View all PRs that need human attention
-- See reason why human review was required
-- Direct links to GitHub PRs
-
-#### **History Tab**
-- Switch between completed, approved, rejected, merged/closed, and expired records
-- Complete history of all approved reviews
-- Side-by-side comparison of original vs final content:
-  - Review comments (what Claude suggested vs what you posted)
-  - Review summaries (for change requests)
-  - Inline comments (with file paths and line numbers)
-- Status badges showing approval status
-- Direct links to GitHub PRs
-
-The Rejected history view:
-- Complete history of all rejected reviews
-- Shows what would have been posted if approved
-- Side-by-side comparison of original vs edited content (before rejection)
-- Rejection reasons when provided
-- Direct links to GitHub PRs
-
-The Merged / Closed history view:
-- Lists pending approvals that were cleared automatically because the PR closed or merged
-- Preserves original comments and inline feedback for reference
-- Direct links to the original PR for context
-
-## API Endpoints
-
-The web server exposes REST API endpoints:
+Migrate a separate v2 database first, then start `reviewd`:
 
 ```bash
-# Get pending approvals
-GET /api/pending-approvals
+go run ./cmd/reviewctl db migrate \
+  --database data/control-plane.db \
+  --apply
 
-# Get PRs requiring human review  
-GET /api/human-reviews
-
-# Approve a pending review
-POST /api/approvals/{approval_id}/approve
-Body: {"comment": "optional modified comment"}
-
-# Reject a pending review
-POST /api/approvals/{approval_id}/reject  
-Body: {"reason": "optional rejection reason"}
-
-# Get review statistics
-GET /api/stats
-
-# Get approved approval history
-GET /api/approved-approvals
-
-# Get rejected approval history  
-GET /api/rejected-approvals
-
-# Get merged-or-closed approval history  
-GET /api/merged-or-closed-approvals  
-Returns pending approvals that were automatically cleared after the PR was merged or closed on GitHub.
-
-# Get expired approval history  
-GET /api/expired-approvals  
-Returns pending approvals that were superseded when a new commit triggered a fresh automated review.
+REVIEWD_DATABASE_PATH=data/control-plane.db \
+REVIEWD_MIGRATION_MODE=check \
+go run ./cmd/reviewd
 ```
 
-**Note**: Pending approvals are now commit-aware—when a new commit arrives, older pending entries are marked as `expired` instead of being overwritten, preserving the context of earlier recommendations alongside merged/closed records and human decisions.
+Open <http://127.0.0.1:8080/>. Default listener is loopback-only. `REVIEWD_LISTEN_ADDRESS` rejects non-loopback addresses, and dashboard has no authentication; do not expose it through an unauthenticated proxy.
 
-## Database Schema
+## What dashboard shows
 
-The web UI adds a new `pending_approvals` table:
+- Current attention items from canonical review/policy/proposal/publication state.
+- One immutable timeline for selected pull request and local connection.
+- Read-model availability status.
+- No mutation controls, GitHub token display, review content editor, approval button, or publication action.
 
-```sql
-CREATE TABLE pending_approvals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    repository TEXT NOT NULL,
-    pr_number INTEGER NOT NULL,
-    pr_title TEXT,
-    pr_author TEXT,
-    pr_url TEXT NOT NULL,
-    review_action TEXT NOT NULL,
-    review_comment TEXT,
-    review_summary TEXT, 
-    review_reason TEXT,
-    inline_comments TEXT, -- JSON string
-    inline_comments_count INTEGER DEFAULT 0,
-    head_sha TEXT NOT NULL, -- Commit SHA for tracking
-    base_sha TEXT NOT NULL, -- Base commit SHA
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected', 'merged_or_closed', 'expired'
-    UNIQUE(repository, pr_number, head_sha) -- Updated unique constraint
-);
-```
+Attention is evidence-bound. When GitHub facts or canonical diff change, stale entries cannot be treated as current work.
 
-## Demo and Testing
+## API
 
-### Create Sample Data
+All responses have `Cache-Control: no-store`.
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /api/v1/health/live` | Process liveness |
+| `GET /api/v1/health/ready` | DB and migration readiness |
+| `GET /api/v1/inbox` | Current attention page |
+| `GET /api/v1/pull-requests/{id}/timeline?connection_id=ID` | Immutable pull-request timeline |
+
+`/api/inbox` and `/api/pull-requests/{id}/timeline` are unversioned aliases.
+
+`inbox` accepts optional `limit` (1–100) and opaque `cursor`. Timeline accepts same pagination parameters and requires exactly one `connection_id`. Invalid parameters return a JSON `invalid_request` response. Read failures return a JSON `read_failed` response.
+
+Examples:
+
 ```bash
-# Generate sample PRs for testing
-./venv/bin/python demo_workflow.py
+curl http://127.0.0.1:8080/api/v1/health/live
+curl http://127.0.0.1:8080/api/v1/health/ready
+curl 'http://127.0.0.1:8080/api/v1/inbox?limit=50'
+curl 'http://127.0.0.1:8080/api/v1/pull-requests/PULL_REQUEST_ID/timeline?connection_id=github-local&limit=50'
 ```
 
-This creates:
-- 2 PRs requiring human review
-- 2 PRs with pending approvals
-- Sample data in `demo_reviews.db`
+## Populate dashboard safely
 
-### Test the Web UI
-1. Run the demo data script
-2. Start the application with web UI enabled
-3. Visit the dashboard to see sample data
-4. Test approve/reject functionality
+Dashboard only reads local database. To observe GitHub, run explicit GET-only shadow reconciliation against an already migrated v2 database:
 
-## Security Considerations
+```bash
+GITHUB_TOKEN=... go run ./cmd/reviewctl github reconcile \
+  --database data/control-plane.db \
+  --connection-id github-local \
+  --shadow \
+  --token-env GITHUB_TOKEN
+```
 
-- Web UI runs on localhost by default (`127.0.0.1`)
-- No authentication built-in (intended for single-user local use)
-- For production use, consider:
-  - Running behind reverse proxy with authentication
-  - Using HTTPS
-  - Restricting network access
+Hydrate a selected PR to attach canonical diff evidence:
 
-## Architecture Notes
+```bash
+GITHUB_TOKEN=... go run ./cmd/reviewctl github hydrate \
+  --database data/control-plane.db \
+  --connection-id github-local \
+  --owner OWNER \
+  --repository REPOSITORY \
+  --number 42 \
+  --shadow \
+  --token-env GITHUB_TOKEN
+```
 
-- **FastAPI** framework for REST API and web serving
-- **Jinja2** templates for HTML rendering  
-- **SQLite** database with new pending approvals table
-- **Async/await** throughout for performance
-- **Uvicorn** ASGI server integrated with existing asyncio event loop
+Token values are never sent to dashboard or stored in job payloads. `--token-env` takes only variable name; `--token-file` is optional alternative.
 
-## Troubleshooting
+For background GET-only observation, configure `reviewd` with `REVIEWD_SHADOW_RECONCILE_ENABLED=true`, connection ID, token environment name, and a positive interval. See [README.md](README.md#observe-github-safely).
 
-### Web UI won't start
-- Check if port is already in use: `lsof -i :8000`
-- Try different port: `--web-port 8080`
-- Check virtual environment has all dependencies
+## Publication status
 
-### Database errors
-- Ensure write permissions in database directory
-- Database schema updates automatically on first run
-- Delete database file to recreate: `rm data/reviews.db`
+Dashboard is not a GitHub publication interface. Current release supports only:
 
-### GitHub integration issues
-- Verify GitHub token has proper permissions
-- Check network connectivity to GitHub API
-- Review logs for specific error messages
+- `REVIEWD_PUBLICATION_MODE=disabled`: no effect dispatch.
+- `REVIEWD_PUBLICATION_MODE=simulated`: bounded worker records local simulated publication attempts for already-authorized effects.
 
-## Future Enhancements
+Real GitHub approval, comment, and change-request publication is unavailable. A human proposal decision is local immutable evidence, not an external action.
 
-Potential improvements:
-- User authentication/authorization
-- Slack/Teams integration for notifications
-- Batch approve/reject operations
-- Custom filtering and search
-- Review templates and saved comments
-- Analytics and reporting dashboard
+## Legacy dashboard
+
+Old FastAPI/Jinja UI, pending approvals, sound settings, and `data/reviews.db` belong to legacy Python application. They are not compatible with v2 dashboard. Preserve legacy database as read-only import input; never delete or recreate it to troubleshoot v2.
