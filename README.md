@@ -249,7 +249,7 @@ Both commands reject likely secret-bearing arguments and file content. Decisions
 
 ## Control API and dashboard
 
-Start `reviewd`, then open <http://127.0.0.1:8080/>. Dashboard shows current attention, immutable timeline records, local lifecycle analytics, and guarded local proposal edits/decisions. On load it obtains a short-lived, HttpOnly, SameSite-Strict session cookie from the loopback server; browser code never sees the credential. It cannot publish to GitHub; keep the listener on loopback.
+Start `reviewd`, then open <http://127.0.0.1:8080/>. Dashboard shows current attention, immutable timeline records, local lifecycle analytics, guarded local proposal edits/decisions, and explicit local publication simulation. On load it obtains a short-lived, HttpOnly, SameSite-Strict session cookie from the loopback server; browser code never sees the credential. It cannot publish to GitHub; keep the listener on loopback.
 
 ```bash
 curl http://127.0.0.1:8080/api/v1/health/live

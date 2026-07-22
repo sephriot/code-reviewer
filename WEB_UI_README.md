@@ -43,6 +43,7 @@ All responses have `Cache-Control: no-store`.
 | `GET /api/v1/session` | Loopback-only opaque browser-session bootstrap |
 | `POST /api/v1/mutate/proposals/{id}/revisions` | Append a local human proposal revision |
 | `POST /api/v1/mutate/proposals/{id}/decisions` | Record one local decision for an owned revision |
+| `POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate` | Record and, in simulated mode, queue one local-only publication attempt |
 
 `/api/inbox` and `/api/pull-requests/{id}/timeline` are unversioned aliases.
 
@@ -93,7 +94,7 @@ Dashboard is not a GitHub publication interface. Current release supports only:
 - `REVIEWD_PUBLICATION_MODE=disabled`: no effect dispatch.
 - `REVIEWD_PUBLICATION_MODE=simulated`: bounded worker records local simulated publication attempts for already-authorized effects.
 
-Real GitHub approval, comment, and change-request publication is unavailable. A human proposal decision is local immutable evidence, not an external action.
+The dashboard can explicitly request a local simulation for an approved, current proposal revision. Real GitHub approval, comment, and change-request publication is unavailable. A human proposal decision is local immutable evidence, not an external action.
 
 ## Legacy dashboard
 
