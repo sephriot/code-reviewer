@@ -60,6 +60,23 @@ func TestHandlerEvaluatesCurrentMatchingAutomaticPolicy(t *testing.T) {
 	}
 }
 
+func TestHandlerPublishesOnlyAutomaticApprovalOutcome(t *testing.T) {
+	store := automaticPolicyStore{target: automaticWatchTarget("automatic", "profile-1", "profile-version-1"), publicationJSON: []byte(`{"allow_automatic_approval":true,"matrix":{"pass":"auto_publish_approval"}}`)}
+	publisher := &automaticPublisher{}
+	handler := Handler{
+		Executor: executorFunc(func(context.Context, string) (reviewexecute.Result, error) {
+			return automaticExecutionResult("automatic"), nil
+		}),
+		Events: &eventRecorder{}, AutomaticPolicyStore: &store, AutomaticPublication: publisher,
+	}
+	if err := handler.Handle(context.Background(), reviewJob(`{"run_id":"run-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if publisher.revisionID != "proposal-revision-1" {
+		t.Fatalf("publisher=%+v", publisher)
+	}
+}
+
 func TestHandlerSkipsAutomaticPolicyUnlessCurrentRuleAndProfileStillMatch(t *testing.T) {
 	for _, test := range []struct {
 		name         string
@@ -208,9 +225,10 @@ func (r *eventRecorder) AppendReviewRunEvent(_ context.Context, input sqlite.App
 func fmtError(err error) error { return errors.Join(errors.New("review execution failed"), err) }
 
 type automaticPolicyStore struct {
-	target   sqlite.AutomaticWatchRuleTarget
-	recorded []sqlite.RecordPolicyEvaluationInput
-	events   []sqlite.DomainEventInput
+	target          sqlite.AutomaticWatchRuleTarget
+	recorded        []sqlite.RecordPolicyEvaluationInput
+	events          []sqlite.DomainEventInput
+	publicationJSON []byte
 }
 
 func (s *automaticPolicyStore) LoadAutomaticWatchRuleTarget(context.Context, string, string) (sqlite.AutomaticWatchRuleTarget, error) {
@@ -222,15 +240,29 @@ func (s *automaticPolicyStore) LoadPolicyEvaluationTarget(context.Context, strin
 }
 
 func (s *automaticPolicyStore) LoadActivePolicyRule(context.Context, string, string) (sqlite.ActivePolicyRule, error) {
+	publicationJSON := s.publicationJSON
+	if len(publicationJSON) == 0 {
+		publicationJSON = []byte(`{}`)
+	}
 	return sqlite.ActivePolicyRule{
 		PolicySetID: "policy-set-1", RuleID: "rule-1", VersionID: "rule-version-1", RuleKey: "rule-key-1",
-		ProfileID: "profile-1", ProfileVersionID: "profile-version-1", PublicationJSON: []byte(`{}`),
+		ProfileID: "profile-1", ProfileVersionID: "profile-version-1", PublicationJSON: publicationJSON,
 	}, nil
 }
 
 func (s *automaticPolicyStore) RecordPolicyEvaluation(_ context.Context, input sqlite.RecordPolicyEvaluationInput) (sqlite.RecordPolicyEvaluationResult, error) {
 	s.recorded = append(s.recorded, input)
-	return sqlite.RecordPolicyEvaluationResult{PolicyEvaluationID: "evaluation-1", ProposalID: "proposal-1", Created: true}, nil
+	return sqlite.RecordPolicyEvaluationResult{PolicyEvaluationID: "evaluation-1", ProposalID: "proposal-1", ProposalRevisionID: "proposal-revision-1", Created: true}, nil
+}
+
+type automaticPublisher struct {
+	revisionID string
+	err        error
+}
+
+func (p *automaticPublisher) PublishAutomaticApproval(_ context.Context, revisionID string) error {
+	p.revisionID = revisionID
+	return p.err
 }
 
 func (s *automaticPolicyStore) AppendEventWithOutbox(_ context.Context, event sqlite.DomainEventInput, _ []sqlite.OutboxInput) (sqlite.AppendedEvent, error) {

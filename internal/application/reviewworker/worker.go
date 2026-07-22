@@ -14,6 +14,7 @@ import (
 
 	"github.com/sephriot/code-reviewer/internal/adapters/engine"
 	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
+	"github.com/sephriot/code-reviewer/internal/application/policy"
 	"github.com/sephriot/code-reviewer/internal/application/policyevaluate"
 	"github.com/sephriot/code-reviewer/internal/application/reviewexecute"
 	"github.com/sephriot/code-reviewer/internal/application/watchrule"
@@ -46,12 +47,19 @@ type AutomaticPolicyStore interface {
 	LoadAutomaticWatchRuleTarget(context.Context, string, string) (sqlite.AutomaticWatchRuleTarget, error)
 }
 
+// AutomaticPublication creates and schedules only a policy-authorized
+// automatic approval. Its implementation must still honor global mode.
+type AutomaticPublication interface {
+	PublishAutomaticApproval(context.Context, string) error
+}
+
 // Handler executes a single prepared review run. It has no GitHub publication
 // dependency and stores only fixed diagnostic codes for failures.
 type Handler struct {
 	Executor             Executor
 	Events               RunEvents
 	AutomaticPolicyStore AutomaticPolicyStore
+	AutomaticPublication AutomaticPublication
 	Now                  func() time.Time
 }
 
@@ -113,11 +121,16 @@ func (h Handler) evaluateAutomaticPolicy(ctx context.Context, execution reviewex
 		rule.ProfileVersionID != execution.Target.Profile.ProfileVersionID {
 		return nil
 	}
-	_, err = (policyevaluate.Service{Reader: h.AutomaticPolicyStore, Recorder: h.AutomaticPolicyStore, Events: h.AutomaticPolicyStore, Now: h.Now}).Evaluate(ctx, policyevaluate.Request{
+	evaluation, err := (policyevaluate.Service{Reader: h.AutomaticPolicyStore, Recorder: h.AutomaticPolicyStore, Events: h.AutomaticPolicyStore, Now: h.Now}).Evaluate(ctx, policyevaluate.Request{
 		AssessmentID: execution.Recorded.AssessmentID, RuleKey: rule.RuleKey, RuleVersionID: rule.VersionID,
 	})
 	if err != nil {
 		return fmt.Errorf("evaluate automatic policy: %w", err)
+	}
+	if evaluation.Outcome.Disposition == policy.DispositionAutoPublishApproval && evaluation.Evaluation.ProposalRevisionID != "" && h.AutomaticPublication != nil {
+		if err := h.AutomaticPublication.PublishAutomaticApproval(ctx, evaluation.Evaluation.ProposalRevisionID); err != nil {
+			return fmt.Errorf("publish automatic approval: %w", err)
+		}
 	}
 	return nil
 }

@@ -171,6 +171,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		if err != nil {
 			return closeOnError(err)
 		}
+		reviewHandler.AutomaticPublication = automaticPublication{store: store}
 		handlers[reviewworker.ExecuteJobKind] = reviewHandler
 	}
 	if cfg.PublicationMode == config.PublicationSimulated {
@@ -215,6 +216,35 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		service.scheduleInterval = cfg.ShadowReconciliation.Interval
 	}
 	return service, nil
+}
+
+type automaticPublication struct{ store *storagesqlite.Store }
+
+func (p automaticPublication) PublishAutomaticApproval(ctx context.Context, proposalRevisionID string) error {
+	if p.store == nil {
+		return errors.New("automatic publication store is unavailable")
+	}
+	effect, err := p.store.CreatePublicationEffect(ctx, storagesqlite.CreatePublicationEffectInput{ProposalRevisionID: proposalRevisionID})
+	if err != nil {
+		return err
+	}
+	if !effect.Created {
+		return nil
+	}
+	switch effect.PublicationMode {
+	case storagesqlite.PublicationModeDisabled:
+		return nil
+	case storagesqlite.PublicationModeSimulated:
+		_, err = (publishworker.Scheduler{Store: p.store}).Schedule(ctx, effect.EffectID)
+	case storagesqlite.PublicationModeEnabled:
+		_, err = (publishworker.EnabledScheduler{Store: p.store}).Schedule(ctx, effect.EffectID)
+	default:
+		return errors.New("automatic publication mode is unsupported")
+	}
+	if err != nil {
+		return fmt.Errorf("schedule automatic publication: %w", err)
+	}
+	return nil
 }
 
 func githubWebhookOptions(cfg config.GitHubWebhookConfig, reconciliation config.ShadowReconciliationConfig, store *storagesqlite.Store, lookup func(string) (string, bool)) (api.GitHubWebhookOptions, error) {
