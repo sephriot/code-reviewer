@@ -1,4 +1,4 @@
-next_id: 34
+next_id: 35
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -454,3 +454,15 @@ entries:
   title: Reconciliation removals require same-generation direct proof
   type: decision
   confidence: high
+- id: K-000034
+  title: Uncertain GitHub publication closes human-only
+  type: decision
+  confidence: high
+  tags:
+  - publication
+  - github
+  - safety
+  - sqlite
+  sources:
+  - internal/persistence/sqlite/publication_dispatch.go
+  - migrations/sqlite/0013_publication_uncertainty_resolutions.sql

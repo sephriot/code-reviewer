@@ -1,0 +1,14 @@
+id: K-000034
+title: Uncertain GitHub publication closes human-only
+type: decision
+confidence: high
+summary: 'Enabled delivery uncertainty is append-only: operators record externally_completed or abandoned; no resolution may queue or repost GitHub work.'
+tags:
+- publication
+- github
+- safety
+- sqlite
+sources:
+- internal/persistence/sqlite/publication_dispatch.go
+- migrations/sqlite/0013_publication_uncertainty_resolutions.sql
+updated_at: 2026-07-22
