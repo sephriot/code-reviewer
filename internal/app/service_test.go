@@ -115,7 +115,7 @@ func TestNewWiresReadOnlyControlEndpoints(t *testing.T) {
 	}
 	defer func() { _ = service.Close() }()
 	for _, path := range []string{
-		"/api/v1/inbox", "/api/inbox", "/api/v1/pull-requests/pr-1/timeline?connection_id=connection-1",
+		"/", "/api/v1/inbox", "/api/inbox", "/api/v1/pull-requests/pr-1/timeline?connection_id=connection-1",
 	} {
 		response := httptest.NewRecorder()
 		service.server.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
