@@ -22,13 +22,33 @@ var (
 	// ErrPublicationAttemptConflict means stored attempt facts differ from the
 	// single bounded simulated attempt protocol.
 	ErrPublicationAttemptConflict = errors.New("publication attempt facts conflict")
+	// ErrPublicationEffectNotDispatchable means an enabled effect cannot safely
+	// start another outbound request.
+	ErrPublicationEffectNotDispatchable = errors.New("publication effect is not dispatchable")
 )
 
 // PublicationEffectTarget contains immutable effect facts only after its
 // authorization chain and selected canonical revision both verify.
 type PublicationEffectTarget struct {
-	ID              string
-	PublicationMode PublicationMode
+	ID                string
+	PublicationMode   PublicationMode
+	Owner             string
+	Repository        string
+	PullRequestNumber int
+	EffectType        string
+	PayloadJSON       []byte
+	PayloadSHA256     string
+}
+
+// ClaimEnabledPublicationAttemptResult identifies the one durable pre-send
+// claim allowed for an enabled effect. Existing claims are returned unchanged
+// so callers can convert an interrupted request into uncertainty instead of
+// sending the same effect again.
+type ClaimEnabledPublicationAttemptResult struct {
+	Effect    PublicationEffectTarget
+	ClaimID   string
+	ClaimedAt time.Time
+	Created   bool
 }
 
 // RecordSimulatedPublicationAttemptResult identifies a created or existing
@@ -55,7 +75,65 @@ func (s *Store) LoadCurrentPublicationEffect(ctx context.Context, effectID strin
 	if err != nil {
 		return PublicationEffectTarget{}, err
 	}
-	return PublicationEffectTarget{ID: effect.ID, PublicationMode: effect.PublicationMode}, nil
+	target, err := loadPublicationEffectTarget(ctx, conn, effect)
+	if err != nil {
+		return PublicationEffectTarget{}, err
+	}
+	return target, nil
+}
+
+// ClaimEnabledPublicationAttempt writes the immutable pre-send claim for a
+// current enabled effect. It performs no network activity and intentionally
+// permits only one claim: callers must treat a recovered claim as uncertain.
+func (s *Store) ClaimEnabledPublicationAttempt(ctx context.Context, effectID string, claimedAt time.Time) (ClaimEnabledPublicationAttemptResult, error) {
+	effectID, err := normalizePublicationEffectID(effectID)
+	if err != nil {
+		return ClaimEnabledPublicationAttemptResult{}, err
+	}
+	claimedAt, err = normalizePublicationAttemptTime(claimedAt)
+	if err != nil {
+		return ClaimEnabledPublicationAttemptResult{}, err
+	}
+
+	var result ClaimEnabledPublicationAttemptResult
+	err = withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
+		effect, err := loadCurrentPublicationDispatchEffect(ctx, conn, effectID)
+		if err != nil {
+			return err
+		}
+		if effect.PublicationMode != PublicationModeEnabled {
+			return fmt.Errorf("%w: effect=%q mode=%q", ErrPublicationEffectNotDispatchable, effect.ID, effect.PublicationMode)
+		}
+		target, err := loadPublicationEffectTarget(ctx, conn, effect)
+		if err != nil {
+			return err
+		}
+		if attemptCount, err := countPublicationAttempts(ctx, conn, effect.ID); err != nil {
+			return err
+		} else if attemptCount != 0 {
+			return fmt.Errorf("%w: effect=%q already has attempt", ErrPublicationEffectNotDispatchable, effect.ID)
+		}
+		claim, found, err := loadPublicationDispatchClaim(ctx, conn, effect.ID)
+		if err != nil {
+			return err
+		}
+		if found {
+			result = ClaimEnabledPublicationAttemptResult{Effect: target, ClaimID: claim.ID, ClaimedAt: time.UnixMicro(claim.ClaimedAtUS).UTC()}
+			return nil
+		}
+		claimID := stableID("publication-dispatch-claim", effect.ID, "1")
+		if _, err := conn.ExecContext(ctx, `
+INSERT INTO publication_dispatch_claims(id, effect_id, attempt_number, request_sha256, claimed_at_us)
+VALUES (?, ?, 1, ?, ?)`, claimID, effect.ID, effect.PayloadSHA256, claimedAt.UnixMicro()); err != nil {
+			return fmt.Errorf("insert publication dispatch claim: %w", err)
+		}
+		result = ClaimEnabledPublicationAttemptResult{Effect: target, ClaimID: claimID, ClaimedAt: claimedAt, Created: true}
+		return nil
+	})
+	if err != nil {
+		return ClaimEnabledPublicationAttemptResult{}, fmt.Errorf("claim enabled publication attempt: %w", err)
+	}
+	return result, nil
 }
 
 // RecordSimulatedPublicationAttempt writes at most one exact simulated
@@ -133,6 +211,31 @@ type publicationDispatchEffect struct {
 	PayloadJSON        []byte
 	PayloadSHA256      string
 	PublicationMode    PublicationMode
+}
+
+func loadPublicationEffectTarget(ctx context.Context, conn *sql.Conn, effect publicationDispatchEffect) (PublicationEffectTarget, error) {
+	var target PublicationEffectTarget
+	var payload []byte
+	err := conn.QueryRowContext(ctx, `
+SELECT repository.owner_login, repository.name, pull_request.number
+FROM repositories AS repository
+JOIN pull_requests AS pull_request
+  ON pull_request.id = ? AND pull_request.repository_id = repository.id
+WHERE repository.id = ?`, effect.PullRequestID, effect.RepositoryID).Scan(
+		&target.Owner, &target.Repository, &target.PullRequestNumber,
+	)
+	if err != nil {
+		return PublicationEffectTarget{}, fmt.Errorf("load publication target coordinates: %w", err)
+	}
+	if strings.TrimSpace(target.Owner) == "" || strings.TrimSpace(target.Repository) == "" || target.PullRequestNumber < 1 {
+		return PublicationEffectTarget{}, errors.New("stored publication target coordinates are invalid")
+	}
+	payload = append(payload, effect.PayloadJSON...)
+	return PublicationEffectTarget{
+		ID: effect.ID, PublicationMode: effect.PublicationMode,
+		Owner: target.Owner, Repository: target.Repository, PullRequestNumber: target.PullRequestNumber,
+		EffectType: effect.EffectType, PayloadJSON: payload, PayloadSHA256: effect.PayloadSHA256,
+	}, nil
 }
 
 func loadCurrentPublicationDispatchEffect(ctx context.Context, conn *sql.Conn, effectID string) (publicationDispatchEffect, error) {
@@ -240,6 +343,32 @@ FROM publication_attempts WHERE effect_id = ? ORDER BY attempt_number, id`, effe
 		return storedSimulatedPublicationAttempt{}, false, fmt.Errorf("iterate publication attempts: %w", err)
 	}
 	return attempt, true, nil
+}
+
+type publicationDispatchClaim struct {
+	ID          string
+	ClaimedAtUS int64
+}
+
+func loadPublicationDispatchClaim(ctx context.Context, conn *sql.Conn, effectID string) (publicationDispatchClaim, bool, error) {
+	var claim publicationDispatchClaim
+	err := conn.QueryRowContext(ctx, `
+SELECT id, claimed_at_us FROM publication_dispatch_claims WHERE effect_id = ?`, effectID).Scan(&claim.ID, &claim.ClaimedAtUS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return publicationDispatchClaim{}, false, nil
+	}
+	if err != nil {
+		return publicationDispatchClaim{}, false, fmt.Errorf("load publication dispatch claim: %w", err)
+	}
+	return claim, true, nil
+}
+
+func countPublicationAttempts(ctx context.Context, conn *sql.Conn, effectID string) (int, error) {
+	var count int
+	if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM publication_attempts WHERE effect_id = ?`, effectID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count publication attempts: %w", err)
+	}
+	return count, nil
 }
 
 func (attempt storedSimulatedPublicationAttempt) matches(effect publicationDispatchEffect) bool {

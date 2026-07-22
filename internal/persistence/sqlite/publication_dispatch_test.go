@@ -66,6 +66,56 @@ func TestPublicationDispatchDisabledEffectNeverCreatesAttempt(t *testing.T) {
 	assertTableCount(t, ctx, store.db, "publication_attempts", 0)
 }
 
+func TestClaimEnabledPublicationAttemptPersistsOnePreSendClaim(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedApprovedPublicationProposal(t, ctx)
+	setPublicationMode(t, ctx, store, PublicationModeEnabled)
+	effect := createPublicationEffect(t, ctx, store, fixture.proposalRevisionID, "publish:claim:enabled")
+
+	first, err := store.ClaimEnabledPublicationAttempt(ctx, effect.EffectID, time.Unix(91, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Created || first.ClaimID == "" || first.Effect.ID != effect.EffectID ||
+		first.Effect.PublicationMode != PublicationModeEnabled || first.Effect.Owner == "" ||
+		first.Effect.Repository == "" || first.Effect.PullRequestNumber < 1 ||
+		first.Effect.EffectType != "review_changes" || len(first.Effect.PayloadJSON) == 0 ||
+		first.Effect.PayloadSHA256 == "" || !first.ClaimedAt.Equal(time.Unix(91, 0).UTC()) {
+		t.Fatalf("first claim = %+v", first)
+	}
+	second, err := store.ClaimEnabledPublicationAttempt(ctx, effect.EffectID, time.Unix(92, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Created || second.ClaimID != first.ClaimID || !second.ClaimedAt.Equal(first.ClaimedAt) {
+		t.Fatalf("second claim = %+v", second)
+	}
+	assertTableCount(t, ctx, store.db, "publication_dispatch_claims", 1)
+	assertTableCount(t, ctx, store.db, "publication_attempts", 0)
+}
+
+func TestClaimEnabledPublicationAttemptRejectsNonEnabledAndStaleEffects(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedApprovedPublicationProposal(t, ctx)
+	effect := createPublicationEffect(t, ctx, store, fixture.proposalRevisionID, "publish:claim:disabled")
+	if _, err := store.ClaimEnabledPublicationAttempt(ctx, effect.EffectID, time.Unix(93, 0).UTC()); !errors.Is(err, ErrPublicationEffectNotDispatchable) {
+		t.Fatalf("disabled claim = %v", err)
+	}
+	assertTableCount(t, ctx, store.db, "publication_dispatch_claims", 0)
+
+	store, fixture = seedApprovedPublicationProposal(t, ctx)
+	setPublicationMode(t, ctx, store, PublicationModeEnabled)
+	effect = createPublicationEffect(t, ctx, store, fixture.proposalRevisionID, "publish:claim:stale")
+	if _, err := store.db.ExecContext(ctx, `UPDATE pull_request_projection_state
+SET current_revision_id = NULL WHERE pull_request_id = 'pr-1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimEnabledPublicationAttempt(ctx, effect.EffectID, time.Unix(94, 0).UTC()); !errors.Is(err, ErrPublicationEffectNotCurrent) {
+		t.Fatalf("stale claim = %v", err)
+	}
+	assertTableCount(t, ctx, store.db, "publication_dispatch_claims", 0)
+}
+
 func TestPublicationDispatchRejectsAbsentStaleAndConflictingEffects(t *testing.T) {
 	ctx := context.Background()
 	store, fixture := seedApprovedPublicationProposal(t, ctx)

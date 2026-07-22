@@ -23,8 +23,8 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(applied) != 10 || applied[0] != 1 || applied[1] != 2 || applied[2] != 3 || applied[3] != 4 || applied[4] != 5 || applied[5] != 6 || applied[6] != 7 || applied[7] != 8 || applied[8] != 9 || applied[9] != 10 {
-		t.Fatalf("first migration result = %v, want [1 2 3 4 5 6 7 8 9 10]", applied)
+	if len(applied) != 11 || applied[0] != 1 || applied[1] != 2 || applied[2] != 3 || applied[3] != 4 || applied[4] != 5 || applied[5] != 6 || applied[6] != 7 || applied[7] != 8 || applied[8] != 9 || applied[9] != 10 || applied[10] != 11 {
+		t.Fatalf("first migration result = %v, want [1 2 3 4 5 6 7 8 9 10 11]", applied)
 	}
 
 	applied, err = store.ApplyMigrations(ctx)
@@ -39,7 +39,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Current != 10 || status.Latest != 10 || status.Pending != 0 {
+	if status.Current != 11 || status.Latest != 11 || status.Pending != 0 {
 		t.Fatalf("schema status = %+v", status)
 	}
 }
@@ -86,6 +86,43 @@ func TestMigrationChecksumMismatchFailsClosed(t *testing.T) {
 	}
 	if _, err := store.ApplyMigrations(ctx); err == nil {
 		t.Fatal("changed migration checksum was accepted")
+	}
+}
+
+func TestPublicationDispatchClaimMigrationPreservesExistingData(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "control-plane.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensureMigrationTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range migrations[:10] {
+		if err := store.applyMigration(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO jobs(id, kind, payload_json, state, available_at_us, created_at_us, updated_at_us)
+VALUES ('job-before-publication-claim', 'test', '{}', 'queued', 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.applyMigration(ctx, migrations[10]); err != nil {
+		t.Fatal(err)
+	}
+	assertTableCount(t, ctx, store.db, "publication_dispatch_claims", 0)
+	var jobID string
+	if err := store.db.QueryRowContext(ctx, `SELECT id FROM jobs`).Scan(&jobID); err != nil {
+		t.Fatal(err)
+	}
+	if jobID != "job-before-publication-claim" {
+		t.Fatalf("job ID = %q", jobID)
 	}
 }
 
