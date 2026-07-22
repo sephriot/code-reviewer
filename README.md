@@ -136,7 +136,7 @@ REVIEWD_GITHUB_WEBHOOK_SECRET_ENVIRONMENT=GITHUB_WEBHOOK_SECRET \
 reviewd
 ```
 
-`REVIEWD_GITHUB_WEBHOOK_SECRET_ENVIRONMENT` contains only the environment-variable name. The secret is neither saved nor returned. This foundation verifies `X-Hub-Signature-256`, accepts bounded `ping`, `pull_request`, and `pull_request_review` payloads, and retains only delivery metadata plus payload hash for idempotency. It starts no job and makes no GitHub call; periodic GET-only reconciliation remains correctness source.
+`REVIEWD_GITHUB_WEBHOOK_SECRET_ENVIRONMENT` contains only the environment-variable name. The secret is neither saved nor returned. This foundation verifies `X-Hub-Signature-256`, accepts bounded `ping`, `pull_request`, and `pull_request_review` payloads, and retains only delivery metadata plus payload hash for idempotency. When GET-only shadow reconciliation is enabled, verified delivery schedules its existing durable reconciliation job; ingress never calls or publishes to GitHub. Periodic reconciliation remains correctness source.
 
 ## Review workflow
 

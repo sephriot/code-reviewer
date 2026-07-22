@@ -103,7 +103,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	if err != nil {
 		return closeOnError(fmt.Errorf("create control mutation auth: %w", err))
 	}
-	webhookOptions, err := githubWebhookOptions(cfg.GitHubWebhook, store, os.LookupEnv)
+	webhookOptions, err := githubWebhookOptions(cfg.GitHubWebhook, cfg.ShadowReconciliation, store, os.LookupEnv)
 	if err != nil {
 		return closeOnError(fmt.Errorf("configure github webhook ingress: %w", err))
 	}
@@ -199,7 +199,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	return service, nil
 }
 
-func githubWebhookOptions(cfg config.GitHubWebhookConfig, store *storagesqlite.Store, lookup func(string) (string, bool)) (api.GitHubWebhookOptions, error) {
+func githubWebhookOptions(cfg config.GitHubWebhookConfig, reconciliation config.ShadowReconciliationConfig, store *storagesqlite.Store, lookup func(string) (string, bool)) (api.GitHubWebhookOptions, error) {
 	if !cfg.Enabled {
 		return api.GitHubWebhookOptions{}, nil
 	}
@@ -210,7 +210,25 @@ func githubWebhookOptions(cfg config.GitHubWebhookConfig, store *storagesqlite.S
 	if !found || len(secret) < 16 || len(secret) > 4096 {
 		return api.GitHubWebhookOptions{}, errors.New("github webhook signing secret is unavailable")
 	}
-	return api.GitHubWebhookOptions{Enabled: true, Secret: []byte(secret), Store: store}, nil
+	options := api.GitHubWebhookOptions{Enabled: true, Secret: []byte(secret), Store: store}
+	if reconciliation.Enabled {
+		scheduler := reconcileworker.Scheduler{Store: store}
+		reconciliationConfig := reconcile.Config{ConnectionID: reconciliation.ConnectionID, APIBaseURL: reconciliation.APIBaseURL, CredentialRefKind: "environment", CredentialLocator: reconciliation.TokenEnvironment}
+		options.Scheduler = webhookReconciliationScheduler{scheduler: scheduler, config: reconciliationConfig}
+	}
+	return options, nil
+}
+
+type webhookReconciliationScheduler struct {
+	scheduler reconcileworker.Scheduler
+	config    reconcile.Config
+}
+
+func (s webhookReconciliationScheduler) Schedule(ctx context.Context) error {
+	if _, err := s.scheduler.Schedule(ctx, s.config); err != nil {
+		return fmt.Errorf("schedule webhook reconciliation: %w", err)
+	}
+	return nil
 }
 
 func publicationMutationOptions(cfg config.Config, store *storagesqlite.Store) api.PublicationMutationOptions {

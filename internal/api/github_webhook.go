@@ -38,27 +38,33 @@ const (
 	GitHubWebhookEventPullRequestReview GitHubWebhookEvent = "pull_request_review"
 )
 
-// GitHubWebhookStore retains verified metadata and exposes no scheduling,
-// event, outbox, or provider capability.
+// GitHubWebhookStore retains verified metadata and exposes no provider capability.
 type GitHubWebhookStore interface {
 	RecordGitHubWebhookDelivery(context.Context, sqlite.RecordGitHubWebhookDeliveryInput) (sqlite.RecordGitHubWebhookDeliveryResult, error)
+}
+
+// GitHubWebhookScheduler accepts one durable local follow-up after verified
+// metadata is retained. It must not call GitHub synchronously.
+type GitHubWebhookScheduler interface {
+	Schedule(context.Context) error
 }
 
 // GitHubWebhookOptions identifies the in-memory signing secret and metadata
 // store. Secret is loaded from a named local reference by app wiring; it is
 // never put in configuration, persistence, logs, or responses.
 type GitHubWebhookOptions struct {
-	Enabled bool
-	Secret  []byte
-	Store   GitHubWebhookStore
-	Now     func() time.Time
+	Enabled   bool
+	Secret    []byte
+	Store     GitHubWebhookStore
+	Scheduler GitHubWebhookScheduler
+	Now       func() time.Time
 }
 
 // NewGitHubWebhookHandler serves one loopback-only, signed ingress endpoint.
 // It retains verified delivery metadata only; it never calls GitHub or starts
 // review, reconciliation, publication, event, outbox, or job work.
 func NewGitHubWebhookHandler(options GitHubWebhookOptions) http.Handler {
-	return githubWebhookHandler{enabled: options.Enabled, secret: append([]byte(nil), options.Secret...), store: options.Store, now: options.Now}
+	return githubWebhookHandler{enabled: options.Enabled, secret: append([]byte(nil), options.Secret...), store: options.Store, scheduler: options.Scheduler, now: options.Now}
 }
 
 func registerGitHubWebhookRoute(mux *http.ServeMux, options GitHubWebhookOptions) {
@@ -69,10 +75,11 @@ func registerGitHubWebhookRoute(mux *http.ServeMux, options GitHubWebhookOptions
 }
 
 type githubWebhookHandler struct {
-	enabled bool
-	secret  []byte
-	store   GitHubWebhookStore
-	now     func() time.Time
+	enabled   bool
+	secret    []byte
+	store     GitHubWebhookStore
+	scheduler GitHubWebhookScheduler
+	now       func() time.Time
 }
 
 func (h githubWebhookHandler) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -137,6 +144,12 @@ func (h githubWebhookHandler) ServeHTTP(response http.ResponseWriter, request *h
 		}
 		writeControlError(response, http.StatusServiceUnavailable, "webhook_unavailable", "github webhook ingress is unavailable", true)
 		return
+	}
+	if h.scheduler != nil {
+		if err := h.scheduler.Schedule(request.Context()); err != nil {
+			writeControlError(response, http.StatusServiceUnavailable, "webhook_unavailable", "github webhook ingress is unavailable", true)
+			return
+		}
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.WriteHeader(http.StatusAccepted)

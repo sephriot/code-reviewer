@@ -150,7 +150,7 @@ func TestNewWiresLoopbackProtectionForFutureMutations(t *testing.T) {
 func TestGitHubWebhookOptionsUsesOnlyNamedSecretReference(t *testing.T) {
 	t.Parallel()
 	store := &sqlite.Store{}
-	options, err := githubWebhookOptions(config.GitHubWebhookConfig{Enabled: true, SecretEnvironment: "TEST_WEBHOOK_SECRET"}, store, func(name string) (string, bool) {
+	options, err := githubWebhookOptions(config.GitHubWebhookConfig{Enabled: true, SecretEnvironment: "TEST_WEBHOOK_SECRET"}, config.ShadowReconciliationConfig{}, store, func(name string) (string, bool) {
 		if name != "TEST_WEBHOOK_SECRET" {
 			t.Fatalf("lookup name=%q", name)
 		}
@@ -159,7 +159,16 @@ func TestGitHubWebhookOptionsUsesOnlyNamedSecretReference(t *testing.T) {
 	if err != nil || !options.Enabled || options.Store != store || string(options.Secret) != "webhook-signing-secret" {
 		t.Fatalf("options=%+v err=%v", options, err)
 	}
-	_, err = githubWebhookOptions(config.GitHubWebhookConfig{Enabled: true, SecretEnvironment: "TEST_WEBHOOK_SECRET"}, store, func(string) (string, bool) { return "", false })
+	if options.Scheduler != nil {
+		t.Fatalf("webhook without shadow reconciliation scheduled work: %+v", options)
+	}
+	withReconciliation, err := githubWebhookOptions(config.GitHubWebhookConfig{Enabled: true, SecretEnvironment: "TEST_WEBHOOK_SECRET"}, config.ShadowReconciliationConfig{
+		Enabled: true, ConnectionID: "github:local", APIBaseURL: "https://api.github.com", TokenEnvironment: "TEST_GITHUB_TOKEN",
+	}, store, func(string) (string, bool) { return "webhook-signing-secret", true })
+	if err != nil || withReconciliation.Scheduler == nil {
+		t.Fatalf("webhook reconciliation options=%+v err=%v", withReconciliation, err)
+	}
+	_, err = githubWebhookOptions(config.GitHubWebhookConfig{Enabled: true, SecretEnvironment: "TEST_WEBHOOK_SECRET"}, config.ShadowReconciliationConfig{}, store, func(string) (string, bool) { return "", false })
 	if err == nil || strings.Contains(err.Error(), "TEST_WEBHOOK_SECRET") {
 		t.Fatalf("missing secret error=%v", err)
 	}

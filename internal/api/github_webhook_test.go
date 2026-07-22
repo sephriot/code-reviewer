@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,13 @@ type fakeGitHubWebhookStore struct {
 	err    error
 	result sqlite.RecordGitHubWebhookDeliveryResult
 }
+
+type fakeGitHubWebhookScheduler struct {
+	calls int
+	err   error
+}
+
+func (s *fakeGitHubWebhookScheduler) Schedule(context.Context) error { s.calls++; return s.err }
 
 func (f *fakeGitHubWebhookStore) RecordGitHubWebhookDelivery(_ context.Context, input sqlite.RecordGitHubWebhookDeliveryInput) (sqlite.RecordGitHubWebhookDeliveryResult, error) {
 	f.input = input
@@ -52,6 +60,31 @@ func TestGitHubWebhookAcceptsVerifiedBoundedPullRequestMetadata(t *testing.T) {
 	wantHash := sha256.Sum256([]byte(body))
 	if store.input.PayloadSHA256 != hex.EncodeToString(wantHash[:]) {
 		t.Fatalf("payload hash=%q", store.input.PayloadSHA256)
+	}
+}
+
+func TestGitHubWebhookSchedulesOnlyAfterVerifiedMetadata(t *testing.T) {
+	secret := []byte("webhook-test-secret")
+	store := &fakeGitHubWebhookStore{result: sqlite.RecordGitHubWebhookDeliveryResult{Created: true}}
+	scheduler := &fakeGitHubWebhookScheduler{}
+	handler := NewGitHubWebhookHandler(GitHubWebhookOptions{Enabled: true, Secret: secret, Store: store, Scheduler: scheduler})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, signedGitHubWebhookRequest(t, secret, `{"action":"opened","number":42,"repository":{"id":12345}}`))
+	if response.Code != http.StatusAccepted || scheduler.calls != 1 {
+		t.Fatalf("status=%d scheduler=%+v", response.Code, scheduler)
+	}
+
+	bad := httptest.NewRecorder()
+	handler.ServeHTTP(bad, signedGitHubWebhookRequest(t, []byte("other-signing-secret"), `{"action":"opened","number":42,"repository":{"id":12345}}`))
+	if bad.Code != http.StatusUnauthorized || scheduler.calls != 1 {
+		t.Fatalf("bad status=%d scheduler=%+v", bad.Code, scheduler)
+	}
+
+	scheduler.err = errors.New("job database offline")
+	retry := httptest.NewRecorder()
+	handler.ServeHTTP(retry, signedGitHubWebhookRequest(t, secret, `{"action":"opened","number":42,"repository":{"id":12345}}`))
+	if retry.Code != http.StatusServiceUnavailable || scheduler.calls != 2 {
+		t.Fatalf("retry status=%d scheduler=%+v", retry.Code, scheduler)
 	}
 }
 
