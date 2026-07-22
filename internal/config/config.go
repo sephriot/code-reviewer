@@ -64,6 +64,8 @@ const (
 	// PublicationSimulated records local simulated publication attempts without
 	// granting a GitHub write capability.
 	PublicationSimulated PublicationMode = "simulated"
+	// PublicationEnabled permits the separately wired, guarded GitHub publisher.
+	PublicationEnabled PublicationMode = "enabled"
 )
 
 // Config contains startup-only control-plane settings.
@@ -265,10 +267,10 @@ func validateMigrationMode(mode MigrationMode) error {
 
 func validatePublicationMode(mode PublicationMode) error {
 	switch mode {
-	case PublicationDisabled, PublicationSimulated:
+	case PublicationDisabled, PublicationSimulated, PublicationEnabled:
 		return nil
 	default:
-		return fmt.Errorf("publication mode must be %q or %q in this release", PublicationDisabled, PublicationSimulated)
+		return fmt.Errorf("publication mode must be %q, %q, or %q", PublicationDisabled, PublicationSimulated, PublicationEnabled)
 	}
 }
 

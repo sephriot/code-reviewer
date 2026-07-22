@@ -193,9 +193,9 @@ func TestValidate(t *testing.T) {
 			wantError: "migration mode",
 		},
 		{
-			name: "publication cannot be enabled yet",
+			name: "unknown publication mode",
 			mutate: func(cfg *Config) {
-				cfg.PublicationMode = "enabled"
+				cfg.PublicationMode = "unknown"
 			},
 			wantError: "publication mode",
 		},
