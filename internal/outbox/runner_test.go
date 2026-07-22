@@ -39,6 +39,28 @@ func TestRunnerCompletesAndClassifiesFailure(t *testing.T) {
 	}
 }
 
+func TestRunnerHeartbeatRenewsUntilCanceled(t *testing.T) {
+	calls := make(chan struct{}, 3)
+	store := &fakeStore{heartbeat: func() { calls <- struct{}{} }}
+	runner := &Runner{Store: store, Owner: "runner", HeartbeatInterval: time.Millisecond, Now: func() time.Time { return time.Unix(1, 0).UTC() }}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go runner.heartbeat(ctx, cancel, sqlite.OutboxDelivery{ID: "outbox-1", LeaseGeneration: 1}, time.Second, make(chan error, 1), done)
+	for range 2 {
+		select {
+		case <-calls:
+		case <-time.After(time.Second):
+			t.Fatal("outbox heartbeat did not renew")
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("outbox heartbeat did not stop")
+	}
+}
+
 type handlerFunc func(context.Context, sqlite.OutboxDelivery) error
 
 func (f handlerFunc) Handle(ctx context.Context, delivery sqlite.OutboxDelivery) error {
@@ -49,12 +71,16 @@ type fakeStore struct {
 	delivery          sqlite.OutboxDelivery
 	completed, failed int
 	retry             bool
+	heartbeat         func()
 }
 
 func (s *fakeStore) ClaimOutboxDelivery(context.Context, string, time.Time, time.Duration) (sqlite.OutboxDelivery, error) {
 	return s.delivery, nil
 }
 func (s *fakeStore) HeartbeatOutboxDelivery(context.Context, string, string, int64, time.Time, time.Duration) error {
+	if s.heartbeat != nil {
+		s.heartbeat()
+	}
 	return nil
 }
 func (s *fakeStore) CompleteOutboxDelivery(context.Context, string, string, int64, time.Time) error {

@@ -128,16 +128,20 @@ func (r *Runner) heartbeat(ctx context.Context, cancel context.CancelFunc, deliv
 	}
 	timer := time.NewTimer(interval)
 	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return
-	case <-timer.C:
-		if err := r.Store.HeartbeatOutboxDelivery(ctx, delivery.ID, r.Owner, delivery.LeaseGeneration, r.now(), lease); err != nil {
-			select {
-			case errorsCh <- err:
-			default:
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			if err := r.Store.HeartbeatOutboxDelivery(ctx, delivery.ID, r.Owner, delivery.LeaseGeneration, r.now(), lease); err != nil {
+				select {
+				case errorsCh <- err:
+				default:
+				}
+				cancel()
+				return
 			}
-			cancel()
+			timer.Reset(interval)
 		}
 	}
 }
