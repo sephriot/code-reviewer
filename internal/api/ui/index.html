@@ -113,7 +113,7 @@
               <label class="field" for="decision-reason">Decision reason (optional)
                 <textarea class="compact" id="decision-reason" maxlength="4096" placeholder="Why this is ready, or why it needs change"></textarea>
               </label>
-              <div class="action-row"><button class="action" type="button" data-decision="approve">Approve revision</button><button class="action danger" type="button" data-decision="reject">Reject revision</button></div>
+              <div class="action-row"><button class="action" type="button" data-decision="approve">Approve revision</button><button class="action danger" type="button" data-decision="reject">Reject revision</button><button class="action" id="simulate-publication" type="button">Simulate approved revision</button></div>
             </fieldset>
           </form>
           <p class="mutation-status" id="mutation-status" role="status" aria-live="polite">Select a pending proposal to unlock local actions.</p>
@@ -145,6 +145,7 @@
       const decisionReason = document.querySelector('#decision-reason');
       const mutationStatus = document.querySelector('#mutation-status');
       const createRevision = document.querySelector('#create-revision');
+      const simulatePublication = document.querySelector('#simulate-publication');
       const decisionButtons = Array.from(document.querySelectorAll('[data-decision]'));
       let selectedItem = null;
       let activeMutation = false;
@@ -180,6 +181,7 @@
         proposalFields.disabled = activeMutation || !mutationRecordsAvailable;
         createRevision.disabled = activeMutation || !hasProposal;
         decisionButtons.forEach((button) => { button.disabled = activeMutation || !hasProposal || !hasRevision; });
+        simulatePublication.disabled = activeMutation || !hasRevision;
       }
       function setMutationContext(item, events) {
         proposalControls.hidden = false;
@@ -268,6 +270,18 @@
         } catch (error) { setMutationStatus('error', error.message); }
         finally { setMutationBusy(false); }
       }));
+      simulatePublication.addEventListener('click', async () => {
+        const revision = proposalRevisionID.value;
+        if (!revision) { setMutationStatus('error', 'Choose one proposal revision before simulation.'); return; }
+        setMutationBusy(true); setMutationStatus('idle', 'Scheduling local publication simulation.');
+        try {
+          const result = await postMutation(`/api/v1/mutate/proposal-revisions/${encodeURIComponent(revision)}/publication/simulate`, { idempotency_key:newCommandID() });
+          if (result.job) setMutationStatus('ready', 'Local simulation queued. No GitHub action will run.');
+          else setMutationStatus('ready', 'Effect recorded while publication is disabled. No GitHub action will run.');
+          await reloadInbox();
+        } catch (error) { setMutationStatus('error', error.message); }
+        finally { setMutationBusy(false); }
+      });
       proposalID.addEventListener('change', syncMutationControls);
       proposalRevisionID.addEventListener('change', syncMutationControls);
       bootstrapSession().then(() => reloadInbox()).then(() => { setConnection('ready', 'Read model online'); }).catch((error) => { inboxMessage.textContent = error.message; inboxMessage.setAttribute('role', 'alert'); setConnection('error', 'Read model unavailable'); });
