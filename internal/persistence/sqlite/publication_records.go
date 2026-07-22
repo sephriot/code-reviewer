@@ -24,19 +24,20 @@ var (
 	// ErrPublicationAuthorizationNotFound means no approved proposal revision
 	// can safely authorize the requested publication effect.
 	ErrPublicationAuthorizationNotFound = errors.New("approved proposal revision not found")
-	// ErrPublicationModeUnsupported means this persistence layer refuses a
-	// GitHub-capable publication mode. Enabled-mode dispatch belongs to a later,
-	// separately authorized adapter.
+	// ErrPublicationModeUnsupported means persisted publication mode is unknown.
 	ErrPublicationModeUnsupported = errors.New("publication mode is not safe for local effect creation")
 )
 
 // PublicationMode is the durable mode observed while authorizing an effect.
-// Only disabled and simulated are safe in this control-plane slice.
 type PublicationMode string
 
 const (
 	PublicationModeDisabled  PublicationMode = "disabled"
 	PublicationModeSimulated PublicationMode = "simulated"
+	// PublicationModeEnabled records an explicitly enabled intent. Creating an
+	// effect still performs no network activity; a separate bounded worker owns
+	// GitHub write capability.
+	PublicationModeEnabled PublicationMode = "enabled"
 )
 
 // CreatePublicationEffectInput identifies an approved proposal revision. The
@@ -58,9 +59,8 @@ type CreatePublicationEffectResult struct {
 // CreatePublicationEffect writes an approved proposal revision's exact
 // publication effect only after re-validating its selected canonical evidence.
 // It records no attempt: the separate publication worker revalidates current
-// evidence before recording one simulated attempt. Enabled mode is rejected
-// before any write and this method never creates jobs, events, outbox rows, or
-// GitHub traffic.
+// evidence before dispatching. This method never creates jobs, events, outbox
+// rows, or GitHub traffic.
 func (s *Store) CreatePublicationEffect(ctx context.Context, input CreatePublicationEffectInput) (CreatePublicationEffectResult, error) {
 	normalized, err := normalizeCreatePublicationEffectInput(input)
 	if err != nil {
@@ -171,7 +171,7 @@ func loadSafePublicationMode(ctx context.Context, conn *sql.Conn) (PublicationMo
 		return "", fmt.Errorf("read publication mode: %w", err)
 	}
 	mode := PublicationMode(raw)
-	if mode != PublicationModeDisabled && mode != PublicationModeSimulated {
+	if mode != PublicationModeDisabled && mode != PublicationModeSimulated && mode != PublicationModeEnabled {
 		return "", ErrPublicationModeUnsupported
 	}
 	return mode, nil

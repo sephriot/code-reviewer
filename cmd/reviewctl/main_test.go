@@ -552,7 +552,7 @@ func TestProposalPublishSchedulesOneSimulatedJob(t *testing.T) {
 	}
 }
 
-func TestProposalPublishRejectsEnabledModeWithoutEffects(t *testing.T) {
+func TestProposalPublishRecordsEnabledIntentWithoutDispatch(t *testing.T) {
 	databasePath, proposalRevisionID := seedApprovedProposalRevision(t)
 	database, err := sql.Open("sqlite", databasePath)
 	if err != nil {
@@ -566,10 +566,22 @@ func TestProposalPublishRejectsEnabledModeWithoutEffects(t *testing.T) {
 	err = run(context.Background(), []string{
 		"proposal", "publish", "--database", databasePath, "--proposal-revision-id", proposalRevisionID, "--simulate",
 	}, &output, &output)
-	if err == nil || !errors.Is(err, storagesqlite.ErrPublicationModeUnsupported) {
+	if err != nil {
 		t.Fatalf("enabled publication error = %v", err)
 	}
-	for _, table := range []string{"publication_effects", "publication_attempts", "jobs", "domain_events", "outbox"} {
+	var result struct {
+		PublicationMode string `json:"publication_mode"`
+		Created         bool   `json:"created"`
+		Job             any    `json:"job"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.PublicationMode != "enabled" || !result.Created || result.Job != nil {
+		t.Fatalf("enabled publication output = %s", output.String())
+	}
+	assertCLIQueryCount(t, database, "publication_effects", 1)
+	for _, table := range []string{"publication_attempts", "jobs", "domain_events", "outbox"} {
 		assertCLIQueryCount(t, database, table, 0)
 	}
 }

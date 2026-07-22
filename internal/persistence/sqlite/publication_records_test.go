@@ -117,7 +117,7 @@ SET value = 'enabled', updated_at_us = 71 WHERE key = 'publication_mode'`); err 
 		IdempotencyKey:     "publish:enabled:1",
 		CreatedAt:          time.Unix(71, 0).UTC(),
 	})
-	if !errors.Is(err, ErrPublicationModeUnsupported) {
+	if !errors.Is(err, ErrPublicationEffectConflict) {
 		t.Fatalf("enabled mode = %v", err)
 	}
 	assertTableCount(t, ctx, store.db, "publication_effects", 1)
@@ -137,6 +137,29 @@ SET current_revision_id = NULL WHERE pull_request_id = 'pr-1'`); err != nil {
 	})
 	if !errors.Is(err, ErrCanonicalReviewTargetNotFound) || !strings.Contains(err.Error(), "canonical") {
 		t.Fatalf("stale evidence = %v", err)
+	}
+}
+
+func TestCreatePublicationEffectEnabledPersistsIntentWithoutAttempt(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedApprovedPublicationProposal(t, ctx)
+	setPublicationMode(t, ctx, store, PublicationModeEnabled)
+
+	result, err := store.CreatePublicationEffect(ctx, CreatePublicationEffectInput{
+		ProposalRevisionID: fixture.proposalRevisionID,
+		IdempotencyKey:     "publish:enabled:1",
+		CreatedAt:          time.Unix(71, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Created || result.PublicationMode != PublicationModeEnabled {
+		t.Fatalf("result = %+v", result)
+	}
+	assertTableCount(t, ctx, store.db, "publication_effects", 1)
+	assertTableCount(t, ctx, store.db, "publication_attempts", 0)
+	for _, table := range []string{"jobs", "domain_events", "outbox"} {
+		assertTableCount(t, ctx, store.db, table, 0)
 	}
 }
 

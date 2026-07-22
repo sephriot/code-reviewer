@@ -44,7 +44,7 @@ WHERE state.key = 'publication_mode'`).Scan(
 	if err != nil {
 		return SettingsSummary{}, fmt.Errorf("read settings summary: %w", err)
 	}
-	if summary.PublicationMode != PublicationModeDisabled && summary.PublicationMode != PublicationModeSimulated {
+	if summary.PublicationMode != PublicationModeDisabled && summary.PublicationMode != PublicationModeSimulated && summary.PublicationMode != PublicationModeEnabled {
 		return SettingsSummary{}, errors.New("stored publication mode is unsafe")
 	}
 	if summary.ActiveWatchRules < 0 || summary.ConfiguredProfiles < 0 {

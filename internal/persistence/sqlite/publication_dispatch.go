@@ -177,7 +177,7 @@ func validatePublicationDispatchEffect(ctx context.Context, conn *sql.Conn, effe
 	if effect.ID == "" || effect.ProposalRevisionID == "" || effect.DecisionID == "" ||
 		effect.ConnectionID == "" || effect.RepositoryID == "" || effect.PullRequestID == "" ||
 		effect.RevisionID == "" || effect.ObservationID == "" || !validLowerHexDigest(effect.PayloadSHA256) ||
-		(effect.PublicationMode != PublicationModeDisabled && effect.PublicationMode != PublicationModeSimulated) {
+		(effect.PublicationMode != PublicationModeDisabled && effect.PublicationMode != PublicationModeSimulated && effect.PublicationMode != PublicationModeEnabled) {
 		return errors.New("stored publication effect facts are invalid")
 	}
 	authorization, err := loadApprovedPublicationAuthorization(ctx, conn, effect.ProposalRevisionID)
