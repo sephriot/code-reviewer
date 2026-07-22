@@ -16,6 +16,12 @@ type PublicationEffectCreator interface {
 	CreatePublicationEffect(context.Context, sqlite.CreatePublicationEffectInput) (sqlite.CreatePublicationEffectResult, error)
 }
 
+// PublicationUncertaintyResolver records a human terminal classification of
+// one uncertain enabled delivery. It has no scheduling or GitHub capability.
+type PublicationUncertaintyResolver interface {
+	ResolvePublicationUncertainty(context.Context, sqlite.ResolvePublicationUncertaintyInput) (sqlite.ResolvePublicationUncertaintyResult, error)
+}
+
 // SimulatedPublicationScheduler queues one local, effect-bound simulation
 // job. It has no GitHub publication capability.
 type SimulatedPublicationScheduler interface {
@@ -32,19 +38,21 @@ type EnabledPublicationScheduler interface {
 // PublicationMutationOptions supplies narrow publication capabilities. Nil
 // schedulers fail closed if their matching runtime mode is unavailable.
 type PublicationMutationOptions struct {
-	Effects          PublicationEffectCreator
-	Scheduler        SimulatedPublicationScheduler
-	EnabledScheduler EnabledPublicationScheduler
-	Now              func() time.Time
+	Effects             PublicationEffectCreator
+	Scheduler           SimulatedPublicationScheduler
+	EnabledScheduler    EnabledPublicationScheduler
+	UncertaintyResolver PublicationUncertaintyResolver
+	Now                 func() time.Time
 }
 
 // NewPublicationMutationHandler exposes guarded publication requests. Callers
 // must mount it under MutationAuth.Wrap.
 func NewPublicationMutationHandler(options PublicationMutationOptions) http.Handler {
 	mux := http.NewServeMux()
-	handler := publicationMutationHandler{effects: options.Effects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, now: options.Now}
+	handler := publicationMutationHandler{effects: options.Effects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, uncertaintyResolver: options.UncertaintyResolver, now: options.Now}
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate", handler.simulate)
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch", handler.dispatch)
+	mux.HandleFunc("POST /api/v1/mutate/publication-effects/{id}/uncertainty-resolution", handler.resolveUncertainty)
 	return mux
 }
 
@@ -52,16 +60,18 @@ func registerPublicationMutationRoutes(mux *http.ServeMux, options PublicationMu
 	if mux == nil {
 		return
 	}
-	handler := publicationMutationHandler{effects: options.Effects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, now: options.Now}
+	handler := publicationMutationHandler{effects: options.Effects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, uncertaintyResolver: options.UncertaintyResolver, now: options.Now}
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate", handler.simulate)
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch", handler.dispatch)
+	mux.HandleFunc("POST /api/v1/mutate/publication-effects/{id}/uncertainty-resolution", handler.resolveUncertainty)
 }
 
 type publicationMutationHandler struct {
-	effects          PublicationEffectCreator
-	scheduler        SimulatedPublicationScheduler
-	enabledScheduler EnabledPublicationScheduler
-	now              func() time.Time
+	effects             PublicationEffectCreator
+	scheduler           SimulatedPublicationScheduler
+	enabledScheduler    EnabledPublicationScheduler
+	uncertaintyResolver PublicationUncertaintyResolver
+	now                 func() time.Time
 }
 
 type simulatePublicationRequest struct {
@@ -78,6 +88,18 @@ type publicationResponse struct {
 		ID      string `json:"id"`
 		Created bool   `json:"created"`
 	} `json:"job"`
+}
+
+type publicationUncertaintyResolutionRequest struct {
+	Resolution     string `json:"resolution"`
+	ActorID        string `json:"actor_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+	Reason         string `json:"reason"`
+}
+
+type publicationUncertaintyResolutionResponse struct {
+	ResolutionID string `json:"resolution_id"`
+	Created      bool   `json:"created"`
 }
 
 func (h publicationMutationHandler) simulate(response http.ResponseWriter, request *http.Request) {
@@ -127,6 +149,43 @@ func (h publicationMutationHandler) dispatch(response http.ResponseWriter, reque
 		Created:         effect.Created,
 		Job:             publicationJobResponse(job),
 	})
+}
+
+// resolveUncertainty records an explicit human terminal resolution. It never
+// sends, schedules, or retries an external publication.
+func (h publicationMutationHandler) resolveUncertainty(response http.ResponseWriter, request *http.Request) {
+	effectID, ok := validPublicationEffectPathID(request)
+	if !ok {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "publication effect ID is invalid", false)
+		return
+	}
+	if h.uncertaintyResolver == nil {
+		writeControlError(response, http.StatusServiceUnavailable, "mutation_unavailable", "publication uncertainty resolution service is unavailable", true)
+		return
+	}
+	var input publicationUncertaintyResolutionRequest
+	if err := decodeProposalMutationJSON(response, request, &input); err != nil {
+		writeMutationDecodeError(response, err)
+		return
+	}
+	if strings.TrimSpace(input.ActorID) == "" || input.IdempotencyKey == "" || !validPublicationIdempotencyKey(input.IdempotencyKey) ||
+		(input.Resolution != string(sqlite.PublicationUncertaintyExternallyCompleted) && input.Resolution != string(sqlite.PublicationUncertaintyAbandoned)) {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "publication uncertainty resolution fields are invalid", false)
+		return
+	}
+	resolved, err := h.uncertaintyResolver.ResolvePublicationUncertainty(request.Context(), sqlite.ResolvePublicationUncertaintyInput{
+		EffectID: effectID, Resolution: sqlite.PublicationUncertaintyResolution(input.Resolution), ActorID: input.ActorID,
+		IdempotencyKey: input.IdempotencyKey, Reason: input.Reason, ResolvedAt: h.currentTime(),
+	})
+	if err != nil {
+		writePublicationUncertaintyResolutionStoreError(response, err)
+		return
+	}
+	status := http.StatusOK
+	if resolved.Created {
+		status = http.StatusCreated
+	}
+	writeControlJSON(response, status, publicationUncertaintyResolutionResponse{ResolutionID: resolved.ResolutionID, Created: resolved.Created})
 }
 
 func (h publicationMutationHandler) createEffect(response http.ResponseWriter, request *http.Request, allowedModes []sqlite.PublicationMode) (sqlite.CreatePublicationEffectResult, bool) {
@@ -194,6 +253,14 @@ func validProposalRevisionPathID(request *http.Request) (string, bool) {
 	return value, true
 }
 
+func validPublicationEffectPathID(request *http.Request) (string, bool) {
+	value := strings.TrimSpace(request.PathValue("id"))
+	if value == "" || value != request.PathValue("id") || len(value) > 512 {
+		return "", false
+	}
+	return value, true
+}
+
 func validPublicationIdempotencyKey(value string) bool {
 	if value == "" {
 		return true
@@ -232,5 +299,18 @@ func writePublicationMutationStoreError(response http.ResponseWriter, err error)
 		writeControlError(response, http.StatusConflict, "proposal_not_current", "proposal no longer matches current canonical evidence", false)
 	default:
 		writeControlError(response, http.StatusInternalServerError, "mutation_failed", "could not create publication effect", true)
+	}
+}
+
+func writePublicationUncertaintyResolutionStoreError(response http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, sqlite.ErrPublicationEffectNotFound):
+		writeControlError(response, http.StatusNotFound, "publication_effect_not_found", "publication effect was not found", false)
+	case errors.Is(err, sqlite.ErrPublicationUncertaintyNotResolvable):
+		writeControlError(response, http.StatusConflict, "publication_not_uncertain", "publication effect has no unresolved uncertain delivery", false)
+	case errors.Is(err, sqlite.ErrPublicationUncertaintyResolutionConflict):
+		writeControlError(response, http.StatusConflict, "publication_resolution_conflict", "publication uncertainty resolution conflicts with immutable facts", false)
+	default:
+		writeControlError(response, http.StatusInternalServerError, "mutation_failed", "could not resolve publication uncertainty", true)
 	}
 }

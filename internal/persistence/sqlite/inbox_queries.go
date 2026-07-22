@@ -68,15 +68,16 @@ type AttentionPage struct {
 type TimelineKind string
 
 const (
-	TimelineKindObservation       TimelineKind = "observation"
-	TimelineKindRevision          TimelineKind = "revision"
-	TimelineKindRun               TimelineKind = "review_run"
-	TimelineKindAssessment        TimelineKind = "assessment"
-	TimelineKindPolicyEvaluation  TimelineKind = "policy_evaluation"
-	TimelineKindProposal          TimelineKind = "proposal"
-	TimelineKindProposalRevision  TimelineKind = "proposal_revision"
-	TimelineKindDecision          TimelineKind = "decision"
-	TimelineKindPublicationEffect TimelineKind = "publication_effect"
+	TimelineKindObservation           TimelineKind = "observation"
+	TimelineKindRevision              TimelineKind = "revision"
+	TimelineKindRun                   TimelineKind = "review_run"
+	TimelineKindAssessment            TimelineKind = "assessment"
+	TimelineKindPolicyEvaluation      TimelineKind = "policy_evaluation"
+	TimelineKindProposal              TimelineKind = "proposal"
+	TimelineKindProposalRevision      TimelineKind = "proposal_revision"
+	TimelineKindDecision              TimelineKind = "decision"
+	TimelineKindPublicationEffect     TimelineKind = "publication_effect"
+	TimelineKindPublicationResolution TimelineKind = "publication_resolution"
 )
 
 // PullRequestTimelineQuery bounds the immutable history of one local pull
@@ -115,9 +116,10 @@ type PullRequestTimelinePage struct {
 type HistoryKind string
 
 const (
-	HistoryKindCompletedRun       HistoryKind = "completed_review_run"
-	HistoryKindDecision           HistoryKind = "decision"
-	HistoryKindPublicationAttempt HistoryKind = "publication_attempt"
+	HistoryKindCompletedRun          HistoryKind = "completed_review_run"
+	HistoryKindDecision              HistoryKind = "decision"
+	HistoryKindPublicationAttempt    HistoryKind = "publication_attempt"
+	HistoryKindPublicationResolution HistoryKind = "publication_resolution"
 )
 
 // HistoryQuery bounds the durable control-plane history. ConnectionID is an
@@ -338,6 +340,16 @@ WITH latest_run_events AS (
  JOIN publication_effects AS effect ON effect.id = attempt.effect_id
  JOIN pull_request_projection_state AS projection
    ON projection.pull_request_id = effect.pull_request_id AND projection.connection_id = effect.connection_id
+	UNION ALL
+ SELECT 'publication_resolution', resolution.id, effect.connection_id, effect.pull_request_id,
+        effect.revision_id, effect.observation_id, resolution.resolved_at_us,
+        effect.effect_type || ':resolution:' || resolution.resolution AS detail,
+        CASE WHEN effect.revision_id = projection.current_revision_id
+               AND effect.observation_id = projection.current_observation_id THEN 1 ELSE 0 END
+ FROM publication_uncertainty_resolutions AS resolution
+ JOIN publication_effects AS effect ON effect.id = resolution.effect_id
+ JOIN pull_request_projection_state AS projection
+   ON projection.pull_request_id = effect.pull_request_id AND projection.connection_id = effect.connection_id
 )
 SELECT kind, id, connection_id, pull_request_id, revision_id, observation_id, occurred_at_us, detail, current
 FROM history
@@ -453,6 +465,14 @@ WITH timeline AS (
         CASE WHEN effect.revision_id = projection.current_revision_id AND effect.observation_id = projection.current_observation_id THEN 1 ELSE 0 END
  FROM publication_effects AS effect JOIN pull_request_projection_state AS projection ON projection.pull_request_id = effect.pull_request_id AND projection.connection_id = effect.connection_id
  WHERE effect.connection_id = ? AND effect.pull_request_id = ?
+ UNION ALL
+ SELECT 'publication_resolution', resolution.id, effect.connection_id, effect.pull_request_id, effect.revision_id, effect.observation_id,
+        resolution.resolved_at_us, effect.effect_type || ':resolution:' || resolution.resolution,
+        CASE WHEN effect.revision_id = projection.current_revision_id AND effect.observation_id = projection.current_observation_id THEN 1 ELSE 0 END
+ FROM publication_uncertainty_resolutions AS resolution
+ JOIN publication_effects AS effect ON effect.id = resolution.effect_id
+ JOIN pull_request_projection_state AS projection ON projection.pull_request_id = effect.pull_request_id AND projection.connection_id = effect.connection_id
+ WHERE effect.connection_id = ? AND effect.pull_request_id = ?
 )
 SELECT kind, id, connection_id, pull_request_id, revision_id, observation_id, occurred_at_us, detail, current
 FROM timeline
@@ -462,6 +482,7 @@ LIMIT ?`,
 		connectionID, pullRequestID, connectionID, pullRequestID, connectionID, pullRequestID,
 		connectionID, pullRequestID, connectionID, pullRequestID, connectionID, pullRequestID,
 		connectionID, pullRequestID, connectionID, pullRequestID, connectionID, pullRequestID,
+		connectionID, pullRequestID,
 		hasCursor, cursor.OccurredAtUS, cursor.OccurredAtUS, cursor.Kind, cursor.Kind, cursor.ID, limit+1)
 	if err != nil {
 		return PullRequestTimelinePage{}, fmt.Errorf("list pull request timeline: %w", err)

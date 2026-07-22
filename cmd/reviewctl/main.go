@@ -35,7 +35,7 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 2 {
-		return errors.New("usage: reviewctl <config|db|legacy|github|profile|review|policy|proposal> <command> [options]")
+		return errors.New("usage: reviewctl <config|db|legacy|github|profile|review|policy|proposal|publication> <command> [options]")
 	}
 	switch args[0] + " " + args[1] {
 	case "config validate":
@@ -72,6 +72,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return proposalDecide(ctx, args[2:], stdout, stderr)
 	case "proposal publish":
 		return proposalPublish(ctx, args[2:], stdout, stderr)
+	case "publication resolve":
+		return publicationResolve(ctx, args[2:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0]+" "+args[1])
 	}
@@ -386,6 +388,67 @@ func proposalPublish(ctx context.Context, args []string, stdout, stderr io.Write
 	return writeJSON(stdout, result)
 }
 
+// publicationResolve records an operator's terminal finding for an uncertain
+// enabled delivery. It cannot queue or repeat a GitHub request.
+func publicationResolve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := rejectSecretBearingManualArguments(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("publication resolve", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	effectID := flags.String("effect-id", "", "uncertain enabled publication effect ID")
+	resolution := flags.String("resolution", "", "externally_completed or abandoned")
+	actorID := flags.String("actor-id", "", "human operator identity")
+	reasonFile := flags.String("reason-file", "", "optional UTF-8 resolution reason file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || !validManualIdentifier(*effectID) || strings.TrimSpace(*actorID) == "" ||
+		(*resolution != string(storagesqlite.PublicationUncertaintyExternallyCompleted) && *resolution != string(storagesqlite.PublicationUncertaintyAbandoned)) {
+		return errors.New("--effect-id, --actor-id, and --resolution externally_completed|abandoned are required")
+	}
+	if err := rejectSecretBearingText([]byte(*effectID)); err != nil {
+		return fmt.Errorf("publication effect ID: %w", err)
+	}
+	if err := rejectSecretBearingText([]byte(*actorID)); err != nil {
+		return fmt.Errorf("resolution actor ID: %w", err)
+	}
+	reason := ""
+	if *reasonFile != "" {
+		contents, readErr := readBoundedRegularFile(*reasonFile, maxManualDecisionReasonBytes)
+		if readErr != nil {
+			return fmt.Errorf("read publication resolution reason: %w", readErr)
+		}
+		if rejectErr := rejectSecretBearingText(contents); rejectErr != nil {
+			return fmt.Errorf("publication resolution reason: %w", rejectErr)
+		}
+		reason = string(contents)
+	}
+	store, err := openCurrentControlPlane(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	idempotencyKey := manualPublicationResolutionIdempotencyKey(*effectID, *resolution, *actorID, reason)
+	result, err := store.ResolvePublicationUncertainty(ctx, storagesqlite.ResolvePublicationUncertaintyInput{
+		EffectID: *effectID, Resolution: storagesqlite.PublicationUncertaintyResolution(*resolution), ActorID: *actorID,
+		IdempotencyKey: idempotencyKey, Reason: reason, ResolvedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, struct {
+		ResolutionID   string `json:"resolution_id"`
+		Created        bool   `json:"created"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}{ResolutionID: result.ResolutionID, Created: result.Created, IdempotencyKey: idempotencyKey})
+}
+
 func validManualIdentifier(value string) bool {
 	if value == "" || value != strings.TrimSpace(value) || len(value) > 512 {
 		return false
@@ -413,6 +476,21 @@ func manualProposalDecisionIdempotencyKey(proposalRevisionID, decision, actorID,
 	})
 	digest := sha256.Sum256(value)
 	return "reviewctl:proposal:" + hex.EncodeToString(digest[:])
+}
+
+func manualPublicationResolutionIdempotencyKey(effectID, resolution, actorID, reason string) string {
+	value, _ := json.Marshal(struct {
+		FormatVersion int    `json:"format_version"`
+		EffectID      string `json:"effect_id"`
+		Resolution    string `json:"resolution"`
+		ActorID       string `json:"actor_id"`
+		Reason        string `json:"reason"`
+	}{
+		FormatVersion: 1, EffectID: strings.TrimSpace(effectID), Resolution: resolution,
+		ActorID: strings.TrimSpace(actorID), Reason: normalizeManualText(reason),
+	})
+	digest := sha256.Sum256(value)
+	return "reviewctl:publication-resolution:" + hex.EncodeToString(digest[:])
 }
 
 func rejectSecretBearingText(value []byte) error {

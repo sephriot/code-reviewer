@@ -53,7 +53,7 @@ func TestDatabaseMigrateThenStatus(t *testing.T) {
 	if err := run(context.Background(), []string{"db", "migrate", "--database", path, "--apply"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), `"current": 12`) {
+	if !strings.Contains(output.String(), `"current": 13`) {
 		t.Fatalf("migration output = %s", output.String())
 	}
 	output.Reset()
@@ -306,7 +306,7 @@ func TestPolicyEvaluateRequiresInputsAndCurrentSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close() }()
-	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 12`); err != nil {
+	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 13`); err != nil {
 		t.Fatal(err)
 	}
 	err = run(context.Background(), []string{
@@ -604,6 +604,75 @@ func TestProposalPublishDispatchesEnabledEffectOnlyWithExplicitFlag(t *testing.T
 	}
 }
 
+func TestPublicationResolveClosesUncertainDeliveryWithoutRequeue(t *testing.T) {
+	databasePath, proposalRevisionID := seedApprovedProposalRevision(t)
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	if _, err := database.Exec(`UPDATE system_state SET value = 'enabled', updated_at_us = 100 WHERE key = 'publication_mode'`); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{
+		"proposal", "publish", "--database", databasePath, "--proposal-revision-id", proposalRevisionID, "--dispatch",
+	}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	var published struct {
+		EffectID string `json:"effect_id"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &published); err != nil || published.EffectID == "" {
+		t.Fatalf("dispatch result=%s err=%v", output.String(), err)
+	}
+	store, err := storagesqlite.Open(context.Background(), databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimEnabledPublicationAttempt(context.Background(), published.EffectID, time.Unix(120, 0).UTC()); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if _, err := store.RecordEnabledPublicationAttempt(context.Background(), storagesqlite.RecordEnabledPublicationAttemptInput{
+		EffectID: published.EffectID, Outcome: storagesqlite.PublicationAttemptUncertain, ResponseJSON: []byte(`{}`),
+		ErrorClass: "connection_reset", ErrorMessage: "connection closed after write", CompletedAt: time.Unix(121, 0).UTC(),
+	}); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	command := []string{
+		"publication", "resolve", "--database", databasePath, "--effect-id", published.EffectID,
+		"--resolution", "externally_completed", "--actor-id", "local-user",
+	}
+	if err := run(context.Background(), command, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	var resolved struct {
+		ResolutionID string `json:"resolution_id"`
+		Created      bool   `json:"created"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.ResolutionID == "" || !resolved.Created {
+		t.Fatalf("resolution output = %s", output.String())
+	}
+	assertCLIQueryCount(t, database, "publication_uncertainty_resolutions", 1)
+	assertCLIQueryCount(t, database, "jobs", 1)
+	output.Reset()
+	if err := run(context.Background(), command, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(output.Bytes(), &resolved); err != nil || resolved.Created {
+		t.Fatalf("resolution replay output=%s err=%v", output.String(), err)
+	}
+}
+
 func TestProposalPublishRejectsSecretsInvalidIDsAndOutdatedSchema(t *testing.T) {
 	var output bytes.Buffer
 	if err := run(context.Background(), []string{"proposal", "publish", "--token=never-store"}, &output, &output); err == nil || !strings.Contains(err.Error(), "cannot carry secrets") {
@@ -623,7 +692,7 @@ func TestProposalPublishRejectsSecretsInvalidIDsAndOutdatedSchema(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close() }()
-	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 12`); err != nil {
+	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 13`); err != nil {
 		t.Fatal(err)
 	}
 	err = run(context.Background(), []string{

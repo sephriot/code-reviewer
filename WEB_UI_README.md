@@ -47,6 +47,7 @@ All responses have `Cache-Control: no-store`.
 | `POST /api/v1/mutate/proposals/{id}/decisions` | Record one local decision for an owned revision |
 | `POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate` | Record and, in simulated mode, queue one local-only publication attempt |
 | `POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch` | Explicitly queue one guarded enabled GitHub publication |
+| `POST /api/v1/mutate/publication-effects/{id}/uncertainty-resolution` | Human-only immutable `externally_completed` or `abandoned` resolution; never reposts |
 
 `/api/inbox` and `/api/pull-requests/{id}/timeline` are unversioned aliases.
 
@@ -100,7 +101,7 @@ Dashboard supports bounded publication only after an operator explicitly enables
 - `REVIEWD_PUBLICATION_MODE=simulated`: bounded worker records local simulated publication attempts for already-authorized effects.
 - `REVIEWD_PUBLICATION_MODE=enabled`: requires configured shadow reconciliation and GitHub token; dashboard exposes a separately confirmed, guarded dispatch button.
 
-Enabled dispatch revalidates current diff anchors immediately before it posts. Invalid inline findings move into the review body. A durable pre-send claim means no automatic retry can duplicate an uncertain GitHub write; uncertainty remains visible in history for human resolution. A human proposal decision remains immutable local evidence until an explicit dispatch request.
+Enabled dispatch revalidates current diff anchors immediately before it posts. Invalid inline findings move into the review body. A durable pre-send claim means no automatic retry can duplicate an uncertain GitHub write. Operators can record an immutable externally-completed or abandoned resolution through the guarded API/CLI; neither resolution can repost. A human proposal decision remains immutable local evidence until an explicit dispatch request.
 
 ## Legacy dashboard
 

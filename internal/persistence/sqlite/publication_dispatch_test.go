@@ -173,6 +173,106 @@ func TestRecordEnabledPublicationAttemptRejectsUnsafeOutcomeMetadata(t *testing.
 	assertTableCount(t, ctx, store.db, "publication_attempts", 0)
 }
 
+func TestResolveUncertainPublicationIsImmutableAndIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedApprovedPublicationProposal(t, ctx)
+	setPublicationMode(t, ctx, store, PublicationModeEnabled)
+	effect := createPublicationEffect(t, ctx, store, fixture.proposalRevisionID, "publish:resolve:uncertain")
+	if _, err := store.ClaimEnabledPublicationAttempt(ctx, effect.EffectID, time.Unix(103, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := store.RecordEnabledPublicationAttempt(ctx, RecordEnabledPublicationAttemptInput{
+		EffectID: effect.EffectID, Outcome: PublicationAttemptUncertain, ResponseJSON: []byte(`{}`),
+		ErrorClass: "connection_reset", ErrorMessage: "connection closed after write", CompletedAt: time.Unix(104, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ResolvePublicationUncertaintyInput{
+		EffectID: effect.EffectID, Resolution: PublicationUncertaintyExternallyCompleted,
+		ActorID: "operator-1", IdempotencyKey: "resolve:one", Reason: "Verified review exists in GitHub.", ResolvedAt: time.Unix(105, 0).UTC(),
+	}
+	first, err := store.ResolvePublicationUncertainty(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.ResolvePublicationUncertainty(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Created || first.ResolutionID == "" || second.Created || second.ResolutionID != first.ResolutionID {
+		t.Fatalf("results = %+v / %+v", first, second)
+	}
+	assertTableCount(t, ctx, store.db, "publication_uncertainty_resolutions", 1)
+	var storedAttemptID, resolution, actor, key, reason string
+	if err := store.db.QueryRowContext(ctx, `SELECT attempt_id, resolution, actor_id, idempotency_key, reason
+FROM publication_uncertainty_resolutions WHERE id = ?`, first.ResolutionID).Scan(&storedAttemptID, &resolution, &actor, &key, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if storedAttemptID != attempt.AttemptID || resolution != string(PublicationUncertaintyExternallyCompleted) || actor != input.ActorID || key != input.IdempotencyKey || reason != input.Reason {
+		t.Fatalf("stored resolution = attempt=%q resolution=%q actor=%q key=%q reason=%q", storedAttemptID, resolution, actor, key, reason)
+	}
+	history, err := store.ListHistory(ctx, HistoryQuery{ConnectionID: "connection-1", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPublicationResolutionHistory(history.Items, first.ResolutionID) {
+		t.Fatalf("history missing resolution: %+v", history.Items)
+	}
+	timeline, err := store.PullRequestTimeline(ctx, PullRequestTimelineQuery{ConnectionID: "connection-1", PullRequestID: "pr-1", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsPublicationResolutionTimeline(timeline.Items, first.ResolutionID) {
+		t.Fatalf("timeline missing resolution: %+v", timeline.Items)
+	}
+	conflict := input
+	conflict.Resolution = PublicationUncertaintyAbandoned
+	if _, err := store.ResolvePublicationUncertainty(ctx, conflict); !errors.Is(err, ErrPublicationUncertaintyResolutionConflict) {
+		t.Fatalf("conflicting resolution = %v", err)
+	}
+}
+
+func containsPublicationResolutionHistory(items []HistoryItem, resolutionID string) bool {
+	for _, item := range items {
+		if item.Kind == HistoryKindPublicationResolution && item.ID == resolutionID {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPublicationResolutionTimeline(items []TimelineItem, resolutionID string) bool {
+	for _, item := range items {
+		if item.Kind == TimelineKindPublicationResolution && item.ID == resolutionID {
+			return true
+		}
+	}
+	return false
+}
+
+func TestResolveUncertainPublicationRejectsWithoutUncertainty(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedApprovedPublicationProposal(t, ctx)
+	setPublicationMode(t, ctx, store, PublicationModeEnabled)
+	effect := createPublicationEffect(t, ctx, store, fixture.proposalRevisionID, "publish:resolve:succeeded")
+	if _, err := store.ClaimEnabledPublicationAttempt(ctx, effect.EffectID, time.Unix(106, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordEnabledPublicationAttempt(ctx, RecordEnabledPublicationAttemptInput{
+		EffectID: effect.EffectID, Outcome: PublicationAttemptSucceeded, ResponseJSON: []byte(`{"state":"APPROVED"}`), GitHubArtifactID: "88", CompletedAt: time.Unix(107, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := store.ResolvePublicationUncertainty(ctx, ResolvePublicationUncertaintyInput{
+		EffectID: effect.EffectID, Resolution: PublicationUncertaintyAbandoned, ActorID: "operator-1", IdempotencyKey: "resolve:no", ResolvedAt: time.Unix(108, 0).UTC(),
+	})
+	if !errors.Is(err, ErrPublicationUncertaintyNotResolvable) {
+		t.Fatalf("resolution = %v", err)
+	}
+	assertTableCount(t, ctx, store.db, "publication_uncertainty_resolutions", 0)
+}
+
 func TestPublicationDispatchRejectsAbsentStaleAndConflictingEffects(t *testing.T) {
 	ctx := context.Background()
 	store, fixture := seedApprovedPublicationProposal(t, ctx)

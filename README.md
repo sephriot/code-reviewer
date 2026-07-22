@@ -290,6 +290,18 @@ Both commands reject likely secret-bearing arguments and file content. Decisions
 
 `reviewctl proposal publish --proposal-revision-id ID --dispatch` works only in `enabled` mode and queues one guarded publication job for `reviewd`; it does not write from `reviewctl`. Enabled runtime requires configured shadow reconciliation and GitHub token. Before posting, worker fetches live diff, converts invalid inline comments to review-body findings, claims durable one-shot dispatch, and records success or uncertainty without automatic retry.
 
+An uncertain enabled delivery has no repost command. After inspecting GitHub, an operator can permanently record either the verified external result or abandonment:
+
+```sh
+go run ./cmd/reviewctl publication resolve \
+  --database data/control-plane.db \
+  --effect-id EFFECT_ID \
+  --resolution externally_completed \
+  --actor-id local-user
+```
+
+Use `--resolution abandoned` when no external review should be treated as delivered. Optional `--reason-file` stores a bounded, secret-free audit note. Resolution never queues a job or sends GitHub traffic.
+
 ## Control API and dashboard
 
 Start `reviewd`, then open <http://127.0.0.1:8080/>. Dashboard shows current attention, immutable timeline records, local lifecycle analytics, guarded local proposal edits/decisions, and explicit local publication simulation. In `enabled` mode only, an extra browser-confirmed control can queue one guarded GitHub publication. On load it obtains a short-lived, HttpOnly, SameSite-Strict session cookie from the loopback server; browser code never sees the credential. Keep the listener on loopback.
@@ -338,7 +350,8 @@ reviewctl github reconcile|hydrate
 reviewctl profile create
 reviewctl review queue
 reviewctl policy evaluate
-reviewctl proposal edit|decide
+reviewctl proposal edit|decide|publish
+reviewctl publication resolve
 ```
 
 See [GREENFIELD_PRODUCT_DESIGN.md](docs/GREENFIELD_PRODUCT_DESIGN.md) for architecture and product rationale. [WEB_UI_README.md](WEB_UI_README.md) documents current control dashboard behavior.

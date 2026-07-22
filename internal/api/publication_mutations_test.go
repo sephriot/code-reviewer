@@ -14,12 +14,23 @@ import (
 )
 
 type fakePublicationMutations struct {
-	effectInput sqlite.CreatePublicationEffectInput
-	effect      sqlite.CreatePublicationEffectResult
-	effectErr   error
-	scheduled   string
-	job         sqlite.EnsureJobResult
-	scheduleErr error
+	effectInput     sqlite.CreatePublicationEffectInput
+	effect          sqlite.CreatePublicationEffectResult
+	effectErr       error
+	resolutionInput sqlite.ResolvePublicationUncertaintyInput
+	resolution      sqlite.ResolvePublicationUncertaintyResult
+	resolutionErr   error
+	scheduled       string
+	job             sqlite.EnsureJobResult
+	scheduleErr     error
+}
+
+func (f *fakePublicationMutations) ResolvePublicationUncertainty(_ context.Context, input sqlite.ResolvePublicationUncertaintyInput) (sqlite.ResolvePublicationUncertaintyResult, error) {
+	f.resolutionInput = input
+	if f.resolutionErr != nil {
+		return sqlite.ResolvePublicationUncertaintyResult{}, f.resolutionErr
+	}
+	return f.resolution, nil
 }
 
 func (f *fakePublicationMutations) CreatePublicationEffect(_ context.Context, input sqlite.CreatePublicationEffectInput) (sqlite.CreatePublicationEffectResult, error) {
@@ -134,6 +145,55 @@ func TestPublicationMutationFailsClosedForUnavailableSimulationOrStoreConflict(t
 	}
 }
 
+func TestPublicationUncertaintyResolutionRequiresExplicitHumanFacts(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(250, 0).UTC()
+	mutations := &fakePublicationMutations{resolution: sqlite.ResolvePublicationUncertaintyResult{ResolutionID: "resolution-1", Created: true}}
+	handler := NewPublicationMutationHandler(PublicationMutationOptions{UncertaintyResolver: mutations, Now: func() time.Time { return now }})
+	response := servePublicationUncertaintyResolution(handler, `{"resolution":"externally_completed","actor_id":"operator-1","idempotency_key":"resolve:one","reason":"Verified in GitHub."}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if mutations.resolutionInput.EffectID != "effect-1" || mutations.resolutionInput.Resolution != sqlite.PublicationUncertaintyExternallyCompleted || mutations.resolutionInput.ActorID != "operator-1" || mutations.resolutionInput.IdempotencyKey != "resolve:one" || mutations.resolutionInput.Reason != "Verified in GitHub." || !mutations.resolutionInput.ResolvedAt.Equal(now) {
+		t.Fatalf("resolution input = %+v", mutations.resolutionInput)
+	}
+	var body publicationUncertaintyResolutionResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ResolutionID != "resolution-1" || !body.Created {
+		t.Fatalf("body = %+v", body)
+	}
+}
+
+func TestPublicationUncertaintyResolutionFailsClosed(t *testing.T) {
+	t.Parallel()
+	for _, testCase := range []struct {
+		name  string
+		store *fakePublicationMutations
+		body  string
+		want  int
+	}{
+		{name: "missing resolver", store: &fakePublicationMutations{}, body: `{"resolution":"abandoned","actor_id":"operator-1","idempotency_key":"resolve:one"}`, want: http.StatusServiceUnavailable},
+		{name: "not uncertain", store: &fakePublicationMutations{resolutionErr: sqlite.ErrPublicationUncertaintyNotResolvable}, body: `{"resolution":"abandoned","actor_id":"operator-1","idempotency_key":"resolve:one"}`, want: http.StatusConflict},
+		{name: "conflict", store: &fakePublicationMutations{resolutionErr: sqlite.ErrPublicationUncertaintyResolutionConflict}, body: `{"resolution":"abandoned","actor_id":"operator-1","idempotency_key":"resolve:one"}`, want: http.StatusConflict},
+		{name: "missing idempotency", store: &fakePublicationMutations{}, body: `{"resolution":"abandoned","actor_id":"operator-1"}`, want: http.StatusBadRequest},
+		{name: "invalid", store: &fakePublicationMutations{}, body: `{"resolution":"retry","actor_id":"operator-1","idempotency_key":"resolve:one"}`, want: http.StatusBadRequest},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			options := PublicationMutationOptions{}
+			if testCase.name != "missing resolver" {
+				options.UncertaintyResolver = testCase.store
+			}
+			handler := NewPublicationMutationHandler(options)
+			response := servePublicationUncertaintyResolution(handler, testCase.body)
+			if response.Code != testCase.want {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, testCase.want, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestPublicationMutationRejectsMalformedRequestsAndNeedsOuterGuard(t *testing.T) {
 	t.Parallel()
 	mutations := &fakePublicationMutations{effect: sqlite.CreatePublicationEffectResult{EffectID: "effect-1", PublicationMode: sqlite.PublicationModeDisabled}}
@@ -175,6 +235,14 @@ func servePublicationMutation(handler http.Handler, body string) *httptest.Respo
 func servePublicationDispatch(handler http.Handler, body string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/proposal-revisions/revision-1/publication/dispatch", strings.NewReader(body))
+	request.Header.Set("Content-Type", jsonContentType)
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func servePublicationUncertaintyResolution(handler http.Handler, body string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/publication-effects/effect-1/uncertainty-resolution", strings.NewReader(body))
 	request.Header.Set("Content-Type", jsonContentType)
 	handler.ServeHTTP(response, request)
 	return response

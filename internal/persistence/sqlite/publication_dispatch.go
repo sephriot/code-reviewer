@@ -30,6 +30,12 @@ var (
 	// ErrPublicationEffectNotDispatchable means an enabled effect cannot safely
 	// start another outbound request.
 	ErrPublicationEffectNotDispatchable = errors.New("publication effect is not dispatchable")
+	// ErrPublicationUncertaintyNotResolvable means the effect has no unresolved
+	// enabled attempt with an uncertain delivery outcome.
+	ErrPublicationUncertaintyNotResolvable = errors.New("publication uncertainty is not resolvable")
+	// ErrPublicationUncertaintyResolutionConflict means an immutable resolution
+	// already binds the effect or idempotency key to different facts.
+	ErrPublicationUncertaintyResolutionConflict = errors.New("publication uncertainty resolution facts conflict")
 )
 
 // PublicationEffectTarget contains immutable effect facts only after its
@@ -85,6 +91,36 @@ type RecordEnabledPublicationAttemptInput struct {
 type RecordEnabledPublicationAttemptResult struct {
 	AttemptID string
 	Created   bool
+}
+
+// PublicationUncertaintyResolution is an operator's terminal classification
+// of an enabled delivery whose external result cannot be safely inferred.
+type PublicationUncertaintyResolution string
+
+const (
+	// PublicationUncertaintyExternallyCompleted records an operator's verified
+	// finding that GitHub received the effect.
+	PublicationUncertaintyExternallyCompleted PublicationUncertaintyResolution = "externally_completed"
+	// PublicationUncertaintyAbandoned records an operator's decision not to
+	// pursue an uncertain effect further.
+	PublicationUncertaintyAbandoned PublicationUncertaintyResolution = "abandoned"
+)
+
+// ResolvePublicationUncertaintyInput records one human terminal resolution.
+// It never requeues or sends a GitHub request.
+type ResolvePublicationUncertaintyInput struct {
+	EffectID       string
+	Resolution     PublicationUncertaintyResolution
+	ActorID        string
+	IdempotencyKey string
+	Reason         string
+	ResolvedAt     time.Time
+}
+
+// ResolvePublicationUncertaintyResult identifies one immutable resolution.
+type ResolvePublicationUncertaintyResult struct {
+	ResolutionID string
+	Created      bool
 }
 
 // RecordSimulatedPublicationAttemptResult identifies a created or existing
@@ -228,6 +264,63 @@ VALUES (?, ?, 1, 'enabled', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	return result, nil
 }
 
+// ResolvePublicationUncertainty records a human-only terminal resolution for
+// an uncertain enabled delivery. It deliberately accepts stale effects: an
+// operator must still be able to close a historical uncertainty after a PR
+// advances. No code path here can create a new claim, job, or outbound call.
+func (s *Store) ResolvePublicationUncertainty(ctx context.Context, input ResolvePublicationUncertaintyInput) (ResolvePublicationUncertaintyResult, error) {
+	normalized, err := normalizeResolvePublicationUncertaintyInput(input)
+	if err != nil {
+		return ResolvePublicationUncertaintyResult{}, err
+	}
+	var result ResolvePublicationUncertaintyResult
+	err = withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
+		effect, err := loadPublicationDispatchEffect(ctx, conn, normalized.EffectID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrPublicationEffectNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("load publication effect: %w", err)
+		}
+		if effect.PublicationMode != PublicationModeEnabled {
+			return fmt.Errorf("%w: effect=%q mode=%q", ErrPublicationUncertaintyNotResolvable, effect.ID, effect.PublicationMode)
+		}
+		attempt, found, err := loadEnabledPublicationAttempt(ctx, conn, effect.ID)
+		if err != nil {
+			return err
+		}
+		if !found || attempt.Outcome != string(PublicationAttemptUncertain) {
+			return fmt.Errorf("%w: effect=%q", ErrPublicationUncertaintyNotResolvable, effect.ID)
+		}
+		existing, found, err := loadPublicationUncertaintyResolution(ctx, conn, normalized.EffectID, normalized.IdempotencyKey)
+		if err != nil {
+			return err
+		}
+		if found {
+			if !existing.matches(effect.ID, attempt.ID, normalized) {
+				return fmt.Errorf("%w: effect=%q", ErrPublicationUncertaintyResolutionConflict, effect.ID)
+			}
+			result = ResolvePublicationUncertaintyResult{ResolutionID: existing.ID}
+			return nil
+		}
+		resolutionID := stableID("publication-uncertainty-resolution", effect.ID, normalized.IdempotencyKey)
+		if _, err := conn.ExecContext(ctx, `
+INSERT INTO publication_uncertainty_resolutions(
+ id, effect_id, attempt_id, resolution, actor_id, idempotency_key, reason, resolved_at_us, created_at_us)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			resolutionID, effect.ID, attempt.ID, normalized.Resolution, normalized.ActorID,
+			normalized.IdempotencyKey, normalized.Reason, normalized.ResolvedAt.UnixMicro(), normalized.ResolvedAt.UnixMicro()); err != nil {
+			return fmt.Errorf("insert publication uncertainty resolution: %w", err)
+		}
+		result = ResolvePublicationUncertaintyResult{ResolutionID: resolutionID, Created: true}
+		return nil
+	})
+	if err != nil {
+		return ResolvePublicationUncertaintyResult{}, fmt.Errorf("resolve publication uncertainty: %w", err)
+	}
+	return result, nil
+}
+
 type normalizedRecordEnabledPublicationAttemptInput struct {
 	EffectID         string
 	Outcome          PublicationAttemptOutcome
@@ -271,6 +364,32 @@ func normalizeRecordEnabledPublicationAttemptInput(input RecordEnabledPublicatio
 		ErrorClass: input.ErrorClass, ErrorMessage: input.ErrorMessage,
 		GitHubArtifactID: input.GitHubArtifactID, CompletedAt: completedAt,
 	}, nil
+}
+
+type normalizedResolvePublicationUncertaintyInput struct {
+	ResolvePublicationUncertaintyInput
+}
+
+func normalizeResolvePublicationUncertaintyInput(input ResolvePublicationUncertaintyInput) (normalizedResolvePublicationUncertaintyInput, error) {
+	effectID, err := normalizePublicationEffectID(input.EffectID)
+	if err != nil {
+		return normalizedResolvePublicationUncertaintyInput{}, err
+	}
+	input.EffectID = effectID
+	input.ActorID = strings.TrimSpace(input.ActorID)
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	input.Reason = strings.ReplaceAll(strings.ReplaceAll(input.Reason, "\r\n", "\n"), "\r", "\n")
+	if (input.Resolution != PublicationUncertaintyExternallyCompleted && input.Resolution != PublicationUncertaintyAbandoned) ||
+		input.ActorID == "" || len(input.ActorID) > maxPublicationEffectIDBytes ||
+		input.IdempotencyKey == "" || len(input.IdempotencyKey) > maxPublicationEffectIDBytes ||
+		len(input.Reason) > maxProposalDecisionReasonBytes {
+		return normalizedResolvePublicationUncertaintyInput{}, errors.New("publication uncertainty resolution input is invalid")
+	}
+	input.ResolvedAt, err = normalizePublicationAttemptTime(input.ResolvedAt)
+	if err != nil {
+		return normalizedResolvePublicationUncertaintyInput{}, err
+	}
+	return normalizedResolvePublicationUncertaintyInput{ResolvePublicationUncertaintyInput: input}, nil
 }
 
 // RecordSimulatedPublicationAttempt writes at most one exact simulated
@@ -499,6 +618,43 @@ type storedEnabledPublicationAttempt struct {
 	GitHubArtifactID sql.NullString
 	AttemptedAtUS    int64
 	CompletedAtUS    int64
+}
+
+type storedPublicationUncertaintyResolution struct {
+	ID             string
+	EffectID       string
+	AttemptID      string
+	Resolution     PublicationUncertaintyResolution
+	ActorID        string
+	IdempotencyKey string
+	Reason         string
+}
+
+func loadPublicationUncertaintyResolution(ctx context.Context, conn *sql.Conn, effectID, idempotencyKey string) (storedPublicationUncertaintyResolution, bool, error) {
+	var resolution storedPublicationUncertaintyResolution
+	err := conn.QueryRowContext(ctx, `
+SELECT id, effect_id, attempt_id, resolution, actor_id, idempotency_key, reason
+FROM publication_uncertainty_resolutions
+WHERE effect_id = ? OR idempotency_key = ?
+ORDER BY resolved_at_us, id
+LIMIT 1`, effectID, idempotencyKey).Scan(
+		&resolution.ID, &resolution.EffectID, &resolution.AttemptID, &resolution.Resolution,
+		&resolution.ActorID, &resolution.IdempotencyKey, &resolution.Reason,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storedPublicationUncertaintyResolution{}, false, nil
+	}
+	if err != nil {
+		return storedPublicationUncertaintyResolution{}, false, fmt.Errorf("load publication uncertainty resolution: %w", err)
+	}
+	return resolution, true, nil
+}
+
+func (resolution storedPublicationUncertaintyResolution) matches(effectID, attemptID string, input normalizedResolvePublicationUncertaintyInput) bool {
+	return resolution.ID == stableID("publication-uncertainty-resolution", effectID, input.IdempotencyKey) &&
+		resolution.EffectID == effectID && resolution.AttemptID == attemptID &&
+		resolution.Resolution == input.Resolution && resolution.ActorID == input.ActorID &&
+		resolution.IdempotencyKey == input.IdempotencyKey && resolution.Reason == input.Reason
 }
 
 func loadEnabledPublicationAttempt(ctx context.Context, conn *sql.Conn, effectID string) (storedEnabledPublicationAttempt, bool, error) {
