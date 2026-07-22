@@ -109,6 +109,46 @@ type PullRequestTimelinePage struct {
 	NextCursor string
 }
 
+// HistoryKind identifies a completed review execution or an immutable human
+// decision/publication outcome. It intentionally excludes in-flight jobs and
+// mutable operational state.
+type HistoryKind string
+
+const (
+	HistoryKindCompletedRun       HistoryKind = "completed_review_run"
+	HistoryKindDecision           HistoryKind = "decision"
+	HistoryKindPublicationAttempt HistoryKind = "publication_attempt"
+)
+
+// HistoryQuery bounds the durable control-plane history. ConnectionID is an
+// optional local partition filter; it never selects an external credential.
+type HistoryQuery struct {
+	ConnectionID string
+	Limit        int
+	Cursor       string
+}
+
+// HistoryItem is a terminal review outcome, operator decision, or completed
+// publication attempt retained by the append-only ledger.
+type HistoryItem struct {
+	Kind          HistoryKind
+	ID            string
+	ConnectionID  string
+	PullRequestID string
+	RevisionID    string
+	ObservationID string
+	OccurredAt    time.Time
+	State         TimelineState
+	Current       bool
+	Detail        string
+}
+
+// HistoryPage is one bounded page of durable control-plane history.
+type HistoryPage struct {
+	Items      []HistoryItem
+	NextCursor string
+}
+
 type readCursor struct {
 	OccurredAtUS int64  `json:"occurred_at_us"`
 	Kind         string `json:"kind"`
@@ -242,6 +282,93 @@ LIMIT ?`, connectionID, connectionID, hasCursor, cursor.OccurredAtUS, cursor.Occ
 		next, err := encodeReadCursor(readCursor{OccurredAtUS: last.OccurredAt.UnixMicro(), Kind: string(last.Kind), ID: last.ID})
 		if err != nil {
 			return AttentionPage{}, err
+		}
+		page.Items, page.NextCursor = page.Items[:limit], next
+	}
+	return page, nil
+}
+
+// ListHistory returns a bounded, read-only page across immutable terminal
+// review outcomes, decisions, and publication attempts. It does not expose
+// mutable jobs or start any publication work.
+func (s *Store) ListHistory(ctx context.Context, query HistoryQuery) (HistoryPage, error) {
+	connectionID := strings.TrimSpace(query.ConnectionID)
+	limit, cursor, err := normalizeReadPage(query.Limit, query.Cursor)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	hasCursor := 0
+	if query.Cursor != "" {
+		hasCursor = 1
+	}
+	rows, err := s.db.QueryContext(ctx, `
+WITH latest_run_events AS (
+ SELECT event.run_id, event.event_kind, event.occurred_at_us
+ FROM review_run_events AS event
+ WHERE event.sequence = (
+   SELECT MAX(candidate.sequence) FROM review_run_events AS candidate WHERE candidate.run_id = event.run_id
+ )
+), history AS (
+ SELECT 'completed_review_run' AS kind, run.id, run.connection_id, run.pull_request_id,
+        run.revision_id, run.observation_id, event.occurred_at_us,
+        run.engine_kind || ':' || event.event_kind AS detail,
+        CASE WHEN run.revision_id = projection.current_revision_id
+               AND run.observation_id = projection.current_observation_id THEN 1 ELSE 0 END AS current
+ FROM review_runs AS run
+ JOIN latest_run_events AS event ON event.run_id = run.id
+ JOIN pull_request_projection_state AS projection
+   ON projection.pull_request_id = run.pull_request_id AND projection.connection_id = run.connection_id
+ WHERE event.event_kind IN ('succeeded', 'failed_terminal', 'canceled', 'superseded')
+ UNION ALL
+ SELECT 'decision', decision.id, decision.connection_id, decision.pull_request_id,
+        decision.revision_id, decision.observation_id, decision.created_at_us,
+        decision.decision || ':' || decision.actor_kind AS detail,
+        CASE WHEN decision.revision_id = projection.current_revision_id
+               AND decision.observation_id = projection.current_observation_id THEN 1 ELSE 0 END
+ FROM decisions AS decision
+ JOIN pull_request_projection_state AS projection
+   ON projection.pull_request_id = decision.pull_request_id AND projection.connection_id = decision.connection_id
+ UNION ALL
+ SELECT 'publication_attempt', attempt.id, effect.connection_id, effect.pull_request_id,
+        effect.revision_id, effect.observation_id, attempt.completed_at_us,
+        effect.effect_type || ':' || attempt.publication_mode || ':' || attempt.outcome AS detail,
+        CASE WHEN effect.revision_id = projection.current_revision_id
+               AND effect.observation_id = projection.current_observation_id THEN 1 ELSE 0 END
+ FROM publication_attempts AS attempt
+ JOIN publication_effects AS effect ON effect.id = attempt.effect_id
+ JOIN pull_request_projection_state AS projection
+   ON projection.pull_request_id = effect.pull_request_id AND projection.connection_id = effect.connection_id
+)
+SELECT kind, id, connection_id, pull_request_id, revision_id, observation_id, occurred_at_us, detail, current
+FROM history
+WHERE (? = '' OR connection_id = ?)
+  AND (? = 0 OR occurred_at_us < ? OR (occurred_at_us = ? AND (kind > ? OR (kind = ? AND id > ?))))
+ORDER BY occurred_at_us DESC, kind, id
+LIMIT ?`, connectionID, connectionID, hasCursor, cursor.OccurredAtUS, cursor.OccurredAtUS, cursor.Kind, cursor.Kind, cursor.ID, limit+1)
+	if err != nil {
+		return HistoryPage{}, fmt.Errorf("list durable history: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	page := HistoryPage{Items: make([]HistoryItem, 0, limit)}
+	for rows.Next() {
+		var item HistoryItem
+		var occurredAtUS, current int64
+		if err := rows.Scan(&item.Kind, &item.ID, &item.ConnectionID, &item.PullRequestID, &item.RevisionID, &item.ObservationID, &occurredAtUS, &item.Detail, &current); err != nil {
+			return HistoryPage{}, fmt.Errorf("scan durable history: %w", err)
+		}
+		item.OccurredAt, item.Current = time.UnixMicro(occurredAtUS).UTC(), current != 0
+		item.State = timelineState(item.Current)
+		page.Items = append(page.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return HistoryPage{}, fmt.Errorf("iterate durable history: %w", err)
+	}
+	if len(page.Items) > limit {
+		last := page.Items[limit-1]
+		next, err := encodeReadCursor(readCursor{OccurredAtUS: last.OccurredAt.UnixMicro(), Kind: string(last.Kind), ID: last.ID})
+		if err != nil {
+			return HistoryPage{}, err
 		}
 		page.Items, page.NextCursor = page.Items[:limit], next
 	}

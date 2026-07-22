@@ -19,8 +19,10 @@ const maxControlPageLimit = 100
 // the control API. It intentionally has no mutation or GitHub capabilities.
 type ControlReader interface {
 	ListCurrentAttention(context.Context, sqlite.AttentionQuery) (sqlite.AttentionPage, error)
+	ListHistory(context.Context, sqlite.HistoryQuery) (sqlite.HistoryPage, error)
 	PullRequestTimeline(context.Context, sqlite.PullRequestTimelineQuery) (sqlite.PullRequestTimelinePage, error)
 	AnalyticsOverview(context.Context) (sqlite.AnalyticsOverview, error)
+	SettingsSummary(context.Context) (sqlite.SettingsSummary, error)
 }
 
 // ControlOptions identifies the reader and the configured local connection.
@@ -37,12 +39,18 @@ type ControlOptions struct {
 func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler {
 	mux := http.NewServeMux()
 	registerHealthRoutes(mux, readiness)
-	handler := controlHandler{reader: options.Reader}
+	handler := controlHandler{reader: options.Reader, schemaStatus: readiness.SchemaStatus}
 	for _, path := range []string{
 		"/api/v1/inbox",
 		"/api/inbox",
 	} {
 		mux.HandleFunc("GET "+path, handler.inbox)
+	}
+	for _, path := range []string{
+		"/api/v1/history",
+		"/api/history",
+	} {
+		mux.HandleFunc("GET "+path, handler.history)
 	}
 	for _, path := range []string{
 		"/api/v1/pull-requests/{id}/timeline",
@@ -51,13 +59,17 @@ func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler
 		mux.HandleFunc("GET "+path, handler.timeline)
 	}
 	mux.HandleFunc("GET /api/v1/analytics/overview", handler.analyticsOverview)
+	mux.HandleFunc("GET /api/v1/settings", handler.settings)
 	registerControlDashboard(mux)
 	registerProposalMutationRoutes(mux, options.ProposalMutations)
 	registerPublicationMutationRoutes(mux, options.PublicationMutations)
 	return mux
 }
 
-type controlHandler struct{ reader ControlReader }
+type controlHandler struct {
+	reader       ControlReader
+	schemaStatus func(context.Context) (SchemaStatus, error)
+}
 
 type pageParams struct {
 	limit  int
@@ -105,6 +117,19 @@ type timelineResponse struct {
 	Detail        string               `json:"detail"`
 }
 
+type historyResponse struct {
+	Kind          sqlite.HistoryKind   `json:"kind"`
+	ID            string               `json:"id"`
+	ConnectionID  string               `json:"connection_id"`
+	PullRequestID string               `json:"pull_request_id"`
+	RevisionID    string               `json:"revision_id"`
+	ObservationID string               `json:"observation_id"`
+	OccurredAt    time.Time            `json:"occurred_at"`
+	State         sqlite.TimelineState `json:"state"`
+	Current       bool                 `json:"current"`
+	Detail        string               `json:"detail"`
+}
+
 type analyticsOverviewResponse struct {
 	ObservedPullRequests int `json:"observed_pull_requests"`
 	Reviews              struct {
@@ -132,6 +157,20 @@ type analyticsOverviewResponse struct {
 	} `json:"publications"`
 }
 
+type settingsResponse struct {
+	PublicationMode string `json:"publication_mode"`
+	Configured      struct {
+		ActiveRules int `json:"active_rules"`
+		Profiles    int `json:"profiles"`
+	} `json:"configured"`
+	Schema struct {
+		Current bool `json:"current"`
+		Version int  `json:"version"`
+		Latest  int  `json:"latest"`
+		Pending int  `json:"pending"`
+	} `json:"schema"`
+}
+
 func (h controlHandler) inbox(response http.ResponseWriter, request *http.Request) {
 	params, err := parsePageParams(request, false)
 	if err != nil {
@@ -152,6 +191,39 @@ func (h controlHandler) inbox(response http.ResponseWriter, request *http.Reques
 		items[index] = attentionResponse{item.Kind, item.ID, item.ConnectionID, item.PullRequestID, item.RevisionID, item.ObservationID, item.OccurredAt, item.State, item.Current, item.Detail}
 	}
 	writeControlJSON(response, http.StatusOK, pageResponse[attentionResponse]{Items: items, NextCursor: page.NextCursor})
+}
+
+func (h controlHandler) history(response http.ResponseWriter, request *http.Request) {
+	if !isLoopbackRemoteAddress(request.RemoteAddr) {
+		writeControlError(response, http.StatusForbidden, "loopback_required", "history is available only on loopback", false)
+		return
+	}
+	params, err := parsePageParams(request, true)
+	if err != nil {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", err.Error(), false)
+		return
+	}
+	connectionID := strings.TrimSpace(request.URL.Query().Get("connection_id"))
+	if len(connectionID) > 256 {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "connection_id is invalid", false)
+		return
+	}
+	if h.reader == nil {
+		writeControlError(response, http.StatusServiceUnavailable, "read_model_unavailable", "control read model is unavailable", true)
+		return
+	}
+	page, err := h.reader.ListHistory(request.Context(), sqlite.HistoryQuery{
+		ConnectionID: connectionID, Limit: params.limit, Cursor: params.cursor,
+	})
+	if err != nil {
+		handleReadError(response, err)
+		return
+	}
+	items := make([]historyResponse, len(page.Items))
+	for index, item := range page.Items {
+		items[index] = historyResponse{item.Kind, item.ID, item.ConnectionID, item.PullRequestID, item.RevisionID, item.ObservationID, item.OccurredAt, item.State, item.Current, item.Detail}
+	}
+	writeControlJSON(response, http.StatusOK, pageResponse[historyResponse]{Items: items, NextCursor: page.NextCursor})
 }
 
 func (h controlHandler) timeline(response http.ResponseWriter, request *http.Request) {
@@ -207,6 +279,40 @@ func (h controlHandler) analyticsOverview(response http.ResponseWriter, request 
 		return
 	}
 	writeControlJSON(response, http.StatusOK, newAnalyticsOverviewResponse(overview))
+}
+
+func (h controlHandler) settings(response http.ResponseWriter, request *http.Request) {
+	if !isLoopbackRemoteAddress(request.RemoteAddr) {
+		writeControlError(response, http.StatusForbidden, "loopback_required", "settings are available only on loopback", false)
+		return
+	}
+	if request.URL.RawQuery != "" {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "settings do not accept query parameters", false)
+		return
+	}
+	if h.reader == nil {
+		writeControlError(response, http.StatusServiceUnavailable, "read_model_unavailable", "control read model is unavailable", true)
+		return
+	}
+	summary, err := h.reader.SettingsSummary(request.Context())
+	if err != nil {
+		handleReadError(response, err)
+		return
+	}
+	if h.schemaStatus == nil {
+		writeControlError(response, http.StatusServiceUnavailable, "schema_status_unavailable", "schema status is unavailable", true)
+		return
+	}
+	status, err := h.schemaStatus(request.Context())
+	if err != nil || !validSchemaStatus(status) {
+		writeControlError(response, http.StatusServiceUnavailable, "schema_status_unavailable", "schema status is unavailable", true)
+		return
+	}
+	result := settingsResponse{PublicationMode: string(summary.PublicationMode)}
+	result.Configured.ActiveRules, result.Configured.Profiles = summary.ActiveWatchRules, summary.ConfiguredProfiles
+	result.Schema.Current = status.Pending == 0 && status.Current == status.Latest
+	result.Schema.Version, result.Schema.Latest, result.Schema.Pending = status.Current, status.Latest, status.Pending
+	writeControlJSON(response, http.StatusOK, result)
 }
 
 func newAnalyticsOverviewResponse(overview sqlite.AnalyticsOverview) analyticsOverviewResponse {

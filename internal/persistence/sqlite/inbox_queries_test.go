@@ -143,6 +143,48 @@ func TestPullRequestTimelinePagesFactsAndLedgerHistoryWithoutWrites(t *testing.T
 	}
 }
 
+func TestListHistoryPagesCompletedOutcomesWithoutWrites(t *testing.T) {
+	ctx := context.Background()
+	store, ids := seedPolicyPublicationChain(t, ctx)
+	before := ledgerCounts(t, ctx, store)
+
+	var all []HistoryItem
+	cursor := ""
+	for {
+		page, err := store.ListHistory(ctx, HistoryQuery{ConnectionID: "connection-1", Limit: 1, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		all = append(all, page.Items...)
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	if ids.RunID == "" || len(all) != 3 {
+		t.Fatalf("history = %+v", all)
+	}
+	wantedKinds := map[HistoryKind]bool{
+		HistoryKindCompletedRun: false, HistoryKindDecision: false, HistoryKindPublicationAttempt: false,
+	}
+	for _, item := range all {
+		if item.ConnectionID != "connection-1" || item.PullRequestID != "pr-1" || !item.Current || item.State != TimelineStateCurrent {
+			t.Fatalf("history item = %+v", item)
+		}
+		if _, found := wantedKinds[item.Kind]; found {
+			wantedKinds[item.Kind] = true
+		}
+	}
+	for kind, found := range wantedKinds {
+		if !found {
+			t.Fatalf("history missing %q: %+v", kind, all)
+		}
+	}
+	if after := ledgerCounts(t, ctx, store); !reflect.DeepEqual(after, before) {
+		t.Fatalf("read-only history changed ledger: before=%v after=%v", before, after)
+	}
+}
+
 func TestInboxAndTimelineRejectInvalidBoundsAndCursor(t *testing.T) {
 	ctx := context.Background()
 	store, _ := seedPolicyPublicationChain(t, ctx)
@@ -159,6 +201,13 @@ func TestInboxAndTimelineRejectInvalidBoundsAndCursor(t *testing.T) {
 	} {
 		if _, err := store.PullRequestTimeline(ctx, query); err == nil {
 			t.Fatalf("invalid timeline query accepted: %+v", query)
+		}
+	}
+	for _, query := range []HistoryQuery{
+		{Limit: -1}, {Limit: 101}, {ConnectionID: "connection-1", Cursor: "not-a-cursor"},
+	} {
+		if _, err := store.ListHistory(ctx, query); err == nil {
+			t.Fatalf("invalid history query accepted: %+v", query)
 		}
 	}
 }

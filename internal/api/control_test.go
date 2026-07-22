@@ -16,16 +16,25 @@ import (
 type fakeInboxReader struct {
 	attention      sqlite.AttentionPage
 	timeline       sqlite.PullRequestTimelinePage
+	history        sqlite.HistoryPage
 	attentionQuery sqlite.AttentionQuery
 	timelineQuery  sqlite.PullRequestTimelineQuery
+	historyQuery   sqlite.HistoryQuery
 	analytics      sqlite.AnalyticsOverview
 	analyticsCalls int
+	settings       sqlite.SettingsSummary
+	settingsCalls  int
 	err            error
 }
 
 func (f *fakeInboxReader) ListCurrentAttention(_ context.Context, query sqlite.AttentionQuery) (sqlite.AttentionPage, error) {
 	f.attentionQuery = query
 	return f.attention, f.err
+}
+
+func (f *fakeInboxReader) ListHistory(_ context.Context, query sqlite.HistoryQuery) (sqlite.HistoryPage, error) {
+	f.historyQuery = query
+	return f.history, f.err
 }
 
 func (f *fakeInboxReader) PullRequestTimeline(_ context.Context, query sqlite.PullRequestTimelineQuery) (sqlite.PullRequestTimelinePage, error) {
@@ -38,6 +47,11 @@ func (f *fakeInboxReader) AnalyticsOverview(_ context.Context) (sqlite.Analytics
 	return f.analytics, f.err
 }
 
+func (f *fakeInboxReader) SettingsSummary(_ context.Context) (sqlite.SettingsSummary, error) {
+	f.settingsCalls++
+	return f.settings, f.err
+}
+
 func TestControlReadEndpointsAndAliases(t *testing.T) {
 	t.Parallel()
 	reader := &fakeInboxReader{
@@ -46,6 +60,9 @@ func TestControlReadEndpointsAndAliases(t *testing.T) {
 		}}, NextCursor: "next"},
 		timeline: sqlite.PullRequestTimelinePage{Items: []sqlite.TimelineItem{{
 			Kind: sqlite.TimelineKindRun, ID: "run-1", ConnectionID: "connection-1", PullRequestID: "pr-1", RevisionID: "revision-1", ObservationID: "observation-1", OccurredAt: time.Unix(2, 0).UTC(), State: sqlite.TimelineStateCurrent, Current: true, Detail: "cli",
+		}}},
+		history: sqlite.HistoryPage{Items: []sqlite.HistoryItem{{
+			Kind: sqlite.HistoryKindCompletedRun, ID: "run-1", ConnectionID: "connection-1", PullRequestID: "pr-1", RevisionID: "revision-1", ObservationID: "observation-1", OccurredAt: time.Unix(3, 0).UTC(), State: sqlite.TimelineStateCurrent, Current: true, Detail: "cli:succeeded",
 		}}},
 	}
 	handler := NewControlHandler(Readiness{}, ControlOptions{Reader: reader})
@@ -70,6 +87,18 @@ func TestControlReadEndpointsAndAliases(t *testing.T) {
 			t.Fatalf("timeline query = %+v", reader.timelineQuery)
 		}
 	}
+	for _, path := range []string{"/api/v1/history?connection_id=connection-1&limit=4&cursor=ghi", "/api/history?connection_id=connection-1&limit=4&cursor=ghi"} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.RemoteAddr = "127.0.0.1:1234"
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != jsonContentType || response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("history %q response = %d headers=%v", path, response.Code, response.Header())
+		}
+		if reader.historyQuery.ConnectionID != "connection-1" || reader.historyQuery.Limit != 4 || reader.historyQuery.Cursor != "ghi" {
+			t.Fatalf("history query = %+v", reader.historyQuery)
+		}
+	}
 }
 
 func TestControlRejectsInvalidInputAndDoesNotRead(t *testing.T) {
@@ -86,8 +115,42 @@ func TestControlRejectsInvalidInputAndDoesNotRead(t *testing.T) {
 			t.Errorf("%q status = %d, want 400", path, response.Code)
 		}
 	}
-	if reader.attentionQuery != (sqlite.AttentionQuery{}) || reader.timelineQuery != (sqlite.PullRequestTimelineQuery{}) {
-		t.Fatalf("invalid requests called reader: %+v %+v", reader.attentionQuery, reader.timelineQuery)
+	if reader.attentionQuery != (sqlite.AttentionQuery{}) || reader.timelineQuery != (sqlite.PullRequestTimelineQuery{}) || reader.historyQuery != (sqlite.HistoryQuery{}) {
+		t.Fatalf("invalid requests called reader: %+v %+v %+v", reader.attentionQuery, reader.timelineQuery, reader.historyQuery)
+	}
+}
+
+func TestControlHistoryRequiresLoopbackButNoAuthentication(t *testing.T) {
+	t.Parallel()
+	reader := &fakeInboxReader{}
+	handler := NewControlHandler(Readiness{}, ControlOptions{Reader: reader})
+
+	remote := httptest.NewRequest(http.MethodGet, "/api/v1/history", nil)
+	remote.RemoteAddr = "198.51.100.7:443"
+	remoteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(remoteResponse, remote)
+	if remoteResponse.Code != http.StatusForbidden || reader.historyQuery != (sqlite.HistoryQuery{}) {
+		t.Fatalf("remote status=%d query=%+v", remoteResponse.Code, reader.historyQuery)
+	}
+
+	for _, path := range []string{
+		"/api/v1/history?limit=0", "/api/v1/history?connection_id=one&connection_id=two", "/api/v1/history?unknown=value",
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.RemoteAddr = "127.0.0.1:1234"
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Errorf("%q status=%d, want 400", path, response.Code)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/history", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || reader.historyQuery != (sqlite.HistoryQuery{}) {
+		t.Fatalf("loopback status=%d query=%+v", response.Code, reader.historyQuery)
 	}
 }
 
@@ -144,7 +207,8 @@ func TestControlAnalyticsOverviewIsLoopbackReadOnlyAndStructured(t *testing.T) {
 			FailedTerminal int `json:"failed_terminal"`
 		} `json:"publications"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+	raw := response.Body.String()
+	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
 	if body.ObservedPullRequests != 2 || body.Reviews.Runs != 3 || body.Proposals.Rejected != 3 || body.Publications.FailedTerminal != 1 || reader.analyticsCalls != 1 {
@@ -157,6 +221,67 @@ func TestControlAnalyticsOverviewIsLoopbackReadOnlyAndStructured(t *testing.T) {
 	handler.ServeHTTP(invalidResponse, invalid)
 	if invalidResponse.Code != http.StatusBadRequest || reader.analyticsCalls != 1 {
 		t.Fatalf("invalid status=%d calls=%d", invalidResponse.Code, reader.analyticsCalls)
+	}
+}
+
+func TestControlSettingsIsLoopbackReadOnlyAndSafe(t *testing.T) {
+	t.Parallel()
+	reader := &fakeInboxReader{settings: sqlite.SettingsSummary{
+		PublicationMode:    sqlite.PublicationModeSimulated,
+		ActiveWatchRules:   2,
+		ConfiguredProfiles: 3,
+	}}
+	readiness := Readiness{SchemaStatus: func(context.Context) (SchemaStatus, error) {
+		return SchemaStatus{Current: 8, Latest: 8, Pending: 0}, nil
+	}}
+	handler := NewControlHandler(readiness, ControlOptions{Reader: reader})
+
+	remote := httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil)
+	remote.RemoteAddr = "198.51.100.7:443"
+	remoteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(remoteResponse, remote)
+	if remoteResponse.Code != http.StatusForbidden || reader.settingsCalls != 0 {
+		t.Fatalf("remote status=%d calls=%d", remoteResponse.Code, reader.settingsCalls)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != jsonContentType || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("settings response=%d headers=%v", response.Code, response.Header())
+	}
+	var body struct {
+		PublicationMode string `json:"publication_mode"`
+		Configured      struct {
+			ActiveRules int `json:"active_rules"`
+			Profiles    int `json:"profiles"`
+		} `json:"configured"`
+		Schema struct {
+			Current bool `json:"current"`
+			Version int  `json:"version"`
+			Latest  int  `json:"latest"`
+			Pending int  `json:"pending"`
+		} `json:"schema"`
+	}
+	raw := response.Body.String()
+	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.PublicationMode != "simulated" || body.Configured.ActiveRules != 2 || body.Configured.Profiles != 3 ||
+		!body.Schema.Current || body.Schema.Version != 8 || body.Schema.Latest != 8 || body.Schema.Pending != 0 || reader.settingsCalls != 1 {
+		t.Fatalf("settings body=%+v calls=%d", body, reader.settingsCalls)
+	}
+	if strings.Contains(raw, "token") || strings.Contains(raw, "credential") {
+		t.Fatal("settings response exposed secret-shaped fields")
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "/api/v1/settings?limit=1", nil)
+	invalid.RemoteAddr = "127.0.0.1:1234"
+	invalidResponse := httptest.NewRecorder()
+	handler.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusBadRequest || reader.settingsCalls != 1 {
+		t.Fatalf("invalid status=%d calls=%d", invalidResponse.Code, reader.settingsCalls)
 	}
 }
 
