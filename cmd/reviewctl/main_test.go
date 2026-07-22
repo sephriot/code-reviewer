@@ -53,7 +53,7 @@ func TestDatabaseMigrateThenStatus(t *testing.T) {
 	if err := run(context.Background(), []string{"db", "migrate", "--database", path, "--apply"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), `"current": 8`) {
+	if !strings.Contains(output.String(), `"current": 10`) {
 		t.Fatalf("migration output = %s", output.String())
 	}
 	output.Reset()
@@ -306,7 +306,7 @@ func TestPolicyEvaluateRequiresInputsAndCurrentSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close() }()
-	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 8`); err != nil {
+	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 10`); err != nil {
 		t.Fatal(err)
 	}
 	err = run(context.Background(), []string{
@@ -593,7 +593,7 @@ func TestProposalPublishRejectsSecretsInvalidIDsAndOutdatedSchema(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close() }()
-	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 8`); err != nil {
+	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 10`); err != nil {
 		t.Fatal(err)
 	}
 	err = run(context.Background(), []string{
