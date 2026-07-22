@@ -226,6 +226,21 @@ go run ./cmd/reviewctl policy apply \
 
 `policy evaluate` deliberately evaluates a named active rule/version rather than selecting one implicitly. It produces only evidence-bound local records and, when appropriate, a policy proposal.
 
+Rule `match` supports strict, fail-closed predicates: `relationships`, `repository_ids`, `repository_names`, `authors`, `labels`, `is_draft`, `states`, and `base_refs`. Predicates combine with AND; relationship and label arrays require all listed values, while repository, author, state, and base-ref arrays match any listed value. Unknown keys, duplicate keys, malformed values, or invalid current facts block selection.
+
+To select the first enabled rule by priority and queue exactly one durable review only when its trigger is `automatic`:
+
+```bash
+go run ./cmd/reviewctl review schedule \
+  --database data/control-plane.db \
+  --connection-id github-local \
+  --owner OWNER \
+  --repository REPOSITORY \
+  --number 42
+```
+
+`manual`, `track_only`, and `ignore` rules are reported but do not queue work. Scheduling requires current verified canonical evidence and an immutable profile attached to an automatic rule.
+
 Edit a policy-created proposal by appending a human revision, then record one human approval or rejection:
 
 ```bash
