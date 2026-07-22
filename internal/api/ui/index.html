@@ -84,6 +84,14 @@
     .settings-list dt { color:var(--muted); font-size:11px; }
     .settings-list dd { margin:0; color:var(--ink); font-size:11px; font-weight:700; text-align:right; }
     .settings-list dd[data-good="true"] { color:var(--signal); }
+    .notification-form { display:grid; gap:12px; margin-top:18px; padding-top:18px; border-top:1px solid var(--line); }
+    .notification-form fieldset { display:grid; gap:12px; min-width:0; margin:0; padding:0; border:0; }
+    .channel-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    .channel-toggle { display:flex; align-items:center; gap:8px; min-height:34px; padding:8px 9px; color:var(--muted); border:1px solid var(--line); font-size:11px; letter-spacing:.05em; text-transform:uppercase; }
+    .channel-toggle input { width:auto; margin:0; accent-color:var(--signal); }
+    .notification-status { min-height:1.45em; margin:0; color:var(--muted); font-size:11px; }
+    .notification-status[data-state="error"] { color:var(--danger); }
+    .notification-status[data-state="ready"] { color:var(--signal); }
     footer { display:flex; justify-content:space-between; gap:12px; padding:13px clamp(20px,4vw,64px); color:var(--muted); border-top:1px solid var(--line); font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
     @media (max-width:760px) { main { grid-template-columns:1fr; } .inbox { border-right:0; border-bottom:1px solid var(--line); } header { align-items:start; flex-direction:column; } .status { align-self:flex-start; } .selected { grid-template-columns:1fr; } .action-row > * { flex:1 1 140px; } .telemetry { grid-template-columns:1fr; } .telemetry > section + section { border-top:1px solid var(--line); border-left:0; } .metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }
     @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition:none!important; } }
@@ -153,6 +161,25 @@
             <div class="section-head"><h2 id="settings-heading">Local configuration</h2><span class="pill">No secrets</span></div>
             <p class="notice" id="settings-message">Loading safe configuration summary.</p>
             <dl class="settings-list" id="settings-items" aria-live="polite"></dl>
+            <form class="notification-form" id="notification-preferences-form" novalidate aria-labelledby="notification-preferences-heading">
+              <div class="section-head"><h2 id="notification-preferences-heading">Local notifications</h2><span class="pill">Safe controls</span></div>
+              <fieldset id="notification-preferences-fields" disabled>
+                <div class="channel-grid" aria-label="Local notification channels">
+                  <label class="channel-toggle"><input id="notification-browser" type="checkbox"> Browser</label>
+                  <label class="channel-toggle"><input id="notification-log" type="checkbox"> Local log</label>
+                  <label class="channel-toggle"><input id="notification-sound" type="checkbox"> Sound</label>
+                  <label class="channel-toggle"><input id="notification-tts" type="checkbox"> Speech</label>
+                </div>
+                <label class="field" for="notification-muted-until">Mute until
+                  <input id="notification-muted-until" type="datetime-local">
+                </label>
+                <label class="field" for="notification-speech-rate">Speech rate (500–2000)
+                  <input id="notification-speech-rate" type="number" min="500" max="2000" step="50" inputmode="numeric">
+                </label>
+                <div class="action-row"><button class="action" id="save-notification-preferences" type="submit">Save local preferences</button></div>
+              </fieldset>
+              <p class="notification-status" id="notification-preferences-status" role="status" aria-live="polite">Loading local notification preferences.</p>
+            </form>
           </section>
         </section>
       </section>
@@ -178,6 +205,16 @@
       const historyItems = document.querySelector('#history-items');
       const settingsMessage = document.querySelector('#settings-message');
       const settingsItems = document.querySelector('#settings-items');
+      const notificationPreferencesForm = document.querySelector('#notification-preferences-form');
+      const notificationPreferencesFields = document.querySelector('#notification-preferences-fields');
+      const notificationPreferencesStatus = document.querySelector('#notification-preferences-status');
+      const notificationBrowser = document.querySelector('#notification-browser');
+      const notificationLog = document.querySelector('#notification-log');
+      const notificationSound = document.querySelector('#notification-sound');
+      const notificationTTS = document.querySelector('#notification-tts');
+      const notificationMutedUntil = document.querySelector('#notification-muted-until');
+      const notificationSpeechRate = document.querySelector('#notification-speech-rate');
+      const saveNotificationPreferences = document.querySelector('#save-notification-preferences');
       const proposalControls = document.querySelector('#proposal-controls');
       const proposalForm = document.querySelector('#proposal-form');
       const proposalFields = document.querySelector('#proposal-fields');
@@ -194,12 +231,15 @@
       let selectedItem = null;
       let activeMutation = false;
       let mutationRecordsAvailable = false;
+      let notificationPreferences = null;
+      let notificationPreferencesBusy = false;
       const formatTime = (value) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'unknown time' : new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(date); };
       const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value || '—'; if (className) node.className = className; return node; };
       const api = async (path) => { const response = await fetch(path, { credentials:'same-origin', headers:{Accept:'application/json'} }); if (!response.ok) throw new Error(`Read model returned ${response.status}`); return response.json(); };
       const bootstrapSession = async () => { const response = await fetch('/api/v1/session', { credentials:'same-origin' }); if (!response.ok) throw new Error(`Local session returned ${response.status}`); };
       const setConnection = (state, value) => { connection.dataset.state = state; connection.textContent = value; };
       const setMutationStatus = (state, value) => { mutationStatus.dataset.state = state; mutationStatus.textContent = value; };
+      const setNotificationPreferencesStatus = (state, value) => { notificationPreferencesStatus.dataset.state = state; notificationPreferencesStatus.textContent = value; };
       const replaceOptions = (select, entries, selectedValue, emptyLabel) => {
         select.replaceChildren();
         const empty = document.createElement('option'); empty.value = ''; empty.textContent = emptyLabel; select.append(empty);
@@ -242,6 +282,34 @@
         ];
         rows.forEach(([label, valueText, good]) => { const labelNode = text('dt', label); const valueNode = text('dd', String(valueText)); if (good !== undefined) valueNode.dataset.good = String(good); settingsItems.append(labelNode, valueNode); });
         clearReadFailure(settingsMessage, 'Safe local summary only. Credentials and token references stay out of the dashboard.');
+      }
+      const localDateTimeInput = (value) => {
+        if (!value) return '';
+        const date = new Date(value);
+        if (Number.isNaN(date.valueOf())) return '';
+        const pad = (number) => String(number).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+      };
+      function syncNotificationPreferenceControls() {
+        notificationPreferencesFields.disabled = notificationPreferencesBusy || !notificationPreferences;
+        saveNotificationPreferences.textContent = notificationPreferencesBusy ? 'Saving local preferences…' : 'Save local preferences';
+      }
+      function renderNotificationPreferences(value) {
+        const channels = value && value.channels;
+        if (!value || !channels || typeof value.version !== 'number') throw new Error('Local notification preferences are invalid');
+        notificationPreferences = value;
+        notificationBrowser.checked = Boolean(channels.browser);
+        notificationLog.checked = Boolean(channels.log);
+        notificationSound.checked = Boolean(channels.sound);
+        notificationTTS.checked = Boolean(channels.tts);
+        notificationMutedUntil.value = localDateTimeInput(value.muted_until);
+        notificationSpeechRate.value = String(value.speech_rate_milli || 1000);
+        syncNotificationPreferenceControls();
+        setNotificationPreferencesStatus('ready', 'Safe local controls only. Templates and machine paths stay private.');
+      }
+      async function refreshNotificationPreferences() {
+        try { renderNotificationPreferences(await api('/api/v1/notification-preferences')); }
+        catch (error) { notificationPreferences = null; syncNotificationPreferenceControls(); setNotificationPreferencesStatus('error', error.message); }
       }
       async function refreshTelemetry() {
         const results = await Promise.allSettled([api('/api/v1/analytics/overview'), api('/api/v1/history?limit=8'), api('/api/v1/settings')]);
@@ -365,9 +433,35 @@
         } catch (error) { setMutationStatus('error', error.message); }
         finally { setMutationBusy(false); }
       });
+      notificationPreferencesForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!notificationPreferences) { setNotificationPreferencesStatus('error', 'Local notification preferences are not loaded.'); return; }
+        const rate = Number(notificationSpeechRate.value);
+        if (!Number.isInteger(rate) || rate < 500 || rate > 2000) { setNotificationPreferencesStatus('error', 'Speech rate must be an integer from 500 to 2000.'); return; }
+        let mutedUntil = null;
+        if (notificationMutedUntil.value) {
+          const date = new Date(notificationMutedUntil.value);
+          if (Number.isNaN(date.valueOf())) { setNotificationPreferencesStatus('error', 'Mute time is invalid.'); return; }
+          mutedUntil = date.toISOString();
+        }
+        notificationPreferencesBusy = true; syncNotificationPreferenceControls(); setNotificationPreferencesStatus('idle', 'Saving local notification preferences.');
+        try {
+          const updated = await postMutation('/api/v1/mutate/notification-preferences', {
+            expected_version: notificationPreferences.version,
+            channels: { browser:notificationBrowser.checked, log:notificationLog.checked, sound:notificationSound.checked, tts:notificationTTS.checked },
+            muted_until: mutedUntil, speech_rate_milli: rate
+          });
+          renderNotificationPreferences(updated);
+          setNotificationPreferencesStatus('ready', 'Local notification preferences saved. No external delivery configured.');
+        } catch (error) {
+          const message = error.message;
+          await refreshNotificationPreferences();
+          setNotificationPreferencesStatus('error', message);
+        } finally { notificationPreferencesBusy = false; syncNotificationPreferenceControls(); }
+      });
       proposalID.addEventListener('change', syncMutationControls);
       proposalRevisionID.addEventListener('change', syncMutationControls);
-      bootstrapSession().then(() => reloadInbox()).then(() => { setConnection('ready', 'Read model online'); }).catch((error) => { inboxMessage.textContent = error.message; inboxMessage.setAttribute('role', 'alert'); setConnection('error', 'Read model unavailable'); });
+      bootstrapSession().then(() => Promise.all([reloadInbox(), refreshNotificationPreferences()])).then(() => { setConnection('ready', 'Read model online'); }).catch((error) => { inboxMessage.textContent = error.message; inboxMessage.setAttribute('role', 'alert'); setConnection('error', 'Read model unavailable'); });
     })();
   </script>
 </body>

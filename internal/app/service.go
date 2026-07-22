@@ -109,9 +109,10 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 			}, err
 		},
 	}, api.ControlOptions{
-		Reader:               store,
-		ProposalMutations:    api.ProposalMutationOptions{Revisions: store, Decisions: store},
-		PublicationMutations: publicationMutationOptions(cfg, store),
+		Reader:                  store,
+		ProposalMutations:       api.ProposalMutationOptions{Revisions: store, Decisions: store},
+		PublicationMutations:    publicationMutationOptions(cfg, store),
+		NotificationPreferences: api.NotificationPreferencesOptions{Store: store},
 	})
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
