@@ -106,6 +106,39 @@ func TestNotificationDeliveryRejectsUnknownEventsAndUnsafeInput(t *testing.T) {
 	}
 }
 
+func TestNotificationDeliveryRetainsTerminalOutcomeOnce(t *testing.T) {
+	ctx := context.Background()
+	store := openMigratedStore(t, ctx)
+	event := appendNotificationTestEvent(t, ctx, store, "event-delivery-outcome", "review_observed")
+	created, err := store.CreateNotificationDelivery(ctx, CreateNotificationDeliveryInput{
+		DomainEventID: event.EventID, Channel: NotificationChannelLog, TemplateVersion: 1,
+		DedupeKey: "delivery-outcome", PayloadJSON: []byte(`{}`), CreatedAt: time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.LoadNotificationDelivery(ctx, created.ID)
+	if err != nil || loaded.State != NotificationDeliveryQueued || loaded.Attempt != 0 {
+		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+
+	first, err := store.RecordNotificationDeliveryOutcome(ctx, NotificationDeliveryOutcome{
+		ID: created.ID, State: NotificationDeliveryDelivered, AttemptedAt: time.Unix(2, 0).UTC(),
+	})
+	if err != nil || !first.Recorded || first.State != NotificationDeliveryDelivered || first.Attempt != 1 {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	second, err := store.RecordNotificationDeliveryOutcome(ctx, NotificationDeliveryOutcome{
+		ID: created.ID, State: NotificationDeliverySuppressed, AttemptedAt: time.Unix(3, 0).UTC(),
+	})
+	if err != nil || second.Recorded || second.State != NotificationDeliveryDelivered || second.Attempt != 1 {
+		t.Fatalf("second=%+v err=%v", second, err)
+	}
+	if _, err := store.RecordNotificationDeliveryOutcome(ctx, NotificationDeliveryOutcome{ID: "missing", State: NotificationDeliveryDelivered}); !errors.Is(err, ErrNotificationDeliveryNotFound) {
+		t.Fatalf("missing outcome error = %v", err)
+	}
+}
+
 func appendNotificationTestEvent(t *testing.T, ctx context.Context, store *Store, id, eventType string) AppendedEvent {
 	t.Helper()
 	event, err := store.AppendEventWithOutbox(ctx, DomainEventInput{

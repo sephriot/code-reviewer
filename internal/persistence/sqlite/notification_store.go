@@ -28,6 +28,11 @@ var (
 	// ErrNotificationDeliveryConflict means a dedupe identity is already bound
 	// to different immutable notification facts.
 	ErrNotificationDeliveryConflict = errors.New("notification delivery facts conflict")
+	// ErrNotificationDeliveryNotFound means a requested durable delivery is absent.
+	ErrNotificationDeliveryNotFound = errors.New("notification delivery not found")
+	// ErrNotificationDeliveryNotPending means a delivery cannot receive a new
+	// terminal outcome because it is not queued.
+	ErrNotificationDeliveryNotPending = errors.New("notification delivery is not pending")
 )
 
 // NotificationChannel identifies one local delivery adapter. This store never
@@ -237,6 +242,114 @@ type CreateNotificationDeliveryResult struct {
 	Created bool
 }
 
+// NotificationDeliveryTarget is immutable delivery work plus its current
+// progress state. Payload facts remain opaque to local channel adapters.
+type NotificationDeliveryTarget struct {
+	ID        string
+	EventType string
+	Channel   NotificationChannel
+	State     NotificationDeliveryState
+	Attempt   int
+}
+
+// NotificationDeliveryOutcome supplies one local terminal delivery result.
+// Only delivered and suppressed are safe local outcomes; failures remain job
+// failures so the worker's durable retry policy owns them.
+type NotificationDeliveryOutcome struct {
+	ID          string
+	State       NotificationDeliveryState
+	AttemptedAt time.Time
+}
+
+// RecordNotificationDeliveryOutcomeResult reports the retained terminal state.
+type RecordNotificationDeliveryOutcomeResult struct {
+	State    NotificationDeliveryState
+	Attempt  int
+	Recorded bool
+}
+
+// LoadNotificationDelivery loads one retained delivery for a bounded local
+// adapter. It invokes no adapter and exposes no destination configuration.
+func (s *Store) LoadNotificationDelivery(ctx context.Context, id string) (NotificationDeliveryTarget, error) {
+	id = strings.TrimSpace(id)
+	if id == "" || len(id) > maxNotificationDedupeKeyBytes {
+		return NotificationDeliveryTarget{}, ErrNotificationDeliveryNotFound
+	}
+	var target NotificationDeliveryTarget
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, event_type, channel, state, attempt
+FROM notification_deliveries WHERE id = ?`, id).Scan(
+		&target.ID, &target.EventType, &target.Channel, &target.State, &target.Attempt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return NotificationDeliveryTarget{}, ErrNotificationDeliveryNotFound
+	}
+	if err != nil {
+		return NotificationDeliveryTarget{}, fmt.Errorf("load notification delivery: %w", err)
+	}
+	if target.ID != id || !validNotificationChannel(target.Channel) || !validNotificationDeliveryState(target.State) || target.Attempt < 0 {
+		return NotificationDeliveryTarget{}, errors.New("stored notification delivery is invalid")
+	}
+	return target, nil
+}
+
+// RecordNotificationDeliveryOutcome atomically retains one safe local result.
+// Replaying a completed job returns its existing result without increasing the
+// attempt count; immutable delivery facts are never rewritten.
+func (s *Store) RecordNotificationDeliveryOutcome(ctx context.Context, outcome NotificationDeliveryOutcome) (RecordNotificationDeliveryOutcomeResult, error) {
+	if err := normalizeNotificationDeliveryOutcome(&outcome); err != nil {
+		return RecordNotificationDeliveryOutcomeResult{}, err
+	}
+	var result RecordNotificationDeliveryOutcomeResult
+	err := withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
+		var current struct {
+			state   NotificationDeliveryState
+			attempt int
+		}
+		err := conn.QueryRowContext(ctx, "SELECT state, attempt FROM notification_deliveries WHERE id = ?", outcome.ID).Scan(&current.state, &current.attempt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotificationDeliveryNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("load notification delivery outcome: %w", err)
+		}
+		if current.attempt < 0 || !validNotificationDeliveryState(current.state) {
+			return errors.New("stored notification delivery is invalid")
+		}
+		if current.state == NotificationDeliveryDelivered || current.state == NotificationDeliverySuppressed {
+			result = RecordNotificationDeliveryOutcomeResult{State: current.state, Attempt: current.attempt}
+			return nil
+		}
+		if current.state != NotificationDeliveryQueued {
+			return ErrNotificationDeliveryNotPending
+		}
+		var deliveredAt any
+		if outcome.State == NotificationDeliveryDelivered {
+			deliveredAt = outcome.AttemptedAt.UnixMicro()
+		}
+		updated, err := conn.ExecContext(ctx, `
+UPDATE notification_deliveries
+SET state = ?, attempt = attempt + 1, delivered_at_us = ?, last_error = NULL, updated_at_us = ?
+WHERE id = ? AND state = 'queued'`, outcome.State, deliveredAt, outcome.AttemptedAt.UnixMicro(), outcome.ID)
+		if err != nil {
+			return fmt.Errorf("record notification delivery outcome: %w", err)
+		}
+		count, err := updated.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read notification delivery outcome: %w", err)
+		}
+		if count != 1 {
+			return ErrNotificationDeliveryNotPending
+		}
+		result = RecordNotificationDeliveryOutcomeResult{State: outcome.State, Attempt: current.attempt + 1, Recorded: true}
+		return nil
+	})
+	if err != nil {
+		return RecordNotificationDeliveryOutcomeResult{}, fmt.Errorf("record notification delivery outcome: %w", err)
+	}
+	return result, nil
+}
+
 // CreateNotificationDelivery records one durable notification delivery. It
 // only accepts an existing event and uses channel plus dedupe key as the
 // logical occurrence identity. It does not invoke a channel or create jobs.
@@ -337,6 +450,32 @@ func validNotificationChannel(channel NotificationChannel) bool {
 	default:
 		return false
 	}
+}
+
+func validNotificationDeliveryState(state NotificationDeliveryState) bool {
+	switch state {
+	case NotificationDeliveryQueued, NotificationDeliveryDelivering, NotificationDeliveryDelivered,
+		NotificationDeliverySuppressed, NotificationDeliveryFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeNotificationDeliveryOutcome(outcome *NotificationDeliveryOutcome) error {
+	outcome.ID = strings.TrimSpace(outcome.ID)
+	if outcome.ID == "" || len(outcome.ID) > maxNotificationDedupeKeyBytes ||
+		(outcome.State != NotificationDeliveryDelivered && outcome.State != NotificationDeliverySuppressed) {
+		return errors.New("notification delivery outcome is invalid")
+	}
+	outcome.AttemptedAt = outcome.AttemptedAt.UTC()
+	if outcome.AttemptedAt.IsZero() {
+		outcome.AttemptedAt = time.Now().UTC()
+	}
+	if outcome.AttemptedAt.UnixMicro() < 0 {
+		return errors.New("notification delivery outcome is invalid")
+	}
+	return nil
 }
 
 func normalizeNotificationJSONObject(raw []byte) ([]byte, error) {
