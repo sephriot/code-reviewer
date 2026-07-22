@@ -33,7 +33,7 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) < 2 {
-		return errors.New("usage: reviewctl <config|db|legacy|github|profile|review|policy> <command> [options]")
+		return errors.New("usage: reviewctl <config|db|legacy|github|profile|review|policy|proposal> <command> [options]")
 	}
 	switch args[0] + " " + args[1] {
 	case "config validate":
@@ -60,14 +60,156 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return reviewQueue(ctx, args[2:], stdout, stderr)
 	case "policy evaluate":
 		return policyEvaluate(ctx, args[2:], stdout, stderr)
+	case "proposal edit":
+		return proposalEdit(ctx, args[2:], stdout, stderr)
+	case "proposal decide":
+		return proposalDecide(ctx, args[2:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0]+" "+args[1])
 	}
 }
 
 const (
-	maxManualInputBytes = 64 << 10
+	maxManualInputBytes          = 64 << 10
+	maxManualDecisionReasonBytes = 16 << 10
 )
+
+func proposalEdit(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := rejectSecretBearingManualArguments(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("proposal edit", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	proposalID := flags.String("proposal-id", "", "immutable proposal ID")
+	bodyFile := flags.String("body-file", "", "UTF-8 proposal body file")
+	inlineCommentsFile := flags.String("inline-comments-file", "", "JSON array of inline comments")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*proposalID) == "" || *bodyFile == "" || *inlineCommentsFile == "" {
+		return errors.New("--proposal-id, --body-file, and --inline-comments-file are required")
+	}
+	if err := rejectSecretBearingText([]byte(*proposalID)); err != nil {
+		return fmt.Errorf("proposal ID: %w", err)
+	}
+	body, err := readBoundedRegularFile(*bodyFile, maxManualInputBytes)
+	if err != nil {
+		return fmt.Errorf("read proposal body: %w", err)
+	}
+	if err := rejectSecretBearingText(body); err != nil {
+		return fmt.Errorf("proposal body: %w", err)
+	}
+	inlineComments, err := readBoundedRegularFile(*inlineCommentsFile, maxManualInputBytes)
+	if err != nil {
+		return fmt.Errorf("read proposal inline comments: %w", err)
+	}
+	if err := rejectSecretBearingJSON(inlineComments); err != nil {
+		return fmt.Errorf("proposal inline comments: %w", err)
+	}
+	store, err := openCurrentControlPlane(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	result, err := store.CreateHumanProposalRevision(ctx, storagesqlite.CreateHumanProposalRevisionInput{
+		ProposalID: *proposalID, Body: string(body), InlineCommentsJSON: inlineComments, EditedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, result)
+}
+
+func proposalDecide(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := rejectSecretBearingManualArguments(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("proposal decide", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	proposalRevisionID := flags.String("proposal-revision-id", "", "exact immutable proposal revision ID")
+	decision := flags.String("decision", "", "approve or reject")
+	actorID := flags.String("actor-id", "", "human decision maker identity")
+	reasonFile := flags.String("reason-file", "", "optional UTF-8 decision reason file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*proposalRevisionID) == "" || strings.TrimSpace(*actorID) == "" ||
+		(*decision != string(storagesqlite.ProposalDecisionApprove) && *decision != string(storagesqlite.ProposalDecisionReject)) {
+		return errors.New("--proposal-revision-id, --actor-id, and --decision approve|reject are required")
+	}
+	if err := rejectSecretBearingText([]byte(*proposalRevisionID)); err != nil {
+		return fmt.Errorf("proposal revision ID: %w", err)
+	}
+	if err := rejectSecretBearingText([]byte(*actorID)); err != nil {
+		return fmt.Errorf("decision actor ID: %w", err)
+	}
+	reason := ""
+	if *reasonFile != "" {
+		contents, readErr := readBoundedRegularFile(*reasonFile, maxManualDecisionReasonBytes)
+		if readErr != nil {
+			return fmt.Errorf("read proposal decision reason: %w", readErr)
+		}
+		if rejectErr := rejectSecretBearingText(contents); rejectErr != nil {
+			return fmt.Errorf("proposal decision reason: %w", rejectErr)
+		}
+		reason = string(contents)
+	}
+	idempotencyKey := manualProposalDecisionIdempotencyKey(*proposalRevisionID, *decision, *actorID, reason)
+	store, err := openCurrentControlPlane(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	result, err := store.RecordProposalDecision(ctx, storagesqlite.RecordProposalDecisionInput{
+		ProposalRevisionID: *proposalRevisionID, Decision: storagesqlite.ProposalDecision(*decision),
+		ActorKind: storagesqlite.ProposalDecisionActorHuman, ActorID: *actorID, IdempotencyKey: idempotencyKey,
+		Reason: reason, DecidedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, struct {
+		DecisionID     string `json:"decision_id"`
+		Created        bool   `json:"created"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}{DecisionID: result.DecisionID, Created: result.Created, IdempotencyKey: idempotencyKey})
+}
+
+func manualProposalDecisionIdempotencyKey(proposalRevisionID, decision, actorID, reason string) string {
+	value, _ := json.Marshal(struct {
+		FormatVersion      int    `json:"format_version"`
+		ProposalRevisionID string `json:"proposal_revision_id"`
+		Decision           string `json:"decision"`
+		ActorID            string `json:"actor_id"`
+		Reason             string `json:"reason"`
+	}{
+		FormatVersion: 1, ProposalRevisionID: strings.TrimSpace(proposalRevisionID), Decision: decision,
+		ActorID: strings.TrimSpace(actorID), Reason: normalizeManualText(reason),
+	})
+	digest := sha256.Sum256(value)
+	return "reviewctl:proposal:" + hex.EncodeToString(digest[:])
+}
+
+func rejectSecretBearingText(value []byte) error {
+	if containsLikelySecret(string(value)) {
+		return errors.New("cannot contain secret value")
+	}
+	return nil
+}
+
+func normalizeManualText(value string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(value, "\r\n", "\n"), "\r", "\n")
+}
 
 func profileCreate(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := rejectSecretBearingManualArguments(args); err != nil {

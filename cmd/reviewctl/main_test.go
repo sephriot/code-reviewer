@@ -249,6 +249,128 @@ func TestPolicyEvaluateRequiresInputsAndCurrentSchema(t *testing.T) {
 	assertCLIQueryCount(t, database, "policy_evaluations", 0)
 }
 
+func TestProposalEditAndDecideUseBoundedFilesWithoutPublication(t *testing.T) {
+	databasePath, assessmentID, ruleVersionID := seedPolicyEvaluationCandidate(t)
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{
+		"policy", "evaluate", "--database", databasePath,
+		"--assessment-id", assessmentID, "--rule-key", "assigned-default", "--rule-version-id", ruleVersionID,
+	}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	var evaluation struct {
+		Evaluation struct {
+			ProposalID string
+		}
+	}
+	if err := json.Unmarshal(output.Bytes(), &evaluation); err != nil {
+		t.Fatal(err)
+	}
+	if evaluation.Evaluation.ProposalID == "" {
+		t.Fatalf("policy evaluation output = %s", output.String())
+	}
+	directory := t.TempDir()
+	bodyPath := filepath.Join(directory, "body.txt")
+	commentsPath := filepath.Join(directory, "comments.json")
+	reasonPath := filepath.Join(directory, "reason.txt")
+	if err := os.WriteFile(bodyPath, []byte("Human-confirmed change request.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(commentsPath, []byte(`[{"path":"internal/example.go","line":2,"body":"Guard nil input."}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reasonPath, []byte("Confirmed after inspection.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := run(context.Background(), []string{
+		"proposal", "edit", "--database", databasePath, "--proposal-id", evaluation.Evaluation.ProposalID,
+		"--body-file", bodyPath, "--inline-comments-file", commentsPath,
+	}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	var edit struct {
+		ProposalRevisionID string
+		RevisionNumber     int
+	}
+	if err := json.Unmarshal(output.Bytes(), &edit); err != nil {
+		t.Fatal(err)
+	}
+	if edit.ProposalRevisionID == "" || edit.RevisionNumber != 2 {
+		t.Fatalf("proposal edit output = %s", output.String())
+	}
+	output.Reset()
+	if err := run(context.Background(), []string{
+		"proposal", "decide", "--database", databasePath, "--proposal-revision-id", edit.ProposalRevisionID,
+		"--decision", "reject", "--actor-id", "local-user", "--reason-file", reasonPath,
+	}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	var decision struct {
+		DecisionID     string `json:"decision_id"`
+		Created        bool   `json:"created"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.DecisionID == "" || !decision.Created || decision.IdempotencyKey == "" {
+		t.Fatalf("proposal decide output = %s", output.String())
+	}
+	output.Reset()
+	if err := run(context.Background(), []string{
+		"proposal", "decide", "--database", databasePath, "--proposal-revision-id", edit.ProposalRevisionID,
+		"--decision", "reject", "--actor-id", "local-user", "--reason-file", reasonPath,
+	}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	var replay struct {
+		DecisionID string `json:"decision_id"`
+		Created    bool   `json:"created"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &replay); err != nil {
+		t.Fatal(err)
+	}
+	if replay.Created || replay.DecisionID != decision.DecisionID {
+		t.Fatalf("proposal decide replay output = %s", output.String())
+	}
+
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	assertCLIQueryCount(t, database, "proposal_revisions", 2)
+	assertCLIQueryCount(t, database, "decisions", 1)
+	for _, table := range []string{"publication_effects", "publication_attempts", "jobs", "domain_events", "outbox"} {
+		assertCLIQueryCount(t, database, table, 0)
+	}
+}
+
+func TestProposalManualControlsRejectSecretsAndInvalidFiles(t *testing.T) {
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"proposal", "edit", "--token=never-store"}, &output, &output); err == nil || !strings.Contains(err.Error(), "cannot carry secrets") {
+		t.Fatalf("secret edit argument error = %v", err)
+	}
+	if err := run(context.Background(), []string{"proposal", "decide", "--api-key=never-store"}, &output, &output); err == nil || !strings.Contains(err.Error(), "cannot carry secrets") {
+		t.Fatalf("secret decide argument error = %v", err)
+	}
+	if err := run(context.Background(), []string{"proposal", "decide", "--proposal-revision-id", "proposal-revision-1", "--decision", "approve", "--actor-id", "ghp_neverstore"}, &output, &output); err == nil || !strings.Contains(err.Error(), "secret value") {
+		t.Fatalf("secret actor error = %v", err)
+	}
+	directory := t.TempDir()
+	commentsPath := filepath.Join(directory, "comments.json")
+	if err := os.WriteFile(commentsPath, []byte(`[{"token":"never-store"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run(context.Background(), []string{
+		"proposal", "edit", "--proposal-id", "proposal-1", "--body-file", commentsPath, "--inline-comments-file", commentsPath,
+	}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "secret-bearing") || strings.Contains(err.Error(), "never-store") {
+		t.Fatalf("secret comments error = %v", err)
+	}
+}
+
 func seedPolicyEvaluationCandidate(t *testing.T) (databasePath, assessmentID, ruleVersionID string) {
 	t.Helper()
 	ctx := context.Background()
