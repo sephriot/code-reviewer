@@ -19,6 +19,7 @@ import (
 	"github.com/sephriot/code-reviewer/internal/api"
 	"github.com/sephriot/code-reviewer/internal/application/hydrate"
 	"github.com/sephriot/code-reviewer/internal/application/hydrateworker"
+	"github.com/sephriot/code-reviewer/internal/application/notificationworker"
 	"github.com/sephriot/code-reviewer/internal/application/publishworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/application/reconcileworker"
@@ -146,8 +147,9 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		}
 	}
 	handlers := map[string]worker.Handler{
-		reconcileworker.ReconcileJobKind: reconcileHandler,
-		hydrateworker.HydrateJobKind:     hydrateHandler,
+		reconcileworker.ReconcileJobKind:  reconcileHandler,
+		hydrateworker.HydrateJobKind:      hydrateHandler,
+		notificationworker.DeliverJobKind: notificationworker.Handler{Loader: store, Recorder: store},
 	}
 	if cfg.ReviewExecution.Enabled {
 		reviewHandler, err := newReviewExecutionHandler(cfg, store)
