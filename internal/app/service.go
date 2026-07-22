@@ -19,6 +19,7 @@ import (
 	"github.com/sephriot/code-reviewer/internal/api"
 	"github.com/sephriot/code-reviewer/internal/application/hydrate"
 	"github.com/sephriot/code-reviewer/internal/application/hydrateworker"
+	"github.com/sephriot/code-reviewer/internal/application/publishworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/application/reconcileworker"
 	"github.com/sephriot/code-reviewer/internal/application/reviewbundle"
@@ -36,6 +37,7 @@ type Service struct {
 	jobRunner        runtimeRunner
 	schedule         scheduleFunc
 	scheduleInterval time.Duration
+	publicationMode  config.PublicationMode
 }
 
 type runtimeRunner interface {
@@ -132,6 +134,9 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		}
 		handlers[reviewworker.ExecuteJobKind] = reviewHandler
 	}
+	if cfg.PublicationMode == config.PublicationSimulated {
+		handlers[publishworker.SimulateJobKind] = publishworker.Handler{Loader: store, Recorder: store}
+	}
 	router, err := worker.NewRouter(handlers)
 	if err != nil {
 		return closeOnError(fmt.Errorf("configure worker handlers: %w", err))
@@ -141,7 +146,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		Handler: router,
 		Owner:   workerOwner(),
 	}
-	service := &Service{store: store, server: server, jobRunner: runner}
+	service := &Service{store: store, server: server, jobRunner: runner, publicationMode: cfg.PublicationMode}
 	if cfg.ShadowReconciliation.Enabled {
 		reconciliationConfig := reconcile.Config{
 			ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
@@ -188,7 +193,7 @@ func (s *Service) Run(ctx context.Context, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.server.Addr, err)
 	}
-	logger.Info("reviewd listening", "address", listener.Addr().String(), "publication_mode", "disabled")
+	logger.Info("reviewd listening", "address", listener.Addr().String(), "publication_mode", s.publicationMode)
 
 	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
 	defer cancelRuntime()

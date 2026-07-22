@@ -107,6 +107,46 @@ func TestHandlerRejectsInvalidDependenciesAndJobKind(t *testing.T) {
 	}
 }
 
+func TestSchedulerQueuesOneEffectBoundJob(t *testing.T) {
+	store := &publicationSchedulerStore{}
+	result, err := (Scheduler{
+		Store: store,
+		Now:   func() time.Time { return time.Unix(7, 0).UTC() },
+	}).Schedule(context.Background(), "effect-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ID != "job-1" || !result.Created {
+		t.Fatalf("result = %+v", result)
+	}
+	input := store.input
+	if input.Kind != SimulateJobKind || input.ResourceType != "publication_effect" ||
+		input.ResourceID != "effect-1" || input.DedupeKey != SimulateJobKind+":effect-1" ||
+		string(input.Payload) != `{"effect_id":"effect-1"}` ||
+		!input.AvailableAt.Equal(time.Unix(7, 0).UTC()) || input.MaxAttempts != 3 {
+		t.Fatalf("job input = %+v", input)
+	}
+}
+
+func TestSchedulerRejectsInvalidEffectBeforeWriting(t *testing.T) {
+	store := &publicationSchedulerStore{}
+	for _, effectID := range []string{"", " effect-1", "effect/1"} {
+		_, err := (Scheduler{Store: store}).Schedule(context.Background(), effectID)
+		if err == nil || !strings.Contains(err.Error(), "effect ID") {
+			t.Fatalf("effect ID %q error = %v", effectID, err)
+		}
+	}
+	if store.called {
+		t.Fatalf("store was called for invalid effect: %+v", store)
+	}
+}
+
+func TestSchedulerRequiresStore(t *testing.T) {
+	if _, err := (Scheduler{}).Schedule(context.Background(), "effect-1"); err == nil || !strings.Contains(err.Error(), "store") {
+		t.Fatalf("Schedule() error = %v", err)
+	}
+}
+
 func publicationJob(payload string) sqlite.Job {
 	return sqlite.Job{Kind: SimulateJobKind, Payload: []byte(payload)}
 }
@@ -126,6 +166,21 @@ type attemptRecorder struct {
 	effectID string
 	at       time.Time
 	err      error
+}
+
+type publicationSchedulerStore struct {
+	input  sqlite.JobInput
+	called bool
+	err    error
+}
+
+func (s *publicationSchedulerStore) EnsureJob(_ context.Context, input sqlite.JobInput) (sqlite.EnsureJobResult, error) {
+	s.called = true
+	s.input = input
+	if s.err != nil {
+		return sqlite.EnsureJobResult{}, s.err
+	}
+	return sqlite.EnsureJobResult{ID: "job-1", Created: true}, nil
 }
 
 func (r *attemptRecorder) RecordSimulatedPublicationAttempt(_ context.Context, effectID string, at time.Time) (sqlite.RecordSimulatedPublicationAttemptResult, error) {

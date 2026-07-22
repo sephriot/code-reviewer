@@ -21,6 +21,51 @@ const SimulateJobKind = "publication.simulate.v1"
 
 const maxEffectIDBytes = 256
 
+// SchedulerStore is the narrow durable scheduling boundary used by Scheduler.
+type SchedulerStore interface {
+	EnsureJob(context.Context, sqlite.JobInput) (sqlite.EnsureJobResult, error)
+}
+
+// Scheduler queues one simulated dispatch for an immutable publication effect.
+// It does not inspect, authorize, or dispatch the effect itself.
+type Scheduler struct {
+	Store SchedulerStore
+	Now   func() time.Time
+}
+
+// Schedule returns the matching active simulation job or creates one. The
+// effect ID is deliberately the sole job payload: all outbound facts remain
+// in the immutable effect record and are revalidated by Handler.
+func (s Scheduler) Schedule(ctx context.Context, effectID string) (sqlite.EnsureJobResult, error) {
+	if s.Store == nil {
+		return sqlite.EnsureJobResult{}, errors.New("simulated publication job store is required")
+	}
+	if effectID == "" || effectID != strings.TrimSpace(effectID) || len(effectID) > maxEffectIDBytes || !validEffectID(effectID) {
+		return sqlite.EnsureJobResult{}, errors.New("simulated publication effect ID is invalid")
+	}
+	payload, err := json.Marshal(jobPayload{EffectID: effectID})
+	if err != nil {
+		return sqlite.EnsureJobResult{}, fmt.Errorf("encode simulated publication job payload: %w", err)
+	}
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.Now().UTC()
+	}
+	result, err := s.Store.EnsureJob(ctx, sqlite.JobInput{
+		Kind:         SimulateJobKind,
+		ResourceType: "publication_effect",
+		ResourceID:   effectID,
+		DedupeKey:    SimulateJobKind + ":" + effectID,
+		Payload:      payload,
+		AvailableAt:  now,
+		MaxAttempts:  3,
+	})
+	if err != nil {
+		return sqlite.EnsureJobResult{}, fmt.Errorf("ensure simulated publication job: %w", err)
+	}
+	return result, nil
+}
+
 // EffectLoader loads an effect and its current-evidence status.
 type EffectLoader interface {
 	LoadCurrentPublicationEffect(context.Context, string) (sqlite.PublicationEffectTarget, error)

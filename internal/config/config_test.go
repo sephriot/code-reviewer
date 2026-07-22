@@ -36,7 +36,7 @@ func TestLoad(t *testing.T) {
 		EnvDatabasePath:            "/var/lib/reviewd/control-plane.db",
 		EnvListenAddress:           "[::1]:9090",
 		EnvMigrationMode:           "apply",
-		EnvPublicationMode:         "disabled",
+		EnvPublicationMode:         "simulated",
 		EnvShadowReconcileEnabled:  "true",
 		EnvGitHubConnectionID:      "github:local",
 		EnvGitHubAPIBaseURL:        "https://api.github.com",
@@ -61,8 +61,8 @@ func TestLoad(t *testing.T) {
 	if got.MigrationMode != MigrationApply {
 		t.Errorf("MigrationMode = %q, want %q", got.MigrationMode, MigrationApply)
 	}
-	if got.PublicationMode != PublicationDisabled {
-		t.Errorf("PublicationMode = %q, want %q", got.PublicationMode, PublicationDisabled)
+	if got.PublicationMode != PublicationSimulated {
+		t.Errorf("PublicationMode = %q, want %q", got.PublicationMode, PublicationSimulated)
 	}
 	if !got.ShadowReconciliation.Enabled || got.ShadowReconciliation.ConnectionID != "github:local" ||
 		got.ShadowReconciliation.TokenEnvironment != "TEST_GITHUB_TOKEN" || got.ShadowReconciliation.Interval.String() != "2m0s" {

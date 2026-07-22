@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sephriot/code-reviewer/internal/application/hydrateworker"
+	"github.com/sephriot/code-reviewer/internal/application/publishworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/application/reconcileworker"
 	"github.com/sephriot/code-reviewer/internal/application/reviewworker"
@@ -305,6 +306,43 @@ func TestNewRegistersReviewWorkerOnlyWhenFullyEnabled(t *testing.T) {
 		err = router.Handle(context.Background(), sqlite.Job{Kind: reviewworker.ExecuteJobKind, Payload: []byte(`{}`)})
 		if err == nil || !worker.IsPermanent(err) || strings.Contains(err.Error(), "unknown job kind") {
 			t.Fatalf("enabled review route error = %v", err)
+		}
+	})
+}
+
+func TestNewRegistersSimulatedPublicationWorkerOnlyInSimulatedMode(t *testing.T) {
+	newConfig := func() config.Config {
+		cfg := config.Default()
+		cfg.DatabasePath = filepath.Join(t.TempDir(), "control-plane.db")
+		cfg.MigrationMode = config.MigrationApply
+		return cfg
+	}
+
+	t.Run("disabled", func(t *testing.T) {
+		service, err := New(context.Background(), newConfig())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = service.Close() }()
+		router := service.jobRunner.(*worker.Runner).Handler.(*worker.Router)
+		err = router.Handle(context.Background(), sqlite.Job{Kind: publishworker.SimulateJobKind, Payload: []byte(`{"effect_id":"effect-1"}`)})
+		if err == nil || !worker.IsPermanent(err) || !strings.Contains(err.Error(), "unknown job kind") {
+			t.Fatalf("disabled publication route error = %v", err)
+		}
+	})
+
+	t.Run("simulated", func(t *testing.T) {
+		cfg := newConfig()
+		cfg.PublicationMode = config.PublicationSimulated
+		service, err := New(context.Background(), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = service.Close() }()
+		router := service.jobRunner.(*worker.Runner).Handler.(*worker.Router)
+		err = router.Handle(context.Background(), sqlite.Job{Kind: publishworker.SimulateJobKind, Payload: []byte(`{"effect_id":"effect-1"}`)})
+		if err == nil || !worker.IsPermanent(err) || strings.Contains(err.Error(), "unknown job kind") {
+			t.Fatalf("simulated publication route error = %v", err)
 		}
 	})
 }

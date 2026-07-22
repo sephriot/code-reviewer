@@ -56,6 +56,9 @@ type PublicationMode string
 const (
 	// PublicationDisabled persists workflow state without dispatching GitHub mutations.
 	PublicationDisabled PublicationMode = "disabled"
+	// PublicationSimulated records local simulated publication attempts without
+	// granting a GitHub write capability.
+	PublicationSimulated PublicationMode = "simulated"
 )
 
 // Config contains startup-only control-plane settings.
@@ -235,10 +238,12 @@ func validateMigrationMode(mode MigrationMode) error {
 }
 
 func validatePublicationMode(mode PublicationMode) error {
-	if mode != PublicationDisabled {
-		return fmt.Errorf("publication mode must be %q in this release", PublicationDisabled)
+	switch mode {
+	case PublicationDisabled, PublicationSimulated:
+		return nil
+	default:
+		return fmt.Errorf("publication mode must be %q or %q in this release", PublicationDisabled, PublicationSimulated)
 	}
-	return nil
 }
 
 func validateShadowReconciliation(cfg ShadowReconciliationConfig) error {
