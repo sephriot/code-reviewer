@@ -207,6 +207,13 @@ func TestValidate(t *testing.T) {
 			wantError: "shadow reconciliation connection ID",
 		},
 		{
+			name: "enabled publication needs configured GitHub connection",
+			mutate: func(cfg *Config) {
+				cfg.PublicationMode = PublicationEnabled
+			},
+			wantError: "enabled publication requires enabled shadow reconciliation",
+		},
+		{
 			name: "reconciliation interval must be positive",
 			mutate: func(cfg *Config) {
 				cfg.ShadowReconciliation.Interval = 0

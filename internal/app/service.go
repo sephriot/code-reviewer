@@ -166,6 +166,13 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	if cfg.PublicationMode == config.PublicationSimulated {
 		handlers[publishworker.SimulateJobKind] = publishworker.Handler{Loader: store, Recorder: store}
 	}
+	if cfg.PublicationMode == config.PublicationEnabled {
+		handler, err := newEnabledPublicationHandler(cfg, store, os.LookupEnv)
+		if err != nil {
+			return closeOnError(err)
+		}
+		handlers[publishworker.EnabledJobKind] = handler
+	}
 	router, err := worker.NewRouter(handlers)
 	if err != nil {
 		return closeOnError(fmt.Errorf("configure worker handlers: %w", err))
@@ -258,6 +265,25 @@ func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (r
 		Recorder:  store,
 	}
 	return reviewworker.Handler{Executor: executor, Events: store, AutomaticPolicyStore: store}, nil
+}
+
+func newEnabledPublicationHandler(cfg config.Config, store *storagesqlite.Store, lookup func(string) (string, bool)) (publishworker.EnabledHandler, error) {
+	if store == nil || lookup == nil {
+		return publishworker.EnabledHandler{}, errors.New("enabled publication dependencies are unavailable")
+	}
+	token, found := lookup(cfg.ShadowReconciliation.TokenEnvironment)
+	if !found || strings.TrimSpace(token) == "" {
+		return publishworker.EnabledHandler{}, errors.New("enabled publication GitHub token is unavailable")
+	}
+	reader, err := githubadapter.NewClient(cfg.ShadowReconciliation.APIBaseURL, token, nil)
+	if err != nil {
+		return publishworker.EnabledHandler{}, fmt.Errorf("configure enabled publication read client: %w", err)
+	}
+	publisher, err := githubadapter.NewPublisher(cfg.ShadowReconciliation.APIBaseURL, token, nil)
+	if err != nil {
+		return publishworker.EnabledHandler{}, fmt.Errorf("configure enabled publication writer: %w", err)
+	}
+	return publishworker.EnabledHandler{Claimer: store, Recorder: store, Reader: reader, Publisher: publisher}, nil
 }
 
 // Run listens until the context is canceled or the server fails.

@@ -225,6 +225,9 @@ func (cfg Config) Validate() error {
 	if err := validateShadowReconciliation(cfg.ShadowReconciliation); err != nil {
 		return err
 	}
+	if cfg.PublicationMode == PublicationEnabled && !cfg.ShadowReconciliation.Enabled {
+		return errors.New("enabled publication requires enabled shadow reconciliation")
+	}
 	if err := validateReviewExecution(cfg.ReviewExecution, cfg.ShadowReconciliation); err != nil {
 		return err
 	}
