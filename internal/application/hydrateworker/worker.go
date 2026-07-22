@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sephriot/code-reviewer/internal/application/hydrate"
+	"github.com/sephriot/code-reviewer/internal/application/watchschedule"
 	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 	"github.com/sephriot/code-reviewer/internal/worker"
 )
@@ -82,8 +83,14 @@ type ReaderFactory func(context.Context, string) (hydrate.Reader, error)
 
 // Handler executes one durable canonical hydration job.
 type Handler struct {
-	Store     hydrate.Store
-	NewReader ReaderFactory
+	Store              hydrate.Store
+	NewReader          ReaderFactory
+	AutomaticScheduler automaticScheduler
+	AutomaticRequest   watchschedule.Request
+}
+
+type automaticScheduler interface {
+	Schedule(context.Context, watchschedule.Request) (watchschedule.Result, error)
 }
 
 // Handle implements worker.Handler. Invalid job data is a permanent failure.
@@ -112,6 +119,14 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 	service := hydrate.Service{Reader: reader, Store: h.Store}
 	if _, err := service.Hydrate(ctx, request); err != nil {
 		return fmt.Errorf("hydrate GitHub canonical revision: %w", err)
+	}
+	if h.AutomaticScheduler != nil {
+		automatic := h.AutomaticRequest
+		automatic.ConnectionID = target.ConnectionID
+		automatic.PullRequestID = target.PullRequestID
+		if _, err := h.AutomaticScheduler.Schedule(ctx, automatic); err != nil {
+			return fmt.Errorf("schedule automatic watch-rule review: %w", err)
+		}
 	}
 	return nil
 }

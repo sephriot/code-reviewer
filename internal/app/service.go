@@ -25,6 +25,7 @@ import (
 	"github.com/sephriot/code-reviewer/internal/application/reviewbundle"
 	"github.com/sephriot/code-reviewer/internal/application/reviewexecute"
 	"github.com/sephriot/code-reviewer/internal/application/reviewworker"
+	"github.com/sephriot/code-reviewer/internal/application/watchschedule"
 	"github.com/sephriot/code-reviewer/internal/config"
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 	"github.com/sephriot/code-reviewer/internal/worker"
@@ -130,6 +131,13 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 			CredentialRefKind: "environment",
 			CredentialLocator: cfg.ShadowReconciliation.TokenEnvironment,
 		}),
+	}
+	if cfg.ReviewExecution.Enabled {
+		hydrateHandler.AutomaticScheduler = watchschedule.Service{Store: store}
+		hydrateHandler.AutomaticRequest = watchschedule.Request{
+			EngineKind: "cli", EngineConfigJSON: []byte(`{"engine_source":"reviewd_config"}`),
+			AccessMode: "diff_only", CorrelationID: "reviewd-watch-rule",
+		}
 	}
 	handlers := map[string]worker.Handler{
 		reconcileworker.ReconcileJobKind: reconcileHandler,
