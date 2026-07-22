@@ -69,8 +69,13 @@ type ReaderFactory func(context.Context, reconcile.Config) (githubadapter.Reader
 
 // Handler executes one durable shadow reconciliation job.
 type Handler struct {
-	Store     reconcile.Store
-	NewReader ReaderFactory
+	Store              reconcile.Store
+	NewReader          ReaderFactory
+	HydrationScheduler hydrationScheduler
+}
+
+type hydrationScheduler interface {
+	Schedule(context.Context, string) ([]sqlite.EnsureJobResult, error)
 }
 
 // Handle implements worker.Handler. Invalid jobs are permanent failures;
@@ -96,6 +101,11 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 	}
 	if _, err := service.Reconcile(ctx, config); err != nil {
 		return fmt.Errorf("reconcile GitHub connection: %w", err)
+	}
+	if h.HydrationScheduler != nil {
+		if _, err := h.HydrationScheduler.Schedule(ctx, config.ConnectionID); err != nil {
+			return fmt.Errorf("schedule canonical hydration: %w", err)
+		}
 	}
 	return nil
 }

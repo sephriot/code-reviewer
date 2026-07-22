@@ -87,6 +87,27 @@ func TestHandlerReconcilesUsingInjectedReader(t *testing.T) {
 	}
 }
 
+func TestHandlerSchedulesHydrationOnlyAfterSuccessfulReconciliation(t *testing.T) {
+	reader := &fakeReader{user: testAuthenticatedUser(), search: map[string]map[int]fakeSearchResult{
+		"is:pr state:open review-requested:reviewer": {1: {page: githubadapter.SearchPage{TotalCount: 0}}},
+		"is:pr state:open author:reviewer":           {1: {page: githubadapter.SearchPage{TotalCount: 0}}},
+	}}
+	scheduler := &hydrationSchedulerRecorder{}
+	handler := reconcileworker.Handler{Store: newFakeStore(), NewReader: func(context.Context, reconcile.Config) (githubadapter.Reader, error) { return reader, nil }, HydrationScheduler: scheduler}
+	if err := handler.Handle(context.Background(), sqlite.Job{Kind: reconcileworker.ReconcileJobKind, Payload: mustJobPayload(testConfig())}); err != nil {
+		t.Fatal(err)
+	}
+	if scheduler.connectionID != "connection-1" {
+		t.Fatalf("hydration connection=%q", scheduler.connectionID)
+	}
+
+	scheduler.err = errors.New("job database offline")
+	err := handler.Handle(context.Background(), sqlite.Job{Kind: reconcileworker.ReconcileJobKind, Payload: mustJobPayload(testConfig())})
+	if err == nil || worker.IsPermanent(err) || !strings.Contains(err.Error(), "schedule canonical hydration") {
+		t.Fatalf("schedule error=%v", err)
+	}
+}
+
 func TestHandlerMarksMalformedPayloadPermanent(t *testing.T) {
 	t.Parallel()
 	handler := reconcileworker.Handler{
@@ -105,6 +126,16 @@ func TestHandlerMarksMalformedPayloadPermanent(t *testing.T) {
 }
 
 type ensureJobStore struct{ inputs []sqlite.JobInput }
+
+type hydrationSchedulerRecorder struct {
+	connectionID string
+	err          error
+}
+
+func (s *hydrationSchedulerRecorder) Schedule(_ context.Context, connectionID string) ([]sqlite.EnsureJobResult, error) {
+	s.connectionID = connectionID
+	return nil, s.err
+}
 
 func (s *ensureJobStore) EnsureJob(_ context.Context, input sqlite.JobInput) (sqlite.EnsureJobResult, error) {
 	s.inputs = append(s.inputs, input)

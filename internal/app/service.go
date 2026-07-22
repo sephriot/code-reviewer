@@ -131,8 +131,9 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		IdleTimeout:       30 * time.Second,
 	}
 	reconcileHandler := reconcileworker.Handler{
-		Store:     store,
-		NewReader: environmentReaderFactory(os.LookupEnv),
+		Store:              store,
+		NewReader:          environmentReaderFactory(os.LookupEnv),
+		HydrationScheduler: hydrateworker.Scheduler{Store: store},
 	}
 	hydrateHandler := hydrateworker.Handler{
 		Store: store,
