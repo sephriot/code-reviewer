@@ -52,50 +52,51 @@ func (s *Store) EnsureJob(ctx context.Context, input JobInput) (result EnsureJob
 	}
 
 	err = withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
-		var existing struct {
-			id           string
-			resourceType sql.NullString
-			resourceID   sql.NullString
-			payload      []byte
-		}
-		scanErr := conn.QueryRowContext(ctx, `
-SELECT id, resource_type, resource_id, payload_json
-FROM jobs
-WHERE kind = ?
-  AND dedupe_key = ?
-  AND state IN ('queued', 'running', 'retry_wait')`, input.Kind, input.DedupeKey).Scan(
-			&existing.id,
-			&existing.resourceType,
-			&existing.resourceID,
-			&existing.payload,
-		)
-		switch {
-		case scanErr == nil:
-			if existing.resourceType.String != input.ResourceType ||
-				existing.resourceID.String != input.ResourceID ||
-				!bytes.Equal(existing.payload, input.Payload) {
-				return fmt.Errorf("%w: kind=%q dedupe_key=%q", ErrJobConflict, input.Kind, input.DedupeKey)
-			}
-			result = EnsureJobResult{ID: existing.id}
-			return nil
-		case !errors.Is(scanErr, sql.ErrNoRows):
-			return fmt.Errorf("read active job dedupe: %w", scanErr)
-		}
-
-		id, idErr := newID("job")
-		if idErr != nil {
-			return idErr
-		}
-		if insertErr := insertJob(ctx, conn, id, input, time.Now().UTC().UnixMicro()); insertErr != nil {
-			return insertErr
-		}
-		result = EnsureJobResult{ID: id, Created: true}
-		return nil
+		result, err = ensureJob(ctx, conn, input)
+		return err
 	})
 	if err != nil {
 		return EnsureJobResult{}, fmt.Errorf("ensure job: %w", err)
 	}
 	return result, nil
+}
+
+func ensureJob(ctx context.Context, conn *sql.Conn, input JobInput) (EnsureJobResult, error) {
+	var existing struct {
+		id           string
+		resourceType sql.NullString
+		resourceID   sql.NullString
+		payload      []byte
+	}
+	scanErr := conn.QueryRowContext(ctx, `
+SELECT id, resource_type, resource_id, payload_json
+FROM jobs
+WHERE kind = ?
+  AND dedupe_key = ?
+  AND state IN ('queued', 'running', 'retry_wait')`, input.Kind, input.DedupeKey).Scan(
+		&existing.id,
+		&existing.resourceType,
+		&existing.resourceID,
+		&existing.payload,
+	)
+	switch {
+	case scanErr == nil:
+		if existing.resourceType.String != input.ResourceType || existing.resourceID.String != input.ResourceID || !bytes.Equal(existing.payload, input.Payload) {
+			return EnsureJobResult{}, fmt.Errorf("%w: kind=%q dedupe_key=%q", ErrJobConflict, input.Kind, input.DedupeKey)
+		}
+		return EnsureJobResult{ID: existing.id}, nil
+	case !errors.Is(scanErr, sql.ErrNoRows):
+		return EnsureJobResult{}, fmt.Errorf("read active job dedupe: %w", scanErr)
+	}
+
+	id, err := newID("job")
+	if err != nil {
+		return EnsureJobResult{}, err
+	}
+	if err := insertJob(ctx, conn, id, input, time.Now().UTC().UnixMicro()); err != nil {
+		return EnsureJobResult{}, err
+	}
+	return EnsureJobResult{ID: id, Created: true}, nil
 }
 
 func normalizedJobInput(input JobInput) (JobInput, error) {

@@ -58,7 +58,12 @@ type CreatePublicationEffectResult struct {
 	EffectID        string
 	PublicationMode PublicationMode
 	Created         bool
+	Job             *EnsureJobResult
 }
+
+// PublicationEffectJobFactory builds one mode-specific effect job inside the
+// same SQLite transaction which authorizes the effect.
+type PublicationEffectJobFactory func(string, PublicationMode) (JobInput, error)
 
 // CreatePublicationEffect writes an approved proposal revision's exact
 // publication effect only after re-validating its selected canonical evidence.
@@ -66,6 +71,20 @@ type CreatePublicationEffectResult struct {
 // evidence before dispatching. This method never creates jobs, events, outbox
 // rows, or GitHub traffic.
 func (s *Store) CreatePublicationEffect(ctx context.Context, input CreatePublicationEffectInput) (CreatePublicationEffectResult, error) {
+	return s.createPublicationEffect(ctx, input, nil)
+}
+
+// CreatePublicationEffectAndEnsureJob atomically creates or reloads an
+// authorized effect and its active job. Disabled effects deliberately have no
+// job. The factory has no database or GitHub capability.
+func (s *Store) CreatePublicationEffectAndEnsureJob(ctx context.Context, input CreatePublicationEffectInput, factory PublicationEffectJobFactory) (CreatePublicationEffectResult, error) {
+	if factory == nil {
+		return CreatePublicationEffectResult{}, errors.New("publication job factory is required")
+	}
+	return s.createPublicationEffect(ctx, input, factory)
+}
+
+func (s *Store) createPublicationEffect(ctx context.Context, input CreatePublicationEffectInput, factory PublicationEffectJobFactory) (CreatePublicationEffectResult, error) {
 	normalized, err := normalizeCreatePublicationEffectInput(input)
 	if err != nil {
 		return CreatePublicationEffectResult{}, err
@@ -113,7 +132,7 @@ func (s *Store) CreatePublicationEffect(ctx context.Context, input CreatePublica
 				return fmt.Errorf("%w: key=%q", ErrPublicationEffectConflict, idempotencyKey)
 			}
 			result = CreatePublicationEffectResult{EffectID: existing.ID, PublicationMode: mode}
-			return nil
+			return ensurePublicationEffectJob(ctx, conn, &result, factory)
 		}
 		semanticEffect, found, err := loadPublicationEffectBySemanticIdentity(ctx, conn, authorization, effectType, payloadSHA256)
 		if err != nil {
@@ -139,12 +158,35 @@ VALUES (?, 'proposal_revision', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			return fmt.Errorf("insert publication effect: %w", err)
 		}
 		result = CreatePublicationEffectResult{EffectID: effectID, PublicationMode: mode, Created: true}
-		return nil
+		return ensurePublicationEffectJob(ctx, conn, &result, factory)
 	})
 	if err != nil {
 		return CreatePublicationEffectResult{}, fmt.Errorf("create publication effect: %w", err)
 	}
 	return result, nil
+}
+
+func ensurePublicationEffectJob(ctx context.Context, conn *sql.Conn, result *CreatePublicationEffectResult, factory PublicationEffectJobFactory) error {
+	if factory == nil || result.PublicationMode == PublicationModeDisabled {
+		return nil
+	}
+	input, err := factory(result.EffectID, result.PublicationMode)
+	if err != nil {
+		return err
+	}
+	input, err = normalizedJobInput(input)
+	if err != nil {
+		return err
+	}
+	if input.DedupeKey == "" {
+		return errors.New("publication job dedupe key is required")
+	}
+	job, err := ensureJob(ctx, conn, input)
+	if err != nil {
+		return err
+	}
+	result.Job = &job
+	return nil
 }
 
 type normalizedCreatePublicationEffectInput struct {

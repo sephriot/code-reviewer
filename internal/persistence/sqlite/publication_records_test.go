@@ -163,6 +163,18 @@ func TestCreatePublicationEffectEnabledPersistsIntentWithoutAttempt(t *testing.T
 	}
 }
 
+func TestCreatePublicationEffectAndEnsureJobIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedApprovedPublicationProposal(t, ctx)
+	setPublicationMode(t, ctx, store, PublicationModeSimulated)
+	_, err := store.CreatePublicationEffectAndEnsureJob(ctx, CreatePublicationEffectInput{ProposalRevisionID: fixture.proposalRevisionID, IdempotencyKey: "publish:atomic", CreatedAt: time.Unix(80, 0).UTC()}, func(string, PublicationMode) (JobInput, error) { return JobInput{}, errors.New("stop") })
+	if err == nil {
+		t.Fatal("job factory failure accepted")
+	}
+	assertTableCount(t, ctx, store.db, "publication_effects", 0)
+	assertTableCount(t, ctx, store.db, "jobs", 0)
+}
+
 func TestCreatePublicationEffectRejectsDisallowedModeWithoutEffect(t *testing.T) {
 	ctx := context.Background()
 	store, fixture := seedApprovedPublicationProposal(t, ctx)

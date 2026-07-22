@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -226,24 +227,28 @@ func (p automaticPublication) PublishAutomaticApproval(ctx context.Context, prop
 	if p.store == nil {
 		return errors.New("automatic publication store is unavailable")
 	}
-	effect, err := p.store.CreatePublicationEffect(ctx, storagesqlite.CreatePublicationEffectInput{ProposalRevisionID: proposalRevisionID})
+	_, err := p.store.CreatePublicationEffectAndEnsureJob(ctx, storagesqlite.CreatePublicationEffectInput{ProposalRevisionID: proposalRevisionID}, automaticPublicationJob)
 	if err != nil {
 		return err
 	}
-	switch effect.PublicationMode {
-	case storagesqlite.PublicationModeDisabled:
-		return nil
-	case storagesqlite.PublicationModeSimulated:
-		_, err = (publishworker.Scheduler{Store: p.store}).Schedule(ctx, effect.EffectID)
-	case storagesqlite.PublicationModeEnabled:
-		_, err = (publishworker.EnabledScheduler{Store: p.store}).Schedule(ctx, effect.EffectID)
-	default:
-		return errors.New("automatic publication mode is unsupported")
-	}
-	if err != nil {
-		return fmt.Errorf("schedule automatic publication: %w", err)
-	}
 	return nil
+}
+
+func automaticPublicationJob(effectID string, mode storagesqlite.PublicationMode) (storagesqlite.JobInput, error) {
+	payload, err := json.Marshal(struct {
+		EffectID string `json:"effect_id"`
+	}{EffectID: effectID})
+	if err != nil {
+		return storagesqlite.JobInput{}, err
+	}
+	switch mode {
+	case storagesqlite.PublicationModeSimulated:
+		return storagesqlite.JobInput{Kind: publishworker.SimulateJobKind, ResourceType: "publication_effect", ResourceID: effectID, DedupeKey: publishworker.SimulateJobKind + ":" + effectID, Payload: payload, MaxAttempts: 3}, nil
+	case storagesqlite.PublicationModeEnabled:
+		return storagesqlite.JobInput{Kind: publishworker.EnabledJobKind, ResourceType: "publication_effect", ResourceID: effectID, DedupeKey: publishworker.EnabledJobKind + ":" + effectID, Payload: payload, MaxAttempts: 1}, nil
+	default:
+		return storagesqlite.JobInput{}, errors.New("automatic publication mode is unsupported")
+	}
 }
 
 func githubWebhookOptions(cfg config.GitHubWebhookConfig, reconciliation config.ShadowReconciliationConfig, store *storagesqlite.Store, lookup func(string) (string, bool)) (api.GitHubWebhookOptions, error) {
