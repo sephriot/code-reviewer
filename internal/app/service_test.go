@@ -366,6 +366,21 @@ func TestNewRegistersSimulatedPublicationWorkerOnlyInSimulatedMode(t *testing.T)
 	})
 }
 
+func TestPublicationMutationOptionsOnlyScheduleInSimulatedRuntime(t *testing.T) {
+	t.Parallel()
+	store := &sqlite.Store{}
+	disabled := publicationMutationOptions(config.Default(), store)
+	if disabled.Effects != store || disabled.Scheduler != nil {
+		t.Fatalf("disabled publication options = %+v", disabled)
+	}
+	cfg := config.Default()
+	cfg.PublicationMode = config.PublicationSimulated
+	simulated := publicationMutationOptions(cfg, store)
+	if simulated.Effects != store || simulated.Scheduler == nil {
+		t.Fatalf("simulated publication options = %+v", simulated)
+	}
+}
+
 func TestNewRejectsUnavailableReviewEngine(t *testing.T) {
 	cfg := config.Default()
 	cfg.DatabasePath = filepath.Join(t.TempDir(), "control-plane.db")

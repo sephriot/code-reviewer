@@ -107,7 +107,11 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 				Pending: status.Pending,
 			}, err
 		},
-	}, api.ControlOptions{Reader: store, ProposalMutations: api.ProposalMutationOptions{Revisions: store, Decisions: store}})
+	}, api.ControlOptions{
+		Reader:               store,
+		ProposalMutations:    api.ProposalMutationOptions{Revisions: store, Decisions: store},
+		PublicationMutations: publicationMutationOptions(cfg, store),
+	})
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
 		Handler:           mutationAuth.Wrap(controlAPI),
@@ -166,6 +170,14 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		service.scheduleInterval = cfg.ShadowReconciliation.Interval
 	}
 	return service, nil
+}
+
+func publicationMutationOptions(cfg config.Config, store *storagesqlite.Store) api.PublicationMutationOptions {
+	options := api.PublicationMutationOptions{Effects: store}
+	if cfg.PublicationMode == config.PublicationSimulated {
+		options.Scheduler = publishworker.Scheduler{Store: store}
+	}
+	return options
 }
 
 func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (reviewworker.Handler, error) {
