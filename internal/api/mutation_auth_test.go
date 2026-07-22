@@ -4,11 +4,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestMutationAuthOnlyProtectsVersionedMutationPrefix(t *testing.T) {
 	t.Parallel()
-	guard := MutationAuth{token: "test-secret"}
+	guard := newMutationAuth(time.Now)
 	next := http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.WriteHeader(http.StatusNoContent)
 	})
@@ -30,14 +31,69 @@ func TestMutationAuthOnlyProtectsVersionedMutationPrefix(t *testing.T) {
 	}
 }
 
-func TestMutationAuthRejectsNonLoopbackBeforeCheckingBearer(t *testing.T) {
+func TestSessionEndpointRequiresLoopbackAndSetsBrowserSafeCookie(t *testing.T) {
 	t.Parallel()
-	guard := MutationAuth{token: "test-secret"}
+	guard := newMutationAuth(time.Now)
+	handler := guard.Wrap(http.NotFoundHandler())
+
+	remote := httptest.NewRequest(http.MethodGet, sessionPath, nil)
+	remote.RemoteAddr = "198.51.100.7:443"
+	remoteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(remoteResponse, remote)
+	if remoteResponse.Code != http.StatusForbidden {
+		t.Fatalf("remote status = %d, want %d", remoteResponse.Code, http.StatusForbidden)
+	}
+	if len(remoteResponse.Result().Cookies()) != 0 {
+		t.Fatal("remote session response set a cookie")
+	}
+
+	request := httptest.NewRequest(http.MethodGet, sessionPath, nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("session status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	if response.Body.Len() != 0 {
+		t.Fatal("session response must not expose a body")
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	cookie := cookies[0]
+	if cookie.Name != sessionCookieName || cookie.Value == "" {
+		t.Fatalf("cookie = %#v", cookie)
+	}
+	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || cookie.Secure {
+		t.Fatalf("cookie protections = httpOnly:%t sameSite:%d secure:%t", cookie.HttpOnly, cookie.SameSite, cookie.Secure)
+	}
+	if cookie.Path != "/api/v1/" || cookie.MaxAge != int(sessionTTL.Seconds()) {
+		t.Fatalf("cookie scope = path:%q maxAge:%d", cookie.Path, cookie.MaxAge)
+	}
+}
+
+func TestSessionEndpointAllowsOnlyGet(t *testing.T) {
+	t.Parallel()
+	guard := newMutationAuth(time.Now)
+	handler := guard.Wrap(http.NotFoundHandler())
+	request := httptest.NewRequest(http.MethodPost, sessionPath, nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestMutationAuthRejectsNonLoopbackBeforeCheckingSession(t *testing.T) {
+	t.Parallel()
+	guard := newMutationAuth(time.Now)
 	called := false
 	handler := guard.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/example", nil)
 	request.RemoteAddr = "198.51.100.7:443"
-	request.Header.Set("Authorization", "Bearer test-secret")
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "untrusted"})
 	response := httptest.NewRecorder()
 
 	handler.ServeHTTP(response, request)
@@ -49,81 +105,106 @@ func TestMutationAuthRejectsNonLoopbackBeforeCheckingBearer(t *testing.T) {
 	}
 }
 
-func TestMutationAuthRequiresExactBearerForLoopback(t *testing.T) {
+func TestMutationAuthRequiresExactCurrentSessionForLoopback(t *testing.T) {
 	t.Parallel()
-	guard := MutationAuth{token: "test-secret"}
-	cases := []struct {
+	now := time.Date(2026, time.July, 22, 12, 0, 0, 0, time.UTC)
+	guard := newMutationAuth(func() time.Time { return now })
+	handler := guard.Wrap(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	session := issueSession(t, handler)
+
+	for _, test := range []struct {
 		name          string
 		remoteAddress string
-		authorization string
+		cookie        *http.Cookie
 		want          int
 	}{
 		{name: "missing", remoteAddress: "127.0.0.1:1234", want: http.StatusUnauthorized},
-		{name: "wrong scheme", remoteAddress: "127.0.0.1:1234", authorization: "Basic test-secret", want: http.StatusUnauthorized},
-		{name: "wrong token", remoteAddress: "[::1]:1234", authorization: "Bearer wrong", want: http.StatusUnauthorized},
-		{name: "malformed remote", remoteAddress: "127.0.0.1", authorization: "Bearer test-secret", want: http.StatusForbidden},
-		{name: "ipv4 loopback", remoteAddress: "127.0.0.1:1234", authorization: "Bearer test-secret", want: http.StatusNoContent},
-		{name: "ipv6 loopback", remoteAddress: "[::1]:1234", authorization: "Bearer test-secret", want: http.StatusNoContent},
-	}
-	for _, test := range cases {
+		{name: "wrong", remoteAddress: "[::1]:1234", cookie: &http.Cookie{Name: sessionCookieName, Value: "wrong"}, want: http.StatusUnauthorized},
+		{name: "wrong name", remoteAddress: "127.0.0.1:1234", cookie: &http.Cookie{Name: "other", Value: session.Value}, want: http.StatusUnauthorized},
+		{name: "malformed remote", remoteAddress: "127.0.0.1", cookie: session, want: http.StatusForbidden},
+		{name: "ipv4 loopback", remoteAddress: "127.0.0.1:1234", cookie: session, want: http.StatusNoContent},
+		{name: "ipv6 loopback", remoteAddress: "[::1]:1234", cookie: session, want: http.StatusNoContent},
+	} {
 		t.Run(test.name, func(t *testing.T) {
-			called := false
-			handler := guard.Wrap(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-				called = true
-				response.WriteHeader(http.StatusNoContent)
-			}))
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/example", nil)
 			request.RemoteAddr = test.remoteAddress
-			if test.authorization != "" {
-				request.Header.Set("Authorization", test.authorization)
+			if test.cookie != nil {
+				request.AddCookie(test.cookie)
 			}
 			response := httptest.NewRecorder()
-
 			handler.ServeHTTP(response, request)
 			if response.Code != test.want {
 				t.Fatalf("status = %d, want %d", response.Code, test.want)
-			}
-			if called != (test.want == http.StatusNoContent) {
-				t.Fatalf("next called = %t, want %t", called, test.want == http.StatusNoContent)
 			}
 		})
 	}
 }
 
-func TestMutationAuthRejectsMultipleAuthorizationValues(t *testing.T) {
+func TestMutationAuthDoesNotAcceptBearerCredentials(t *testing.T) {
 	t.Parallel()
-	guard := MutationAuth{token: "test-secret"}
-	called := false
-	handler := guard.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	guard := newMutationAuth(time.Now)
+	handler := guard.Wrap(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	}))
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/example", nil)
 	request.RemoteAddr = "127.0.0.1:1234"
-	request.Header.Add("Authorization", "Bearer test-secret")
-	request.Header.Add("Authorization", "Bearer wrong")
+	request.Header.Set("Authorization", "Bearer ignored")
 	response := httptest.NewRecorder()
-
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
 	}
-	if called {
-		t.Fatal("ambiguous authorization reached mutation handler")
+}
+
+func TestMutationAuthRejectsExpiredAndAmbiguousSessions(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.July, 22, 12, 0, 0, 0, time.UTC)
+	guard := newMutationAuth(func() time.Time { return now })
+	handler := guard.Wrap(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	session := issueSession(t, handler)
+
+	for _, test := range []struct {
+		name    string
+		cookies []*http.Cookie
+		advance time.Duration
+	}{
+		{name: "expired", cookies: []*http.Cookie{session}, advance: sessionTTL + time.Nanosecond},
+		{name: "ambiguous", cookies: []*http.Cookie{session, {Name: sessionCookieName, Value: "wrong"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.advance > 0 {
+				now = now.Add(test.advance)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/example", nil)
+			request.RemoteAddr = "127.0.0.1:1234"
+			for _, cookie := range test.cookies {
+				request.AddCookie(cookie)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+			}
+		})
 	}
 }
 
-func TestNewMutationAuthCreatesUsableDistinctSecrets(t *testing.T) {
-	t.Parallel()
-	first, err := NewMutationAuth()
-	if err != nil {
-		t.Fatalf("new first mutation auth: %v", err)
+func issueSession(t *testing.T, handler http.Handler) *http.Cookie {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, sessionPath, nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("issue status = %d", response.Code)
 	}
-	second, err := NewMutationAuth()
-	if err != nil {
-		t.Fatalf("new second mutation auth: %v", err)
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("issued cookies = %d", len(cookies))
 	}
-	if first.token == "" || second.token == "" {
-		t.Fatal("generated mutation secret is empty")
-	}
-	if first.token == second.token {
-		t.Fatal("generated mutation secrets are equal")
-	}
+	return cookies[0]
 }

@@ -87,7 +87,8 @@
       const timelineMessage = document.querySelector('#timeline-message');
       const formatTime = (value) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'unknown time' : new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(date); };
       const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value || '—'; if (className) node.className = className; return node; };
-      const api = async (path) => { const response = await fetch(path, { headers:{Accept:'application/json'} }); if (!response.ok) throw new Error(`Read model returned ${response.status}`); return response.json(); };
+      const api = async (path) => { const response = await fetch(path, { credentials:'same-origin', headers:{Accept:'application/json'} }); if (!response.ok) throw new Error(`Read model returned ${response.status}`); return response.json(); };
+      const bootstrapSession = async () => { const response = await fetch('/api/v1/session', { credentials:'same-origin' }); if (!response.ok) throw new Error(`Local session returned ${response.status}`); };
       const setConnection = (state, value) => { connection.dataset.state = state; connection.textContent = value; };
       function showTimeline(item) {
         selected.hidden = false; selectedConnection.textContent = item.connection_id; selectedTitle.textContent = item.pull_request_id; selectedState.textContent = item.state;
@@ -99,7 +100,7 @@
         }).catch((error) => { timelineMessage.textContent = error.message; timelineMessage.setAttribute('role', 'alert'); });
       }
       function addInboxItem(item) { const button = document.createElement('button'); button.type = 'button'; button.className = 'inbox-item'; button.dataset.id = item.id; button.setAttribute('aria-current', 'false'); const mark = text('span', '', 'mark'); mark.setAttribute('aria-hidden', 'true'); const content = document.createElement('span'); const top = document.createElement('span'); top.className = 'item-top'; top.append(text('span', item.pull_request_id, 'item-pr'), text('time', formatTime(item.occurred_at), 'item-time')); content.append(top, text('span', item.detail, 'item-detail')); button.append(mark, content); button.addEventListener('click', () => showTimeline(item)); inbox.append(button); }
-      api('/api/v1/inbox').then((page) => { const items = page.items || []; inboxCount.textContent = `${items.length} OPEN`; inboxMessage.textContent = items.length ? '' : 'Queue clear. No current review attention.'; items.forEach(addInboxItem); setConnection('ready', 'Read model online'); if (items[0]) showTimeline(items[0]); }).catch((error) => { inboxMessage.textContent = error.message; inboxMessage.setAttribute('role', 'alert'); setConnection('error', 'Read model unavailable'); });
+      bootstrapSession().then(() => api('/api/v1/inbox')).then((page) => { const items = page.items || []; inboxCount.textContent = `${items.length} OPEN`; inboxMessage.textContent = items.length ? '' : 'Queue clear. No current review attention.'; items.forEach(addInboxItem); setConnection('ready', 'Read model online'); if (items[0]) showTimeline(items[0]); }).catch((error) => { inboxMessage.textContent = error.message; inboxMessage.setAttribute('role', 'alert'); setConnection('error', 'Read model unavailable'); });
     })();
   </script>
 </body>
