@@ -300,8 +300,8 @@ VALUES ('job-before-import-schema', 'test', '{}', 'queued', 1, 1, 1)`); err != n
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(applied) != 7 || applied[0] != 2 || applied[1] != 3 || applied[2] != 4 || applied[3] != 5 || applied[4] != 6 || applied[5] != 7 || applied[6] != 8 {
-		t.Fatalf("forward migration result = %v, want [2 3 4 5 6 7]", applied)
+	if len(applied) != 8 || applied[0] != 2 || applied[1] != 3 || applied[2] != 4 || applied[3] != 5 || applied[4] != 6 || applied[5] != 7 || applied[6] != 8 || applied[7] != 9 {
+		t.Fatalf("forward migration result = %v, want [2 3 4 5 6 7 8 9]", applied)
 	}
 	var count int
 	if err := store.db.QueryRowContext(ctx, `
