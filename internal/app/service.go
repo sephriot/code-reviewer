@@ -93,6 +93,10 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		))
 	}
 
+	mutationAuth, err := api.NewMutationAuth()
+	if err != nil {
+		return closeOnError(fmt.Errorf("create control mutation auth: %w", err))
+	}
 	controlAPI := api.NewControlHandler(api.Readiness{
 		Ping: store.Ping,
 		SchemaStatus: func(ctx context.Context) (api.SchemaStatus, error) {
@@ -106,7 +110,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	}, api.ControlOptions{Reader: store})
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
-		Handler:           controlAPI,
+		Handler:           mutationAuth.Wrap(controlAPI),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 	}

@@ -126,6 +126,25 @@ func TestNewWiresReadOnlyControlEndpoints(t *testing.T) {
 	}
 }
 
+func TestNewWiresLoopbackProtectionForFutureMutations(t *testing.T) {
+	cfg := config.Default()
+	cfg.DatabasePath = filepath.Join(t.TempDir(), "control-plane.db")
+	cfg.MigrationMode = config.MigrationApply
+	service, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = service.Close() }()
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/example", nil)
+	request.RemoteAddr = "198.51.100.7:443"
+	response := httptest.NewRecorder()
+	service.server.Handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("mutation status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
 func TestEnvironmentReaderFactoryUsesOnlyNamedEnvironmentReference(t *testing.T) {
 	t.Parallel()
 	factory := environmentReaderFactory(func(name string) (string, bool) {
