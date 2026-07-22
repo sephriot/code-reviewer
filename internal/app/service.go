@@ -230,9 +230,6 @@ func (p automaticPublication) PublishAutomaticApproval(ctx context.Context, prop
 	if err != nil {
 		return err
 	}
-	if !effect.Created {
-		return nil
-	}
 	switch effect.PublicationMode {
 	case storagesqlite.PublicationModeDisabled:
 		return nil
