@@ -19,6 +19,7 @@ const (
 	maxNotificationJSONBytes       = 64 * 1024
 	maxNotificationDedupeKeyBytes  = 512
 	maxNotificationPathBytes       = 4096
+	maxBrowserNotificationPageSize = 50
 )
 
 var (
@@ -291,6 +292,39 @@ FROM notification_deliveries WHERE id = ?`, id).Scan(
 		return NotificationDeliveryTarget{}, errors.New("stored notification delivery is invalid")
 	}
 	return target, nil
+}
+
+// ListQueuedBrowserNotificationDeliveries exposes bounded, local-only browser
+// work for an open loopback dashboard. It returns no payload or preferences.
+func (s *Store) ListQueuedBrowserNotificationDeliveries(ctx context.Context, limit int) ([]NotificationDeliveryTarget, error) {
+	if limit <= 0 || limit > maxBrowserNotificationPageSize {
+		return nil, errors.New("browser notification delivery limit is invalid")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, event_type, channel, state, attempt
+FROM notification_deliveries
+WHERE channel = 'browser' AND state = 'queued'
+ORDER BY available_at_us, id
+LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list queued browser notification deliveries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]NotificationDeliveryTarget, 0, limit)
+	for rows.Next() {
+		var item NotificationDeliveryTarget
+		if err := rows.Scan(&item.ID, &item.EventType, &item.Channel, &item.State, &item.Attempt); err != nil {
+			return nil, fmt.Errorf("scan queued browser notification delivery: %w", err)
+		}
+		if item.ID == "" || item.EventType == "" || item.Channel != NotificationChannelBrowser || item.State != NotificationDeliveryQueued || item.Attempt < 0 {
+			return nil, errors.New("stored browser notification delivery is invalid")
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate queued browser notification deliveries: %w", err)
+	}
+	return items, nil
 }
 
 // RecordNotificationDeliveryOutcome atomically retains one safe local result.

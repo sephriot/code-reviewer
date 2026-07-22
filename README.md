@@ -304,7 +304,7 @@ Use `--resolution abandoned` when no external review should be treated as delive
 
 ## Control API and dashboard
 
-Start `reviewd`, then open <http://127.0.0.1:8080/>. Dashboard shows current attention, immutable timeline records, local lifecycle analytics, guarded local proposal edits/decisions, and explicit local publication simulation. In `enabled` mode only, an extra browser-confirmed control can queue one guarded GitHub publication. On load it obtains a short-lived, HttpOnly, SameSite-Strict session cookie from the loopback server; browser code never sees the credential. Keep the listener on loopback.
+Start `reviewd`, then open <http://127.0.0.1:8080/>. Dashboard shows current attention, immutable timeline records, local lifecycle analytics, guarded local proposal edits/decisions, and explicit local publication simulation. In `enabled` mode only, an extra browser-confirmed control can queue one guarded GitHub publication. Browser notification preference now delivers pending local browser notifications through this open loopback dashboard; grant browser permission when prompted. On load it obtains a short-lived, HttpOnly, SameSite-Strict session cookie from the loopback server; browser code never sees the credential. Keep the listener on loopback.
 
 ```bash
 curl http://127.0.0.1:8080/api/v1/health/live

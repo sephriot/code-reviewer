@@ -366,7 +366,19 @@
         const response = await fetch(path, { method:'POST', credentials:'same-origin', headers:{Accept:'application/json', 'Content-Type':'application/json'}, body:JSON.stringify(payload) });
         if (response.status === 401 && retrySession) { await bootstrapSession(); return postMutation(path, payload, false); }
         if (!response.ok) throw new Error(await responseError(response));
+        if (response.status === 204) return null;
         return response.json();
+      }
+      async function deliverBrowserNotifications() {
+        const page = await api('/api/v1/notification-deliveries/browser');
+        for (const item of page.items || []) {
+          let state = 'delivered';
+          if (!('Notification' in window) || Notification.permission === 'denied') state = 'suppressed';
+          else if (Notification.permission === 'default') continue;
+          else new Notification('reviewd', { body:item.event_type, tag:item.id });
+          try { await postMutation(`/api/v1/mutate/notification-deliveries/browser/${encodeURIComponent(item.id)}/outcome`, { state }); }
+          catch (_) { /* Keep durable delivery queued for next dashboard poll. */ }
+        }
       }
       function setMutationBusy(busy) {
         activeMutation = busy;
@@ -464,13 +476,15 @@
         }
         notificationPreferencesBusy = true; syncNotificationPreferenceControls(); setNotificationPreferencesStatus('idle', 'Saving local notification preferences.');
         try {
+          if (notificationBrowser.checked && 'Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
           const updated = await postMutation('/api/v1/mutate/notification-preferences', {
             expected_version: notificationPreferences.version,
             channels: { browser:notificationBrowser.checked, log:notificationLog.checked, sound:notificationSound.checked, tts:notificationTTS.checked },
             muted_until: mutedUntil, speech_rate_milli: rate
           });
           renderNotificationPreferences(updated);
-          setNotificationPreferencesStatus('ready', 'Local notification preferences saved. No external delivery configured.');
+          setNotificationPreferencesStatus('ready', 'Local notification preferences saved. Browser alerts use this loopback dashboard.');
+          await deliverBrowserNotifications();
         } catch (error) {
           const message = error.message;
           await refreshNotificationPreferences();
@@ -479,7 +493,7 @@
       });
       proposalID.addEventListener('change', syncMutationControls);
       proposalRevisionID.addEventListener('change', syncMutationControls);
-      bootstrapSession().then(() => Promise.all([reloadInbox(), refreshNotificationPreferences()])).then(() => { setConnection('ready', 'Read model online'); }).catch((error) => { inboxMessage.textContent = error.message; inboxMessage.setAttribute('role', 'alert'); setConnection('error', 'Read model unavailable'); });
+      bootstrapSession().then(() => Promise.all([reloadInbox(), refreshNotificationPreferences(), deliverBrowserNotifications()])).then(() => { setConnection('ready', 'Read model online'); setInterval(() => { deliverBrowserNotifications().catch(() => {}); }, 10000); }).catch((error) => { inboxMessage.textContent = error.message; inboxMessage.setAttribute('role', 'alert'); setConnection('error', 'Read model unavailable'); });
     })();
   </script>
 </body>

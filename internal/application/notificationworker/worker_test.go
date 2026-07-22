@@ -29,8 +29,19 @@ func TestHandlerRecordsLogDelivery(t *testing.T) {
 	}
 }
 
+func TestHandlerLeavesBrowserDeliveryForDashboardClaim(t *testing.T) {
+	recorder := &outcomeRecorder{}
+	handler := Handler{Loader: &deliveryLoader{target: sqlite.NotificationDeliveryTarget{ID: "delivery-1", Channel: sqlite.NotificationChannelBrowser, State: sqlite.NotificationDeliveryQueued}}, Recorder: recorder}
+	if err := handler.Handle(context.Background(), notificationJob(`{"delivery_id":"delivery-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.called {
+		t.Fatalf("browser delivery was finalized by worker: %+v", recorder)
+	}
+}
+
 func TestHandlerSuppressesUnconfiguredLocalChannels(t *testing.T) {
-	for _, channel := range []sqlite.NotificationChannel{sqlite.NotificationChannelBrowser, sqlite.NotificationChannelSound, sqlite.NotificationChannelTTS} {
+	for _, channel := range []sqlite.NotificationChannel{sqlite.NotificationChannelSound, sqlite.NotificationChannelTTS} {
 		t.Run(string(channel), func(t *testing.T) {
 			recorder := &outcomeRecorder{}
 			handler := Handler{Loader: &deliveryLoader{target: sqlite.NotificationDeliveryTarget{ID: "delivery-1", Channel: channel, State: sqlite.NotificationDeliveryQueued}}, Recorder: recorder}

@@ -132,6 +132,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		ProposalMutations:       api.ProposalMutationOptions{Revisions: store, Decisions: store},
 		PublicationMutations:    publicationMutationOptions(cfg, store),
 		NotificationPreferences: api.NotificationPreferencesOptions{Store: store},
+		BrowserNotifications:    api.BrowserNotificationDeliveryOptions{Store: store},
 		GitHubWebhooks:          webhookOptions,
 	})
 	server := &http.Server{

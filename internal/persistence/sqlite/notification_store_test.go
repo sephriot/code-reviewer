@@ -139,6 +139,36 @@ func TestNotificationDeliveryRetainsTerminalOutcomeOnce(t *testing.T) {
 	}
 }
 
+func TestListQueuedBrowserNotificationDeliveriesReturnsOnlyPendingBrowserWork(t *testing.T) {
+	ctx := context.Background()
+	store := openMigratedStore(t, ctx)
+	firstEvent := appendNotificationTestEvent(t, ctx, store, "event-browser-first", "review_observed")
+	secondEvent := appendNotificationTestEvent(t, ctx, store, "event-browser-second", "policy.evaluated")
+	for _, input := range []CreateNotificationDeliveryInput{
+		{DomainEventID: firstEvent.EventID, Channel: NotificationChannelBrowser, TemplateVersion: 1, DedupeKey: "browser-first", PayloadJSON: []byte(`{}`), AvailableAt: time.Unix(1, 0).UTC(), CreatedAt: time.Unix(1, 0).UTC()},
+		{DomainEventID: secondEvent.EventID, Channel: NotificationChannelBrowser, TemplateVersion: 1, DedupeKey: "browser-second", PayloadJSON: []byte(`{}`), AvailableAt: time.Unix(2, 0).UTC(), CreatedAt: time.Unix(2, 0).UTC()},
+		{DomainEventID: secondEvent.EventID, Channel: NotificationChannelLog, TemplateVersion: 1, DedupeKey: "log-second", PayloadJSON: []byte(`{}`), AvailableAt: time.Unix(3, 0).UTC(), CreatedAt: time.Unix(3, 0).UTC()},
+	} {
+		if _, err := store.CreateNotificationDelivery(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := store.ListQueuedBrowserNotificationDeliveries(ctx, 1)
+	if err != nil || len(items) != 1 || items[0].Channel != NotificationChannelBrowser || items[0].EventType != "review_observed" {
+		t.Fatalf("items=%+v err=%v", items, err)
+	}
+	if _, err := store.RecordNotificationDeliveryOutcome(ctx, NotificationDeliveryOutcome{ID: items[0].ID, State: NotificationDeliveryDelivered, AttemptedAt: time.Unix(4, 0).UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	items, err = store.ListQueuedBrowserNotificationDeliveries(ctx, 50)
+	if err != nil || len(items) != 1 || items[0].EventType != "policy.evaluated" {
+		t.Fatalf("remaining items=%+v err=%v", items, err)
+	}
+	if _, err := store.ListQueuedBrowserNotificationDeliveries(ctx, 0); err == nil {
+		t.Fatal("zero limit accepted")
+	}
+}
+
 func appendNotificationTestEvent(t *testing.T, ctx context.Context, store *Store, id, eventType string) AppendedEvent {
 	t.Helper()
 	event, err := store.AppendEventWithOutbox(ctx, DomainEventInput{

@@ -42,12 +42,14 @@ All responses have `Cache-Control: no-store`.
 | `GET /api/v1/analytics/overview` | Durable review lifecycle totals |
 | `GET /api/v1/history` | Cursor-paginated terminal runs, decisions, and publication attempts |
 | `GET /api/v1/settings` | Safe local publication mode and active policy/profile summary |
+| `GET /api/v1/notification-deliveries/browser` | Bounded pending browser notifications for this loopback dashboard |
 | `GET /api/v1/session` | Loopback-only opaque browser-session bootstrap |
 | `POST /api/v1/mutate/proposals/{id}/revisions` | Append a local human proposal revision |
 | `POST /api/v1/mutate/proposals/{id}/decisions` | Record one local decision for an owned revision |
 | `POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate` | Record and, in simulated mode, queue one local-only publication attempt |
 | `POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch` | Explicitly queue one guarded enabled GitHub publication |
 | `POST /api/v1/mutate/publication-effects/{id}/uncertainty-resolution` | Human-only immutable `externally_completed` or `abandoned` resolution; never reposts |
+| `POST /api/v1/mutate/notification-deliveries/browser/{id}/outcome` | Browser dashboard acknowledges `delivered` or `suppressed` local notification |
 
 `/api/inbox` and `/api/pull-requests/{id}/timeline` are unversioned aliases.
 

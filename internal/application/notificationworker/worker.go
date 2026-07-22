@@ -78,8 +78,8 @@ type PrintfLogger interface {
 }
 
 // Handler dispatches only safe local actions. Log deliveries write a bounded
-// metadata line. Browser, sound, and TTS are explicitly suppressed no-ops
-// until separate local adapters are configured; no code here can use network.
+// metadata line. Browser deliveries stay queued for an open loopback dashboard
+// to claim; sound and TTS are explicitly suppressed until local adapters exist.
 type Handler struct {
 	Loader   DeliveryLoader
 	Recorder OutcomeRecorder
@@ -126,7 +126,11 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 			logger = log.Default()
 		}
 		logger.Printf("notification delivered id=%q event_type=%q channel=%q", delivery.ID, delivery.EventType, delivery.Channel)
-	case sqlite.NotificationChannelBrowser, sqlite.NotificationChannelSound, sqlite.NotificationChannelTTS:
+	case sqlite.NotificationChannelBrowser:
+		// Browser capability lives in the loopback dashboard process, not this
+		// background worker. Leave the durable item queued for dashboard polling.
+		return nil
+	case sqlite.NotificationChannelSound, sqlite.NotificationChannelTTS:
 		// Safe, explicit no-op. Do not shell out or touch browser/network APIs.
 	default:
 		return worker.Permanent(errors.New("notification delivery channel is unsupported"))
