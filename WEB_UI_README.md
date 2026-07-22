@@ -1,6 +1,6 @@
 # Reviewd control dashboard
 
-The v2 dashboard is a local, read-only view of durable control-plane state. It replaces none of GitHub’s review UI and does not expose legacy Python pending approvals.
+The v2 dashboard is a local control desk for durable control-plane state. It replaces none of GitHub’s review UI and does not expose legacy Python pending approvals.
 
 ## Run it
 
@@ -16,14 +16,16 @@ REVIEWD_MIGRATION_MODE=check \
 go run ./cmd/reviewd
 ```
 
-Open <http://127.0.0.1:8080/>. Default listener is loopback-only. `REVIEWD_LISTEN_ADDRESS` rejects non-loopback addresses, and dashboard has no authentication; do not expose it through an unauthenticated proxy.
+Open <http://127.0.0.1:8080/>. Default listener is loopback-only. `REVIEWD_LISTEN_ADDRESS` rejects non-loopback addresses. Dashboard bootstraps a short-lived HttpOnly, SameSite-Strict local session cookie for mutation routes; it has no remote authentication and must not be exposed through a proxy.
 
 ## What dashboard shows
 
 - Current attention items from canonical review/policy/proposal/publication state.
 - One immutable timeline for selected pull request and local connection.
 - Read-model availability status.
-- No mutation controls, GitHub token display, review content editor, approval button, or publication action.
+- Durable lifecycle analytics through the control API.
+- Local proposal-revision edits plus approval/rejection of exact current revisions.
+- No GitHub token display or publication action.
 
 Attention is evidence-bound. When GitHub facts or canonical diff change, stale entries cannot be treated as current work.
 
@@ -37,10 +39,14 @@ All responses have `Cache-Control: no-store`.
 | `GET /api/v1/health/ready` | DB and migration readiness |
 | `GET /api/v1/inbox` | Current attention page |
 | `GET /api/v1/pull-requests/{id}/timeline?connection_id=ID` | Immutable pull-request timeline |
+| `GET /api/v1/analytics/overview` | Durable review lifecycle totals |
+| `GET /api/v1/session` | Loopback-only opaque browser-session bootstrap |
+| `POST /api/v1/mutate/proposals/{id}/revisions` | Append a local human proposal revision |
+| `POST /api/v1/mutate/proposals/{id}/decisions` | Record one local decision for an owned revision |
 
 `/api/inbox` and `/api/pull-requests/{id}/timeline` are unversioned aliases.
 
-`inbox` accepts optional `limit` (1–100) and opaque `cursor`. Timeline accepts same pagination parameters and requires exactly one `connection_id`. Invalid parameters return a JSON `invalid_request` response. Read failures return a JSON `read_failed` response.
+`inbox` accepts optional `limit` (1–100) and opaque `cursor`. Timeline accepts same pagination parameters and requires exactly one `connection_id`. Invalid parameters return a JSON `invalid_request` response. Read failures return a JSON `read_failed` response. Mutation routes require both a loopback remote address and the opaque session cookie; bearer values are rejected and are never exposed to dashboard JavaScript.
 
 Examples:
 

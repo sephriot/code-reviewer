@@ -198,7 +198,33 @@ go run ./cmd/reviewctl policy evaluate \
   --rule-version-id RULE_VERSION_ID
 ```
 
-Policy authoring is intentionally not exposed as a `reviewctl` command yet. The command does not match rules; it requires the caller to name the active rule/version. It produces only evidence-bound local records and, when appropriate, a policy proposal.
+Create a complete immutable policy generation from a strict, secret-free JSON file. A new generation replaces the active-rule pointers as one atomic policy set; omitted rules are disabled, never deleted. A rule with `automatic` or `manual` trigger must name an existing immutable profile version.
+
+```json
+{
+  "rules": [{
+    "key": "baseline-rule",
+    "enabled": true,
+    "priority": 10,
+    "trigger_kind": "manual",
+    "external_action_policy": "require_confirmation",
+    "profile_key": "baseline",
+    "profile_version": 1,
+    "match": {},
+    "review": {},
+    "publication": {"allow_automatic_approval": false}
+  }]
+}
+```
+
+```bash
+go run ./cmd/reviewctl policy apply \
+  --database data/control-plane.db \
+  --generation 1 \
+  --rules-file ./policy-rules.json
+```
+
+`policy evaluate` deliberately evaluates a named active rule/version rather than selecting one implicitly. It produces only evidence-bound local records and, when appropriate, a policy proposal.
 
 Edit a policy-created proposal by appending a human revision, then record one human approval or rejection:
 
@@ -219,17 +245,18 @@ go run ./cmd/reviewctl proposal decide \
 
 Both commands reject likely secret-bearing arguments and file content. Decisions are immutable local evidence, not GitHub instructions.
 
-`REVIEWD_PUBLICATION_MODE` accepts only `disabled` (default) and `simulated`. In `simulated`, an already-authorized durable publication effect can produce one local `{"simulated":true}` attempt through the worker. There is no public effect-authorization CLI yet, and no code path in this release performs a GitHub write. Do not rely on this system to publish reviews.
+`reviewctl proposal publish --proposal-revision-id ID --simulate` records an effect only for an approved, current proposal revision. In `simulated` mode it queues one local durable `{"simulated":true}` attempt; in `disabled` mode it records the effect without dispatch. There is no code path in this release that performs a GitHub write. Do not rely on this system to publish reviews.
 
 ## Control API and dashboard
 
-Start `reviewd`, then open <http://127.0.0.1:8080/>. Dashboard is read-only and shows current attention plus immutable timeline records. It has no sign-in and no mutation controls; keep the listener on loopback.
+Start `reviewd`, then open <http://127.0.0.1:8080/>. Dashboard shows current attention, immutable timeline records, local lifecycle analytics, and guarded local proposal edits/decisions. On load it obtains a short-lived, HttpOnly, SameSite-Strict session cookie from the loopback server; browser code never sees the credential. It cannot publish to GitHub; keep the listener on loopback.
 
 ```bash
 curl http://127.0.0.1:8080/api/v1/health/live
 curl http://127.0.0.1:8080/api/v1/health/ready
 curl http://127.0.0.1:8080/api/v1/inbox?limit=50
 curl 'http://127.0.0.1:8080/api/v1/pull-requests/PULL_REQUEST_ID/timeline?connection_id=github-local'
+curl http://127.0.0.1:8080/api/v1/analytics/overview
 ```
 
 `/api/inbox` and `/api/pull-requests/{id}/timeline` remain aliases. Both inbox and timeline support `limit` (1–100) and opaque `cursor`; timeline also requires `connection_id`.
