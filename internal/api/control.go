@@ -47,6 +47,7 @@ func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler
 	} {
 		mux.HandleFunc("GET "+path, handler.timeline)
 	}
+	registerControlDashboard(mux)
 	return mux
 }
 

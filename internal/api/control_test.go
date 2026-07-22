@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,5 +95,28 @@ func TestControlReadFailureAndUnsupportedMethod(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/inbox", nil))
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("method status = %d", response.Code)
+	}
+}
+
+func TestControlServesReadOnlyDashboard(t *testing.T) {
+	t.Parallel()
+	reader := &fakeInboxReader{}
+	handler := NewControlHandler(Readiness{}, ControlOptions{Reader: reader})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d", response.Code)
+	}
+	if !strings.Contains(response.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("dashboard content type = %q", response.Header().Get("Content-Type"))
+	}
+	body := response.Body.String()
+	for _, text := range []string{"Control Desk", "/api/v1/inbox", "timeline"} {
+		if !strings.Contains(body, text) {
+			t.Errorf("dashboard missing %q", text)
+		}
+	}
+	if reader.attentionQuery != (sqlite.AttentionQuery{}) || reader.timelineQuery != (sqlite.PullRequestTimelineQuery{}) {
+		t.Fatalf("dashboard called read model: attention=%+v timeline=%+v", reader.attentionQuery, reader.timelineQuery)
 	}
 }
