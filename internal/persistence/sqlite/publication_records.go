@@ -14,8 +14,7 @@ import (
 )
 
 const (
-	maxPublicationPayloadBytes  = 64 * 1024
-	maxPublicationResponseBytes = 256
+	maxPublicationPayloadBytes = 64 * 1024
 )
 
 var (
@@ -49,20 +48,19 @@ type CreatePublicationEffectInput struct {
 	CreatedAt          time.Time
 }
 
-// CreatePublicationEffectResult identifies a durable effect and, when the
-// database is in simulated mode, its immutable simulated attempt.
+// CreatePublicationEffectResult identifies one durable publication effect.
 type CreatePublicationEffectResult struct {
 	EffectID        string
-	AttemptID       string
 	PublicationMode PublicationMode
 	Created         bool
 }
 
 // CreatePublicationEffect writes an approved proposal revision's exact
 // publication effect only after re-validating its selected canonical evidence.
-// Disabled mode records no attempt; simulated mode records exactly one bounded
-// simulated attempt. Enabled mode is rejected before any write and this method
-// never creates jobs, events, outbox rows, or GitHub traffic.
+// It records no attempt: the separate publication worker revalidates current
+// evidence before recording one simulated attempt. Enabled mode is rejected
+// before any write and this method never creates jobs, events, outbox rows, or
+// GitHub traffic.
 func (s *Store) CreatePublicationEffect(ctx context.Context, input CreatePublicationEffectInput) (CreatePublicationEffectResult, error) {
 	normalized, err := normalizeCreatePublicationEffectInput(input)
 	if err != nil {
@@ -107,10 +105,7 @@ func (s *Store) CreatePublicationEffect(ctx context.Context, input CreatePublica
 			if !existing.matches(authorization, payload, payloadSHA256, mode) {
 				return fmt.Errorf("%w: key=%q", ErrPublicationEffectConflict, idempotencyKey)
 			}
-			result = CreatePublicationEffectResult{
-				EffectID: existing.ID, AttemptID: existing.SimulatedAttemptID.String,
-				PublicationMode: mode,
-			}
+			result = CreatePublicationEffectResult{EffectID: existing.ID, PublicationMode: mode}
 			return nil
 		}
 		semanticEffect, found, err := loadPublicationEffectBySemanticIdentity(ctx, conn, authorization, effectType, payloadSHA256)
@@ -137,25 +132,6 @@ VALUES (?, 'proposal_revision', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			return fmt.Errorf("insert publication effect: %w", err)
 		}
 		result = CreatePublicationEffectResult{EffectID: effectID, PublicationMode: mode, Created: true}
-		if mode == PublicationModeDisabled {
-			return nil
-		}
-
-		attemptID := stableID("publication-attempt", effectID, "1")
-		response := []byte(`{"simulated":true}`)
-		if len(response) > maxPublicationResponseBytes {
-			return errors.New("simulated publication response exceeds maximum size")
-		}
-		if _, err := conn.ExecContext(ctx, `
-INSERT INTO publication_attempts(
- id, effect_id, attempt_number, publication_mode, outcome, request_sha256,
- response_json, error_class, error_message, github_artifact_id,
- attempted_at_us, completed_at_us, created_at_us)
-VALUES (?, ?, 1, 'simulated', 'simulated', ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
-			attemptID, effectID, payloadSHA256, response, createdAt, createdAt, createdAt); err != nil {
-			return fmt.Errorf("insert simulated publication attempt: %w", err)
-		}
-		result.AttemptID = attemptID
 		return nil
 	})
 	if err != nil {
@@ -304,7 +280,6 @@ type storedPublicationEffect struct {
 	PayloadJSON        []byte
 	PayloadSHA256      string
 	PublicationMode    PublicationMode
-	SimulatedAttemptID sql.NullString
 }
 
 func loadPublicationEffect(ctx context.Context, conn *sql.Conn, idempotencyKey string) (storedPublicationEffect, bool, error) {
@@ -313,17 +288,12 @@ func loadPublicationEffect(ctx context.Context, conn *sql.Conn, idempotencyKey s
 SELECT effect.id, effect.proposal_revision_id, effect.authorization_decision_id,
        effect.connection_id, effect.repository_id, effect.pull_request_id,
        effect.revision_id, effect.observation_id, effect.effect_type,
-       effect.payload_json, effect.payload_sha256, effect.publication_mode_at_authorization,
-       attempt.id
+       effect.payload_json, effect.payload_sha256, effect.publication_mode_at_authorization
 FROM publication_effects AS effect
-LEFT JOIN publication_attempts AS attempt
-  ON attempt.effect_id = effect.id
- AND attempt.attempt_number = 1
 WHERE effect.idempotency_key = ?`, idempotencyKey).Scan(
 		&effect.ID, &effect.ProposalRevisionID, &effect.DecisionID, &effect.ConnectionID,
 		&effect.RepositoryID, &effect.PullRequestID, &effect.RevisionID, &effect.ObservationID,
 		&effect.EffectType, &effect.PayloadJSON, &effect.PayloadSHA256, &effect.PublicationMode,
-		&effect.SimulatedAttemptID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return storedPublicationEffect{}, false, nil
@@ -361,7 +331,5 @@ func (effect storedPublicationEffect) matches(authorization approvedPublicationA
 		effect.RepositoryID == authorization.RepositoryID && effect.PullRequestID == authorization.PullRequestID &&
 		effect.RevisionID == authorization.RevisionID && effect.ObservationID == authorization.ObservationID &&
 		effect.EffectType == effectType && bytes.Equal(effect.PayloadJSON, payload) &&
-		effect.PayloadSHA256 == payloadSHA256 && effect.PublicationMode == mode &&
-		((mode == PublicationModeDisabled && !effect.SimulatedAttemptID.Valid) ||
-			(mode == PublicationModeSimulated && effect.SimulatedAttemptID.Valid))
+		effect.PayloadSHA256 == payloadSHA256 && effect.PublicationMode == mode
 }

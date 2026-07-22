@@ -20,7 +20,7 @@ func TestCreatePublicationEffectDisabledPersistsAuthorizedEffectOnly(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Created || result.EffectID == "" || result.AttemptID != "" || result.PublicationMode != PublicationModeDisabled {
+	if !result.Created || result.EffectID == "" || result.PublicationMode != PublicationModeDisabled {
 		t.Fatalf("result = %+v", result)
 	}
 	assertTableCount(t, ctx, store.db, "publication_effects", 1)
@@ -43,7 +43,7 @@ FROM publication_effects WHERE id = ?`, result.EffectID).Scan(
 	}
 }
 
-func TestCreatePublicationEffectSimulatedPersistsExactAttempt(t *testing.T) {
+func TestCreatePublicationEffectSimulatedPersistsEffectWithoutAttempt(t *testing.T) {
 	ctx := context.Background()
 	store, fixture := seedApprovedPublicationProposal(t, ctx)
 	if _, err := store.db.ExecContext(ctx, `UPDATE system_state
@@ -59,21 +59,11 @@ SET value = 'simulated', updated_at_us = 61 WHERE key = 'publication_mode'`); er
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Created || result.EffectID == "" || result.AttemptID == "" || result.PublicationMode != PublicationModeSimulated {
+	if !result.Created || result.EffectID == "" || result.PublicationMode != PublicationModeSimulated {
 		t.Fatalf("result = %+v", result)
 	}
 	assertTableCount(t, ctx, store.db, "publication_effects", 1)
-	assertTableCount(t, ctx, store.db, "publication_attempts", 1)
-
-	var mode, outcome, requestSHA, response string
-	if err := store.db.QueryRowContext(ctx, `
-SELECT publication_mode, outcome, request_sha256, response_json
-FROM publication_attempts WHERE id = ?`, result.AttemptID).Scan(&mode, &outcome, &requestSHA, &response); err != nil {
-		t.Fatal(err)
-	}
-	if mode != "simulated" || outcome != "simulated" || requestSHA == "" || response != `{"simulated":true}` {
-		t.Fatalf("attempt = mode=%q outcome=%q request=%q response=%q", mode, outcome, requestSHA, response)
-	}
+	assertTableCount(t, ctx, store.db, "publication_attempts", 0)
 }
 
 func TestCreatePublicationEffectIdempotenceConflictAndSafety(t *testing.T) {
@@ -92,7 +82,7 @@ func TestCreatePublicationEffectIdempotenceConflictAndSafety(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !first.Created || second.Created || first.EffectID != second.EffectID || second.AttemptID != "" {
+	if !first.Created || second.Created || first.EffectID != second.EffectID {
 		t.Fatalf("results = %+v / %+v", first, second)
 	}
 	_, err = store.CreatePublicationEffect(ctx, CreatePublicationEffectInput{

@@ -12,7 +12,7 @@ import (
 )
 
 func TestHandlerRecordsCurrentSimulatedEffect(t *testing.T) {
-	loader := &loaderRecorder{effect: Effect{ID: "effect-1", PublicationMode: sqlite.PublicationModeSimulated, EvidenceCurrent: true}}
+	loader := &loaderRecorder{effect: sqlite.PublicationEffectTarget{ID: "effect-1", PublicationMode: sqlite.PublicationModeSimulated}}
 	recorder := &attemptRecorder{}
 	handler := Handler{Loader: loader, Recorder: recorder, Now: func() time.Time { return time.Unix(7, 0).UTC() }}
 
@@ -25,7 +25,7 @@ func TestHandlerRecordsCurrentSimulatedEffect(t *testing.T) {
 }
 
 func TestHandlerCompletesDisabledEffectWithoutDispatch(t *testing.T) {
-	loader := &loaderRecorder{effect: Effect{ID: "effect-1", PublicationMode: sqlite.PublicationModeDisabled, EvidenceCurrent: true}}
+	loader := &loaderRecorder{effect: sqlite.PublicationEffectTarget{ID: "effect-1", PublicationMode: sqlite.PublicationModeDisabled}}
 	recorder := &attemptRecorder{}
 	handler := Handler{Loader: loader, Recorder: recorder}
 
@@ -57,14 +57,13 @@ func TestHandlerRejectsMalformedPayloadBeforeLoading(t *testing.T) {
 func TestHandlerMarksStaleEffectTerminal(t *testing.T) {
 	tests := []struct {
 		name   string
-		effect Effect
+		effect sqlite.PublicationEffectTarget
 		err    error
 	}{
-		{name: "missing", err: ErrEffectNotFound},
-		{name: "stale error", err: ErrEffectEvidenceStale},
-		{name: "stale state", effect: Effect{ID: "effect-1", PublicationMode: sqlite.PublicationModeSimulated}},
-		{name: "wrong ID", effect: Effect{ID: "effect-2", PublicationMode: sqlite.PublicationModeSimulated, EvidenceCurrent: true}},
-		{name: "enabled", effect: Effect{ID: "effect-1", PublicationMode: "enabled", EvidenceCurrent: true}},
+		{name: "missing", err: sqlite.ErrPublicationEffectNotFound},
+		{name: "stale error", err: sqlite.ErrPublicationEffectNotCurrent},
+		{name: "wrong ID", effect: sqlite.PublicationEffectTarget{ID: "effect-2", PublicationMode: sqlite.PublicationModeSimulated}},
+		{name: "enabled", effect: sqlite.PublicationEffectTarget{ID: "effect-1", PublicationMode: "enabled"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -85,7 +84,7 @@ func TestHandlerRetriesStorageFailures(t *testing.T) {
 		recorder *attemptRecorder
 	}{
 		{name: "load", loader: &loaderRecorder{err: errors.New("database offline")}, recorder: &attemptRecorder{}},
-		{name: "record", loader: &loaderRecorder{effect: Effect{ID: "effect-1", PublicationMode: sqlite.PublicationModeSimulated, EvidenceCurrent: true}}, recorder: &attemptRecorder{err: errors.New("database offline")}},
+		{name: "record", loader: &loaderRecorder{effect: sqlite.PublicationEffectTarget{ID: "effect-1", PublicationMode: sqlite.PublicationModeSimulated}}, recorder: &attemptRecorder{err: errors.New("database offline")}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -114,11 +113,11 @@ func publicationJob(payload string) sqlite.Job {
 
 type loaderRecorder struct {
 	effectID string
-	effect   Effect
+	effect   sqlite.PublicationEffectTarget
 	err      error
 }
 
-func (r *loaderRecorder) LoadPublicationEffect(_ context.Context, effectID string) (Effect, error) {
+func (r *loaderRecorder) LoadCurrentPublicationEffect(_ context.Context, effectID string) (sqlite.PublicationEffectTarget, error) {
 	r.effectID = effectID
 	return r.effect, r.err
 }
@@ -129,7 +128,7 @@ type attemptRecorder struct {
 	err      error
 }
 
-func (r *attemptRecorder) RecordSimulatedPublicationAttempt(_ context.Context, effectID string, at time.Time) error {
+func (r *attemptRecorder) RecordSimulatedPublicationAttempt(_ context.Context, effectID string, at time.Time) (sqlite.RecordSimulatedPublicationAttemptResult, error) {
 	r.effectID, r.at = effectID, at
-	return r.err
+	return sqlite.RecordSimulatedPublicationAttemptResult{}, r.err
 }

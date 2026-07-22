@@ -21,28 +21,14 @@ const SimulateJobKind = "publication.simulate.v1"
 
 const maxEffectIDBytes = 256
 
-var (
-	// ErrEffectNotFound means job no longer identifies an immutable effect.
-	ErrEffectNotFound = errors.New("publication effect not found")
-	// ErrEffectEvidenceStale means effect no longer has current canonical evidence.
-	ErrEffectEvidenceStale = errors.New("publication effect evidence is stale")
-)
-
-// Effect is exact immutable publication state loaded for a worker job.
-type Effect struct {
-	ID              string
-	PublicationMode sqlite.PublicationMode
-	EvidenceCurrent bool
-}
-
 // EffectLoader loads an effect and its current-evidence status.
 type EffectLoader interface {
-	LoadPublicationEffect(context.Context, string) (Effect, error)
+	LoadCurrentPublicationEffect(context.Context, string) (sqlite.PublicationEffectTarget, error)
 }
 
 // AttemptRecorder idempotently records one bounded simulated attempt.
 type AttemptRecorder interface {
-	RecordSimulatedPublicationAttempt(context.Context, string, time.Time) error
+	RecordSimulatedPublicationAttempt(context.Context, string, time.Time) (sqlite.RecordSimulatedPublicationAttemptResult, error)
 }
 
 // Handler records a simulated publication attempt only for a current effect
@@ -67,14 +53,14 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 		return worker.Permanent(errors.New("simulated publication handler dependencies are required"))
 	}
 
-	effect, err := h.Loader.LoadPublicationEffect(ctx, effectID)
+	effect, err := h.Loader.LoadCurrentPublicationEffect(ctx, effectID)
 	if err != nil {
-		if errors.Is(err, ErrEffectNotFound) || errors.Is(err, ErrEffectEvidenceStale) {
+		if errors.Is(err, sqlite.ErrPublicationEffectNotFound) || errors.Is(err, sqlite.ErrPublicationEffectNotCurrent) {
 			return worker.Permanent(errors.New("simulated publication effect is no longer current"))
 		}
 		return errors.New("load simulated publication effect failed")
 	}
-	if effect.ID != effectID || !effect.EvidenceCurrent {
+	if effect.ID != effectID {
 		return worker.Permanent(errors.New("simulated publication effect is no longer current"))
 	}
 	switch effect.PublicationMode {
@@ -90,7 +76,7 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 	if h.Now != nil {
 		now = h.Now().UTC()
 	}
-	if err := h.Recorder.RecordSimulatedPublicationAttempt(ctx, effectID, now); err != nil {
+	if _, err := h.Recorder.RecordSimulatedPublicationAttempt(ctx, effectID, now); err != nil {
 		return errors.New("record simulated publication attempt failed")
 	}
 	return nil
