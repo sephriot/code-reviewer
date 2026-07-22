@@ -19,6 +19,8 @@ var (
 	ErrLeaseLost = errors.New("job lease lost")
 	// ErrNoJob means no job is currently eligible for claim.
 	ErrNoJob = errors.New("no job available")
+	// ErrNoOutboxDelivery means no outbox delivery is currently eligible for claim.
+	ErrNoOutboxDelivery = errors.New("no outbox delivery available")
 )
 
 // Store owns a SQLite connection pool.
@@ -165,6 +167,20 @@ type JobInput struct {
 type Job struct {
 	ID              string
 	Kind            string
+	Payload         []byte
+	State           string
+	Attempt         int
+	MaxAttempts     int
+	LeaseOwner      string
+	LeaseGeneration int64
+	LeaseExpiresAt  time.Time
+}
+
+// OutboxDelivery is a claimed durable event delivery and its fencing token.
+type OutboxDelivery struct {
+	ID              string
+	EventID         string
+	Topic           string
 	Payload         []byte
 	State           string
 	Attempt         int
