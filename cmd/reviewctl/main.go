@@ -61,6 +61,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return reviewQueue(ctx, args[2:], stdout, stderr)
 	case "policy evaluate":
 		return policyEvaluate(ctx, args[2:], stdout, stderr)
+	case "policy apply":
+		return policyApply(ctx, args[2:], stdout, stderr)
 	case "proposal edit":
 		return proposalEdit(ctx, args[2:], stdout, stderr)
 	case "proposal decide":
@@ -76,6 +78,116 @@ const (
 	maxManualInputBytes          = 64 << 10
 	maxManualDecisionReasonBytes = 16 << 10
 )
+
+// policySetFile is the deliberately small, secret-free on-disk configuration
+// contract for one complete immutable watch-rule generation. Profile keys are
+// resolved at apply time so policy files never need opaque database IDs.
+type policySetFile struct {
+	Rules []policySetFileRule `json:"rules"`
+}
+
+type policySetFileRule struct {
+	Key                  string          `json:"key"`
+	Enabled              bool            `json:"enabled"`
+	Priority             int             `json:"priority"`
+	TriggerKind          string          `json:"trigger_kind"`
+	ExternalActionPolicy string          `json:"external_action_policy"`
+	ProfileKey           string          `json:"profile_key"`
+	ProfileVersion       int             `json:"profile_version"`
+	Match                json.RawMessage `json:"match"`
+	Review               json.RawMessage `json:"review"`
+	Publication          json.RawMessage `json:"publication"`
+}
+
+// policyApply stores one complete policy generation. It cannot merge a
+// partial patch: omission intentionally disables a prior rule, preserving a
+// reproducible policy-set history.
+func policyApply(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := rejectSecretBearingManualArguments(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("policy apply", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	generation := flags.Int("generation", 0, "positive immutable policy generation")
+	rulesFile := flags.String("rules-file", "", "strict JSON policy-set file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *generation <= 0 || strings.TrimSpace(*rulesFile) == "" {
+		return errors.New("positive --generation and --rules-file are required")
+	}
+	raw, err := readBoundedRegularFile(*rulesFile, maxManualInputBytes)
+	if err != nil {
+		return fmt.Errorf("read policy rules: %w", err)
+	}
+	if err := rejectSecretBearingJSON(raw); err != nil {
+		return fmt.Errorf("policy rules: %w", err)
+	}
+	var file policySetFile
+	if err := decodeStrictJSON(raw, &file); err != nil {
+		return fmt.Errorf("policy rules must be one strict JSON object: %w", err)
+	}
+	if len(file.Rules) == 0 {
+		return errors.New("policy rules must contain at least one rule")
+	}
+	store, err := openCurrentControlPlane(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	rules := make([]storagesqlite.WatchRuleVersionInput, 0, len(file.Rules))
+	for index, rule := range file.Rules {
+		profileID, profileVersionID, resolveErr := resolvePolicyRuleProfile(ctx, store, rule)
+		if resolveErr != nil {
+			return fmt.Errorf("policy rule %d: %w", index+1, resolveErr)
+		}
+		rules = append(rules, storagesqlite.WatchRuleVersionInput{
+			RuleKey: rule.Key, Enabled: rule.Enabled, Priority: rule.Priority,
+			TriggerKind: rule.TriggerKind, ExternalActionPolicy: rule.ExternalActionPolicy,
+			ProfileID: profileID, ProfileVersionID: profileVersionID,
+			MatchJSON: rule.Match, ReviewJSON: rule.Review, PublicationJSON: rule.Publication,
+		})
+	}
+	result, err := store.CreatePolicySetGeneration(ctx, storagesqlite.PolicySetGenerationInput{
+		Generation: *generation, Rules: rules, CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, result)
+}
+
+func resolvePolicyRuleProfile(ctx context.Context, store *storagesqlite.Store, rule policySetFileRule) (string, string, error) {
+	key := strings.TrimSpace(rule.ProfileKey)
+	if key == "" && rule.ProfileVersion == 0 {
+		return "", "", nil
+	}
+	if key == "" || rule.ProfileVersion <= 0 {
+		return "", "", errors.New("profile_key and positive profile_version must be provided together")
+	}
+	profile, err := store.ResolveReviewProfileVersion(ctx, key, rule.ProfileVersion)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve profile: %w", err)
+	}
+	return profile.ProfileID, profile.ProfileVersionID, nil
+}
+
+func decodeStrictJSON(raw []byte, destination any) error {
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("contains more than one JSON value")
+	}
+	return nil
+}
 
 func proposalEdit(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := rejectSecretBearingManualArguments(args); err != nil {

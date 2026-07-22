@@ -148,6 +148,52 @@ func TestManualControlRejectsSecretBearingInput(t *testing.T) {
 	}
 }
 
+func TestPolicyApplyCreatesImmutablePolicySetFromStrictFile(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "control-plane.db")
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"db", "migrate", "--database", databasePath, "--apply"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	rulesFile := filepath.Join(t.TempDir(), "rules.json")
+	if err := os.WriteFile(rulesFile, []byte(`{"rules":[{"key":"observe-all","enabled":true,"priority":0,"trigger_kind":"track_only","external_action_policy":"advisory_only","match":{},"review":{},"publication":{}}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := run(context.Background(), []string{"policy", "apply", "--database", databasePath, "--generation", "1", "--rules-file", rulesFile}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Generation   int  `json:"Generation"`
+		Created      bool `json:"Created"`
+		RuleVersions []struct {
+			RuleKey string `json:"RuleKey"`
+		} `json:"RuleVersions"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Generation != 1 || !result.Created || len(result.RuleVersions) != 1 || result.RuleVersions[0].RuleKey != "observe-all" {
+		t.Fatalf("policy apply output = %s", output.String())
+	}
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	assertCLIQueryCount(t, database, "policy_sets", 1)
+	assertCLIQueryCount(t, database, "watch_rule_versions", 1)
+
+	if err := os.WriteFile(rulesFile, []byte(`{"rules":[],"unknown":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	err = run(context.Background(), []string{"policy", "apply", "--database", databasePath, "--generation", "2", "--rules-file", rulesFile}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "strict JSON") {
+		t.Fatalf("unknown field error = %v", err)
+	}
+	assertCLIQueryCount(t, database, "policy_sets", 1)
+}
+
 func TestManualReviewQueueNeverAcceptsPerRunEngineArguments(t *testing.T) {
 	var output bytes.Buffer
 	err := run(context.Background(), []string{
