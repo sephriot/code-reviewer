@@ -18,6 +18,7 @@ import (
 
 	"github.com/sephriot/code-reviewer/internal/application/assessment"
 	"github.com/sephriot/code-reviewer/internal/application/canonical"
+	"github.com/sephriot/code-reviewer/internal/application/publishworker"
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 )
 
@@ -369,6 +370,200 @@ func TestProposalManualControlsRejectSecretsAndInvalidFiles(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "secret-bearing") || strings.Contains(err.Error(), "never-store") {
 		t.Fatalf("secret comments error = %v", err)
 	}
+}
+
+func TestProposalPublishRequiresSimulationAcknowledgementAndRecordsDisabledEffect(t *testing.T) {
+	databasePath, proposalRevisionID := seedApprovedProposalRevision(t)
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{
+		"proposal", "publish", "--database", databasePath, "--proposal-revision-id", proposalRevisionID,
+	}, &output, &output); err == nil || !strings.Contains(err.Error(), "--simulate") {
+		t.Fatalf("publish without acknowledgement error = %v", err)
+	}
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	for _, table := range []string{"publication_effects", "publication_attempts", "jobs", "domain_events", "outbox"} {
+		assertCLIQueryCount(t, database, table, 0)
+	}
+
+	output.Reset()
+	if err := run(context.Background(), []string{
+		"proposal", "publish", "--database", databasePath, "--proposal-revision-id", proposalRevisionID, "--simulate",
+	}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		EffectID        string `json:"effect_id"`
+		PublicationMode string `json:"publication_mode"`
+		Created         bool   `json:"created"`
+		Job             *struct {
+			ID      string `json:"id"`
+			Created bool   `json:"created"`
+		} `json:"job"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.EffectID == "" || !result.Created || result.PublicationMode != "disabled" || result.Job != nil {
+		t.Fatalf("disabled publication output = %s", output.String())
+	}
+	assertCLIQueryCount(t, database, "publication_effects", 1)
+	for _, table := range []string{"publication_attempts", "jobs", "domain_events", "outbox"} {
+		assertCLIQueryCount(t, database, table, 0)
+	}
+}
+
+func TestProposalPublishSchedulesOneSimulatedJob(t *testing.T) {
+	databasePath, proposalRevisionID := seedApprovedProposalRevision(t)
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	if _, err := database.Exec(`UPDATE system_state SET value = 'simulated', updated_at_us = 100 WHERE key = 'publication_mode'`); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	command := []string{
+		"proposal", "publish", "--database", databasePath, "--proposal-revision-id", proposalRevisionID, "--simulate",
+	}
+	if err := run(context.Background(), command, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	var first struct {
+		EffectID        string `json:"effect_id"`
+		PublicationMode string `json:"publication_mode"`
+		Created         bool   `json:"created"`
+		Job             *struct {
+			ID      string `json:"id"`
+			Created bool   `json:"created"`
+		} `json:"job"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &first); err != nil {
+		t.Fatal(err)
+	}
+	if first.EffectID == "" || !first.Created || first.PublicationMode != "simulated" || first.Job == nil || first.Job.ID == "" || !first.Job.Created {
+		t.Fatalf("simulated publication output = %s", output.String())
+	}
+	assertCLIQueryCount(t, database, "publication_effects", 1)
+	assertCLIQueryCount(t, database, "jobs", 1)
+	var kind, payload string
+	if err := database.QueryRow(`SELECT kind, payload_json FROM jobs`).Scan(&kind, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if kind != publishworker.SimulateJobKind || !strings.Contains(payload, first.EffectID) || strings.Contains(payload, proposalRevisionID) {
+		t.Fatalf("simulated publication job kind=%q payload=%s", kind, payload)
+	}
+
+	output.Reset()
+	if err := run(context.Background(), command, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	var replay struct {
+		EffectID string `json:"effect_id"`
+		Created  bool   `json:"created"`
+		Job      *struct {
+			ID      string `json:"id"`
+			Created bool   `json:"created"`
+		} `json:"job"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &replay); err != nil {
+		t.Fatal(err)
+	}
+	if replay.EffectID != first.EffectID || replay.Created || replay.Job == nil || replay.Job.ID != first.Job.ID || replay.Job.Created {
+		t.Fatalf("simulated publication replay output = %s", output.String())
+	}
+	assertCLIQueryCount(t, database, "publication_effects", 1)
+	assertCLIQueryCount(t, database, "jobs", 1)
+	for _, table := range []string{"publication_attempts", "domain_events", "outbox"} {
+		assertCLIQueryCount(t, database, table, 0)
+	}
+}
+
+func TestProposalPublishRejectsEnabledModeWithoutEffects(t *testing.T) {
+	databasePath, proposalRevisionID := seedApprovedProposalRevision(t)
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	if _, err := database.Exec(`UPDATE system_state SET value = 'enabled', updated_at_us = 100 WHERE key = 'publication_mode'`); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err = run(context.Background(), []string{
+		"proposal", "publish", "--database", databasePath, "--proposal-revision-id", proposalRevisionID, "--simulate",
+	}, &output, &output)
+	if err == nil || !errors.Is(err, storagesqlite.ErrPublicationModeUnsupported) {
+		t.Fatalf("enabled publication error = %v", err)
+	}
+	for _, table := range []string{"publication_effects", "publication_attempts", "jobs", "domain_events", "outbox"} {
+		assertCLIQueryCount(t, database, table, 0)
+	}
+}
+
+func TestProposalPublishRejectsSecretsInvalidIDsAndOutdatedSchema(t *testing.T) {
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"proposal", "publish", "--token=never-store"}, &output, &output); err == nil || !strings.Contains(err.Error(), "cannot carry secrets") {
+		t.Fatalf("secret argument error = %v", err)
+	}
+	if err := run(context.Background(), []string{
+		"proposal", "publish", "--proposal-revision-id", " bad", "--simulate",
+	}, &output, &output); err == nil || !strings.Contains(err.Error(), "proposal revision ID") {
+		t.Fatalf("invalid ID error = %v", err)
+	}
+	databasePath := filepath.Join(t.TempDir(), "control-plane.db")
+	if err := run(context.Background(), []string{"db", "migrate", "--database", databasePath, "--apply"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 8`); err != nil {
+		t.Fatal(err)
+	}
+	err = run(context.Background(), []string{
+		"proposal", "publish", "--database", databasePath, "--proposal-revision-id", "proposal_revision-1", "--simulate",
+	}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "current schema") {
+		t.Fatalf("outdated schema error = %v", err)
+	}
+}
+
+func seedApprovedProposalRevision(t *testing.T) (databasePath, proposalRevisionID string) {
+	t.Helper()
+	databasePath, assessmentID, ruleVersionID := seedPolicyEvaluationCandidate(t)
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{
+		"policy", "evaluate", "--database", databasePath,
+		"--assessment-id", assessmentID, "--rule-key", "assigned-default", "--rule-version-id", ruleVersionID,
+	}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT id FROM proposal_revisions ORDER BY created_at_us DESC LIMIT 1`).Scan(&proposalRevisionID); err != nil {
+		_ = database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := run(context.Background(), []string{
+		"proposal", "decide", "--database", databasePath, "--proposal-revision-id", proposalRevisionID,
+		"--decision", "approve", "--actor-id", "local-user",
+	}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	return databasePath, proposalRevisionID
 }
 
 func seedPolicyEvaluationCandidate(t *testing.T) (databasePath, assessmentID, ruleVersionID string) {

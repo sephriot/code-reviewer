@@ -18,6 +18,7 @@ import (
 	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
 	"github.com/sephriot/code-reviewer/internal/application/hydrate"
 	"github.com/sephriot/code-reviewer/internal/application/policyevaluate"
+	"github.com/sephriot/code-reviewer/internal/application/publishworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/legacy"
@@ -64,6 +65,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return proposalEdit(ctx, args[2:], stdout, stderr)
 	case "proposal decide":
 		return proposalDecide(ctx, args[2:], stdout, stderr)
+	case "proposal publish":
+		return proposalPublish(ctx, args[2:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0]+" "+args[1])
 	}
@@ -183,6 +186,87 @@ func proposalDecide(ctx context.Context, args []string, stdout, stderr io.Writer
 		Created        bool   `json:"created"`
 		IdempotencyKey string `json:"idempotency_key"`
 	}{DecisionID: result.DecisionID, Created: result.Created, IdempotencyKey: idempotencyKey})
+}
+
+// proposalPublish records an effect derived from an approved immutable
+// proposal revision. --simulate is an explicit local acknowledgement only;
+// it never grants GitHub write authority. A simulated database mode queues a
+// local durable simulation job, while disabled mode records no job.
+func proposalPublish(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if err := rejectSecretBearingManualArguments(args); err != nil {
+		return err
+	}
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("proposal publish", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	proposalRevisionID := flags.String("proposal-revision-id", "", "approved immutable proposal revision ID")
+	simulate := flags.Bool("simulate", false, "acknowledge local simulated publication only")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || !*simulate || strings.TrimSpace(*proposalRevisionID) == "" {
+		return errors.New("--proposal-revision-id and explicit --simulate are required")
+	}
+	if !validManualIdentifier(*proposalRevisionID) {
+		return errors.New("proposal revision ID is invalid")
+	}
+	if err := rejectSecretBearingText([]byte(*proposalRevisionID)); err != nil {
+		return fmt.Errorf("proposal revision ID: %w", err)
+	}
+	store, err := openCurrentControlPlane(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	effect, err := store.CreatePublicationEffect(ctx, storagesqlite.CreatePublicationEffectInput{
+		ProposalRevisionID: *proposalRevisionID,
+		CreatedAt:          time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+	result := struct {
+		EffectID        string `json:"effect_id"`
+		PublicationMode string `json:"publication_mode"`
+		Created         bool   `json:"created"`
+		Job             *struct {
+			ID      string `json:"id"`
+			Created bool   `json:"created"`
+		} `json:"job"`
+	}{
+		EffectID:        effect.EffectID,
+		PublicationMode: string(effect.PublicationMode),
+		Created:         effect.Created,
+	}
+	if effect.PublicationMode == storagesqlite.PublicationModeSimulated {
+		job, scheduleErr := (publishworker.Scheduler{Store: store}).Schedule(ctx, effect.EffectID)
+		if scheduleErr != nil {
+			return fmt.Errorf("schedule simulated publication: %w", scheduleErr)
+		}
+		result.Job = &struct {
+			ID      string `json:"id"`
+			Created bool   `json:"created"`
+		}{ID: job.ID, Created: job.Created}
+	}
+	return writeJSON(stdout, result)
+}
+
+func validManualIdentifier(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || len(value) > 512 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '-' || character == '_' || character == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func manualProposalDecisionIdempotencyKey(proposalRevisionID, decision, actorID, reason string) string {
