@@ -66,8 +66,26 @@
     .mutation-status[data-state="error"] { color:var(--danger); }
     .mutation-status[data-state="ready"] { color:var(--signal); }
     .microcopy { margin:0; color:var(--muted); font-size:10px; letter-spacing:normal; text-transform:none; }
+    .telemetry { grid-column:1 / -1; display:grid; grid-template-columns:minmax(0,1.2fr) minmax(260px,.8fr); gap:0; padding:0; border-top:1px solid var(--line); }
+    .telemetry > section { min-width:0; padding:clamp(20px,3vw,34px); }
+    .telemetry > section + section { border-left:1px solid var(--line); }
+    .telemetry-side { display:grid; gap:0; align-content:start; }
+    .telemetry-side > section { padding:0 0 24px; }
+    .telemetry-side > section + section { padding:24px 0 0; border-top:1px solid var(--line); }
+    .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; margin:0; background:var(--line); border:1px solid var(--line); }
+    .metric { min-width:0; padding:12px; background:var(--panel); }
+    .metric dt { overflow:hidden; color:var(--muted); font-size:10px; letter-spacing:.08em; text-overflow:ellipsis; text-transform:uppercase; white-space:nowrap; }
+    .metric dd { margin:5px 0 0; color:var(--signal); font:28px/.95 var(--display); letter-spacing:-.04em; }
+    .history-list { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
+    .history-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:baseline; padding:9px 0; border-bottom:1px solid var(--line); }
+    .history-item strong { display:block; overflow:hidden; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+    .history-item span, .history-item time { color:var(--muted); font-size:11px; }
+    .settings-list { display:grid; grid-template-columns:1fr auto; gap:8px 16px; margin:0; }
+    .settings-list dt { color:var(--muted); font-size:11px; }
+    .settings-list dd { margin:0; color:var(--ink); font-size:11px; font-weight:700; text-align:right; }
+    .settings-list dd[data-good="true"] { color:var(--signal); }
     footer { display:flex; justify-content:space-between; gap:12px; padding:13px clamp(20px,4vw,64px); color:var(--muted); border-top:1px solid var(--line); font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
-    @media (max-width:760px) { main { grid-template-columns:1fr; } .inbox { border-right:0; border-bottom:1px solid var(--line); } header { align-items:start; flex-direction:column; } .status { align-self:flex-start; } .selected { grid-template-columns:1fr; } .action-row > * { flex:1 1 140px; } }
+    @media (max-width:760px) { main { grid-template-columns:1fr; } .inbox { border-right:0; border-bottom:1px solid var(--line); } header { align-items:start; flex-direction:column; } .status { align-self:flex-start; } .selected { grid-template-columns:1fr; } .action-row > * { flex:1 1 140px; } .telemetry { grid-template-columns:1fr; } .telemetry > section + section { border-top:1px solid var(--line); border-left:0; } .metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }
     @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition:none!important; } }
   </style>
 </head>
@@ -119,6 +137,25 @@
           <p class="mutation-status" id="mutation-status" role="status" aria-live="polite">Select a pending proposal to unlock local actions.</p>
         </section>
       </section>
+      <section class="telemetry" aria-label="Control-plane read-only telemetry">
+        <section aria-labelledby="overview-heading">
+          <div class="section-head"><h2 id="overview-heading">Lifecycle totals</h2><span class="pill">Read only</span></div>
+          <p class="notice" id="overview-message">Loading durable totals.</p>
+          <dl class="metrics" id="overview-metrics" aria-live="polite"></dl>
+        </section>
+        <section class="telemetry-side" aria-label="History and local configuration">
+          <section aria-labelledby="history-heading">
+            <div class="section-head"><h2 id="history-heading">Recent terminal history</h2><span class="count" id="history-count">—</span></div>
+            <p class="notice" id="history-message">Loading immutable outcomes.</p>
+            <ol class="history-list" id="history-items" aria-label="Recent terminal outcomes"></ol>
+          </section>
+          <section aria-labelledby="settings-heading">
+            <div class="section-head"><h2 id="settings-heading">Local configuration</h2><span class="pill">No secrets</span></div>
+            <p class="notice" id="settings-message">Loading safe configuration summary.</p>
+            <dl class="settings-list" id="settings-items" aria-live="polite"></dl>
+          </section>
+        </section>
+      </section>
     </main>
     <footer><span>publication disabled</span><span>loopback session guards local mutation</span></footer>
   </div>
@@ -134,6 +171,13 @@
       const selectedState = document.querySelector('#selected-state');
       const timeline = document.querySelector('#timeline-items');
       const timelineMessage = document.querySelector('#timeline-message');
+      const overviewMessage = document.querySelector('#overview-message');
+      const overviewMetrics = document.querySelector('#overview-metrics');
+      const historyMessage = document.querySelector('#history-message');
+      const historyCount = document.querySelector('#history-count');
+      const historyItems = document.querySelector('#history-items');
+      const settingsMessage = document.querySelector('#settings-message');
+      const settingsItems = document.querySelector('#settings-items');
       const proposalControls = document.querySelector('#proposal-controls');
       const proposalForm = document.querySelector('#proposal-form');
       const proposalFields = document.querySelector('#proposal-fields');
@@ -167,6 +211,45 @@
         events.filter((event) => event.kind === kind && event.current).forEach((event) => values.set(event.id, event));
         return Array.from(values.values());
       };
+      const showReadFailure = (node, error) => { node.textContent = error.message; node.setAttribute('role', 'alert'); };
+      const clearReadFailure = (node, value = '') => { node.removeAttribute('role'); node.textContent = value; };
+      const addMetric = (label, value) => { const item = document.createElement('div'); item.className = 'metric'; item.append(text('dt', label), text('dd', String(value ?? 0))); overviewMetrics.append(item); };
+      function renderOverview(value) {
+        overviewMetrics.replaceChildren();
+        [
+          ['Observed PRs', value.observed_pull_requests], ['Review runs', value.reviews?.runs], ['Assessments', value.reviews?.assessments], ['Policy evaluations', value.policy?.evaluations],
+          ['Human review', value.policy?.require_human_review], ['Proposals', value.proposals?.total], ['Approved', value.proposals?.approved], ['Rejected', value.proposals?.rejected],
+          ['Publication effects', value.publications?.effects], ['Simulated attempts', value.publications?.simulated], ['Succeeded', value.publications?.succeeded], ['Uncertain delivery', value.publications?.uncertain_delivery]
+        ].forEach(([label, number]) => addMetric(label, number));
+        clearReadFailure(overviewMessage, 'Whole-ledger counts. Totals never expose credentials or review content.');
+      }
+      function renderHistory(page) {
+        const entries = Array.isArray(page.items) ? page.items : [];
+        historyItems.replaceChildren(); historyCount.textContent = `${entries.length} LATEST`;
+        entries.forEach((entry) => {
+          const item = document.createElement('li'); item.className = 'history-item';
+          const copy = document.createElement('div'); copy.append(text('strong', entry.pull_request_id || entry.kind), text('span', `${entry.kind || 'event'} · ${entry.detail || 'no detail'}`));
+          item.append(copy, text('time', formatTime(entry.occurred_at))); historyItems.append(item);
+        });
+        clearReadFailure(historyMessage, entries.length ? 'Completed runs, immutable decisions, and publication attempts.' : 'No terminal lifecycle outcomes yet.');
+      }
+      function renderSettings(value) {
+        settingsItems.replaceChildren();
+        const rows = [
+          ['Publication mode', value.publication_mode || 'unknown', value.publication_mode === 'disabled' || value.publication_mode === 'simulated'],
+          ['Active watch rules', value.configured?.active_rules ?? 0], ['Review profiles', value.configured?.profiles ?? 0],
+          ['Schema version', `${value.schema?.version ?? '—'} / ${value.schema?.latest ?? '—'}`, Boolean(value.schema?.current)], ['Pending migrations', value.schema?.pending ?? '—', (value.schema?.pending ?? 1) === 0]
+        ];
+        rows.forEach(([label, valueText, good]) => { const labelNode = text('dt', label); const valueNode = text('dd', String(valueText)); if (good !== undefined) valueNode.dataset.good = String(good); settingsItems.append(labelNode, valueNode); });
+        clearReadFailure(settingsMessage, 'Safe local summary only. Credentials and token references stay out of the dashboard.');
+      }
+      async function refreshTelemetry() {
+        const results = await Promise.allSettled([api('/api/v1/analytics/overview'), api('/api/v1/history?limit=8'), api('/api/v1/settings')]);
+        const [overview, history, settings] = results;
+        if (overview.status === 'fulfilled') renderOverview(overview.value); else { overviewMetrics.replaceChildren(); showReadFailure(overviewMessage, overview.reason); }
+        if (history.status === 'fulfilled') renderHistory(history.value); else { historyItems.replaceChildren(); historyCount.textContent = '—'; showReadFailure(historyMessage, history.reason); }
+        if (settings.status === 'fulfilled') renderSettings(settings.value); else { settingsItems.replaceChildren(); showReadFailure(settingsMessage, settings.reason); }
+      }
       function clearMutationContext(message) {
         proposalControls.hidden = false;
         mutationRecordsAvailable = false;
@@ -217,7 +300,7 @@
         createRevision.textContent = busy ? 'Saving revision…' : 'Save new revision';
       }
       async function reloadInbox(preferredID) {
-        const page = await api('/api/v1/inbox');
+        const [page] = await Promise.all([api('/api/v1/inbox'), refreshTelemetry()]);
         const items = page.items || [];
         inbox.replaceChildren();
         inboxCount.textContent = `${items.length} OPEN`;
