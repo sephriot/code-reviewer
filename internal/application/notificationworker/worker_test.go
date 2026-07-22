@@ -55,6 +55,36 @@ func TestHandlerSuppressesUnconfiguredLocalChannels(t *testing.T) {
 	}
 }
 
+func TestHandlerDeliversConfiguredSoundAndSpeech(t *testing.T) {
+	for _, testCase := range []struct {
+		channel sqlite.NotificationChannel
+	}{
+		{channel: sqlite.NotificationChannelSound},
+		{channel: sqlite.NotificationChannelTTS},
+	} {
+		t.Run(string(testCase.channel), func(t *testing.T) {
+			notifier := &localNotifier{}
+			recorder := &outcomeRecorder{}
+			handler := Handler{
+				Loader:   &deliveryLoader{target: sqlite.NotificationDeliveryTarget{ID: "delivery-1", EventType: "policy.evaluated", Channel: testCase.channel, State: sqlite.NotificationDeliveryQueued}},
+				Recorder: recorder, Preferences: &preferencesLoader{preferences: sqlite.NotificationPreferences{SpeechRateMilli: 1250, CustomSoundPath: "/tmp/tone.aiff"}}, LocalNotifier: notifier,
+			}
+			if err := handler.Handle(context.Background(), notificationJob(`{"delivery_id":"delivery-1"}`)); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.outcome.State != sqlite.NotificationDeliveryDelivered {
+				t.Fatalf("outcome=%+v", recorder.outcome)
+			}
+			if testCase.channel == sqlite.NotificationChannelSound && notifier.sound != "/tmp/tone.aiff" {
+				t.Fatalf("sound=%q", notifier.sound)
+			}
+			if testCase.channel == sqlite.NotificationChannelTTS && (notifier.message != "Code review notification: policy.evaluated" || notifier.rate != 1250) {
+				t.Fatalf("message=%q rate=%d", notifier.message, notifier.rate)
+			}
+		})
+	}
+}
+
 func TestHandlerRejectsMalformedPayloadBeforeLoading(t *testing.T) {
 	loader := &deliveryLoader{}
 	handler := Handler{Loader: loader, Recorder: &outcomeRecorder{}}
@@ -187,6 +217,28 @@ type schedulerStore struct {
 	input  sqlite.JobInput
 	called bool
 	err    error
+}
+
+type preferencesLoader struct {
+	preferences sqlite.NotificationPreferences
+	err         error
+}
+
+func (l *preferencesLoader) LoadNotificationPreferences(context.Context) (sqlite.NotificationPreferences, error) {
+	return l.preferences, l.err
+}
+
+type localNotifier struct {
+	sound   string
+	message string
+	rate    int
+	err     error
+}
+
+func (n *localNotifier) PlaySound(_ context.Context, path string) error { n.sound = path; return n.err }
+func (n *localNotifier) Speak(_ context.Context, message string, rate int) error {
+	n.message, n.rate = message, rate
+	return n.err
 }
 
 func (s *schedulerStore) EnsureJob(_ context.Context, input sqlite.JobInput) (sqlite.EnsureJobResult, error) {

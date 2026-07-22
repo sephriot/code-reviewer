@@ -16,6 +16,7 @@ import (
 
 	"github.com/sephriot/code-reviewer/internal/adapters/engine"
 	githubadapter "github.com/sephriot/code-reviewer/internal/adapters/github"
+	"github.com/sephriot/code-reviewer/internal/adapters/localnotify"
 	"github.com/sephriot/code-reviewer/internal/api"
 	"github.com/sephriot/code-reviewer/internal/application/hydrate"
 	"github.com/sephriot/code-reviewer/internal/application/hydrateworker"
@@ -165,7 +166,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	handlers := map[string]worker.Handler{
 		reconcileworker.ReconcileJobKind:  reconcileHandler,
 		hydrateworker.HydrateJobKind:      hydrateHandler,
-		notificationworker.DeliverJobKind: notificationworker.Handler{Loader: store, Recorder: store},
+		notificationworker.DeliverJobKind: notificationworker.Handler{Loader: store, Recorder: store, Preferences: store, LocalNotifier: localnotify.Local{}},
 	}
 	if cfg.ReviewExecution.Enabled {
 		reviewHandler, err := newReviewExecutionHandler(cfg, store)

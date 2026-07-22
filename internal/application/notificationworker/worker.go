@@ -71,6 +71,23 @@ type OutcomeRecorder interface {
 	RecordNotificationDeliveryOutcome(context.Context, sqlite.NotificationDeliveryOutcome) (sqlite.RecordNotificationDeliveryOutcomeResult, error)
 }
 
+// PreferencesLoader loads only machine-local notification settings required by
+// local sound and speech adapters.
+type PreferencesLoader interface {
+	LoadNotificationPreferences(context.Context) (sqlite.NotificationPreferences, error)
+}
+
+// LocalNotifier invokes a configured machine-local sound or speech adapter.
+// It has no browser or network capability.
+type LocalNotifier interface {
+	PlaySound(context.Context, string) error
+	Speak(context.Context, string, int) error
+}
+
+// ErrLocalNotifierUnavailable lets a host suppress channels unsupported on
+// this machine without retrying a job forever.
+var ErrLocalNotifierUnavailable = errors.New("local notification adapter is unavailable")
+
 // PrintfLogger allows tests and host programs to receive bounded log delivery
 // messages. It receives no notification payload or local preference data.
 type PrintfLogger interface {
@@ -81,10 +98,12 @@ type PrintfLogger interface {
 // metadata line. Browser deliveries stay queued for an open loopback dashboard
 // to claim; sound and TTS are explicitly suppressed until local adapters exist.
 type Handler struct {
-	Loader   DeliveryLoader
-	Recorder OutcomeRecorder
-	Logger   PrintfLogger
-	Now      func() time.Time
+	Loader        DeliveryLoader
+	Recorder      OutcomeRecorder
+	Logger        PrintfLogger
+	Preferences   PreferencesLoader
+	LocalNotifier LocalNotifier
+	Now           func() time.Time
 }
 
 // Handle implements worker.Handler.
@@ -131,7 +150,10 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 		// background worker. Leave the durable item queued for dashboard polling.
 		return nil
 	case sqlite.NotificationChannelSound, sqlite.NotificationChannelTTS:
-		// Safe, explicit no-op. Do not shell out or touch browser/network APIs.
+		outcome, err = h.deliverLocal(ctx, delivery)
+		if err != nil {
+			return err
+		}
 	default:
 		return worker.Permanent(errors.New("notification delivery channel is unsupported"))
 	}
@@ -149,6 +171,31 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 		return errors.New("record notification delivery outcome failed")
 	}
 	return nil
+}
+
+func (h Handler) deliverLocal(ctx context.Context, delivery sqlite.NotificationDeliveryTarget) (sqlite.NotificationDeliveryState, error) {
+	if h.Preferences == nil || h.LocalNotifier == nil {
+		return sqlite.NotificationDeliverySuppressed, nil
+	}
+	preferences, err := h.Preferences.LoadNotificationPreferences(ctx)
+	if err != nil {
+		return "", errors.New("load local notification preferences failed")
+	}
+	switch delivery.Channel {
+	case sqlite.NotificationChannelSound:
+		err = h.LocalNotifier.PlaySound(ctx, preferences.CustomSoundPath)
+	case sqlite.NotificationChannelTTS:
+		err = h.LocalNotifier.Speak(ctx, "Code review notification: "+delivery.EventType, preferences.SpeechRateMilli)
+	default:
+		return "", worker.Permanent(errors.New("local notification channel is unsupported"))
+	}
+	if errors.Is(err, ErrLocalNotifierUnavailable) {
+		return sqlite.NotificationDeliverySuppressed, nil
+	}
+	if err != nil {
+		return "", errors.New("deliver local notification failed")
+	}
+	return sqlite.NotificationDeliveryDelivered, nil
 }
 
 type jobPayload struct {
