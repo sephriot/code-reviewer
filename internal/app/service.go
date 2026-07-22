@@ -107,7 +107,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 				Pending: status.Pending,
 			}, err
 		},
-	}, api.ControlOptions{Reader: store})
+	}, api.ControlOptions{Reader: store, ProposalMutations: api.ProposalMutationOptions{Revisions: store, Decisions: store}})
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
 		Handler:           mutationAuth.Wrap(controlAPI),

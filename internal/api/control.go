@@ -26,7 +26,8 @@ type InboxReader interface {
 // Timeline IDs are scoped to a connection, so callers must provide it rather
 // than allowing client input to select credentials or external connections.
 type ControlOptions struct {
-	Reader InboxReader
+	Reader            InboxReader
+	ProposalMutations ProposalMutationOptions
 }
 
 // NewControlHandler exposes health plus the read-only inbox and timeline.
@@ -48,6 +49,7 @@ func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler
 		mux.HandleFunc("GET "+path, handler.timeline)
 	}
 	registerControlDashboard(mux)
+	registerProposalMutationRoutes(mux, options.ProposalMutations)
 	return mux
 }
 

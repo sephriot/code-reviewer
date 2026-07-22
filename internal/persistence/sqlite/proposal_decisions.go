@@ -173,6 +173,21 @@ type RecordProposalDecisionResult struct {
 // RecordProposalDecision stores an evidence-bound decision. It performs no
 // publication, job, event, or outbox action.
 func (s *Store) RecordProposalDecision(ctx context.Context, input RecordProposalDecisionInput) (RecordProposalDecisionResult, error) {
+	return s.recordProposalDecision(ctx, "", input)
+}
+
+// RecordProposalDecisionForProposal stores a decision only when the exact
+// proposal revision belongs to proposalID. HTTP routes use this narrow method
+// so a path cannot authorize a decision for a different proposal.
+func (s *Store) RecordProposalDecisionForProposal(ctx context.Context, proposalID string, input RecordProposalDecisionInput) (RecordProposalDecisionResult, error) {
+	proposalID = strings.TrimSpace(proposalID)
+	if proposalID == "" || len(proposalID) > 512 {
+		return RecordProposalDecisionResult{}, ErrProposalNotFound
+	}
+	return s.recordProposalDecision(ctx, proposalID, input)
+}
+
+func (s *Store) recordProposalDecision(ctx context.Context, expectedProposalID string, input RecordProposalDecisionInput) (RecordProposalDecisionResult, error) {
 	normalized, err := normalizeRecordProposalDecisionInput(input)
 	if err != nil {
 		return RecordProposalDecisionResult{}, err
@@ -183,6 +198,9 @@ func (s *Store) RecordProposalDecision(ctx context.Context, input RecordProposal
 		revision, err := loadStoredProposalRevision(ctx, conn, normalized.ProposalRevisionID)
 		if err != nil {
 			return err
+		}
+		if expectedProposalID != "" && revision.ProposalID != expectedProposalID {
+			return ErrProposalNotFound
 		}
 		target, err := loadCurrentCanonicalReviewTarget(ctx, conn, revision.ConnectionID, revision.PullRequestID)
 		if err != nil {

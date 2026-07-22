@@ -129,6 +129,31 @@ func TestRecordProposalDecisionUsesStableIdempotencyAndCurrentEvidence(t *testin
 	}
 }
 
+func TestRecordProposalDecisionForProposalRequiresRouteProposalOwnership(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedPolicyRecordFixture(t, ctx)
+	proposal, err := store.RecordPolicyEvaluation(ctx, policyRecordInput(fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := RecordProposalDecisionInput{
+		ProposalRevisionID: proposal.ProposalRevisionID,
+		Decision:           ProposalDecisionApprove,
+		ActorKind:          ProposalDecisionActorHuman,
+		ActorID:            "local-user",
+		IdempotencyKey:     "human:proposal-1:approve",
+		DecidedAt:          time.Unix(80, 0).UTC(),
+	}
+	if _, err := store.RecordProposalDecisionForProposal(ctx, "other-proposal", input); !errors.Is(err, ErrProposalNotFound) {
+		t.Fatalf("wrong proposal error = %v", err)
+	}
+	result, err := store.RecordProposalDecisionForProposal(ctx, proposal.ProposalID, input)
+	if err != nil || !result.Created {
+		t.Fatalf("owned proposal decision = %+v, %v", result, err)
+	}
+	assertTableCount(t, ctx, store.db, "decisions", 1)
+}
+
 func TestRecordProposalDecisionRejectsConflictingOrStaleFacts(t *testing.T) {
 	ctx := context.Background()
 	store, fixture := seedPolicyRecordFixture(t, ctx)
