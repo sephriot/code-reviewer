@@ -12,11 +12,13 @@ import (
 	"time"
 
 	"github.com/sephriot/code-reviewer/internal/application/hydrateworker"
+	"github.com/sephriot/code-reviewer/internal/application/notificationoutbox"
 	"github.com/sephriot/code-reviewer/internal/application/publishworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
 	"github.com/sephriot/code-reviewer/internal/application/reconcileworker"
 	"github.com/sephriot/code-reviewer/internal/application/reviewworker"
 	"github.com/sephriot/code-reviewer/internal/config"
+	"github.com/sephriot/code-reviewer/internal/outbox"
 	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 	"github.com/sephriot/code-reviewer/internal/worker"
 
@@ -306,6 +308,27 @@ func TestNewRegistersBothShadowWorkerHandlers(t *testing.T) {
 	}
 }
 
+func TestNewRunsOnlyKnownLocalNotificationOutboxTopic(t *testing.T) {
+	cfg := config.Default()
+	cfg.DatabasePath = filepath.Join(t.TempDir(), "control-plane.db")
+	cfg.MigrationMode = config.MigrationApply
+	service, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = service.Close() }()
+	runner, ok := service.outboxRunner.(*outbox.Runner)
+	if !ok {
+		t.Fatalf("outboxRunner = %T", service.outboxRunner)
+	}
+	if err := runner.Handler.Handle(context.Background(), sqlite.OutboxDelivery{Topic: "unknown", Payload: []byte(`{}`)}); err == nil || !worker.IsPermanent(err) {
+		t.Fatalf("unknown topic error = %v", err)
+	}
+	if err := runner.Handler.Handle(context.Background(), sqlite.OutboxDelivery{Topic: notificationoutbox.DispatchTopic, Payload: []byte(`{"domain_event_id":"missing","dedupe_key":"missing","payload":{}}`)}); err == nil || worker.IsPermanent(err) {
+		t.Fatalf("known topic error = %v", err)
+	}
+}
+
 func TestNewRegistersReviewWorkerOnlyWhenFullyEnabled(t *testing.T) {
 	newConfig := func() config.Config {
 		cfg := config.Default()
@@ -434,10 +457,12 @@ func TestRunSchedulerStopsAfterCancellation(t *testing.T) {
 
 func TestServiceRunCancelsWorkerAndScheduler(t *testing.T) {
 	startedWorker := make(chan struct{}, 1)
+	startedOutbox := make(chan struct{}, 1)
 	startedScheduler := make(chan struct{}, 1)
 	service := &Service{
 		server:           &http.Server{Addr: "127.0.0.1:0", Handler: http.NewServeMux()},
 		jobRunner:        waitingRunner{started: startedWorker},
+		outboxRunner:     waitingRunner{started: startedOutbox},
 		scheduleInterval: time.Hour,
 		schedule: func(context.Context) error {
 			startedScheduler <- struct{}{}
@@ -451,6 +476,11 @@ func TestServiceRunCancelsWorkerAndScheduler(t *testing.T) {
 	case <-startedWorker:
 	case <-time.After(2 * time.Second):
 		t.Fatal("worker did not start")
+	}
+	select {
+	case <-startedOutbox:
+	case <-time.After(2 * time.Second):
+		t.Fatal("outbox did not start")
 	}
 	select {
 	case <-startedScheduler:

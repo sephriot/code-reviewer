@@ -19,6 +19,8 @@ import (
 	"github.com/sephriot/code-reviewer/internal/api"
 	"github.com/sephriot/code-reviewer/internal/application/hydrate"
 	"github.com/sephriot/code-reviewer/internal/application/hydrateworker"
+	"github.com/sephriot/code-reviewer/internal/application/notificationdispatch"
+	"github.com/sephriot/code-reviewer/internal/application/notificationoutbox"
 	"github.com/sephriot/code-reviewer/internal/application/notificationworker"
 	"github.com/sephriot/code-reviewer/internal/application/publishworker"
 	"github.com/sephriot/code-reviewer/internal/application/reconcile"
@@ -28,6 +30,7 @@ import (
 	"github.com/sephriot/code-reviewer/internal/application/reviewworker"
 	"github.com/sephriot/code-reviewer/internal/application/watchschedule"
 	"github.com/sephriot/code-reviewer/internal/config"
+	"github.com/sephriot/code-reviewer/internal/outbox"
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 	"github.com/sephriot/code-reviewer/internal/worker"
 )
@@ -37,6 +40,7 @@ type Service struct {
 	store            *storagesqlite.Store
 	server           *http.Server
 	jobRunner        runtimeRunner
+	outboxRunner     runtimeRunner
 	schedule         scheduleFunc
 	scheduleInterval time.Duration
 	publicationMode  config.PublicationMode
@@ -170,7 +174,14 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		Handler: router,
 		Owner:   workerOwner(),
 	}
-	service := &Service{store: store, server: server, jobRunner: runner, publicationMode: cfg.PublicationMode}
+	outboxRunner := &outbox.Runner{
+		Store: store,
+		Handler: notificationoutbox.Handler{Dispatcher: notificationdispatch.Service{
+			Store: store, Scheduler: notificationworker.Scheduler{Store: store},
+		}},
+		Owner: workerOwner() + ":outbox",
+	}
+	service := &Service{store: store, server: server, jobRunner: runner, outboxRunner: outboxRunner, publicationMode: cfg.PublicationMode}
 	if cfg.ShadowReconciliation.Enabled {
 		reconciliationConfig := reconcile.Config{
 			ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
@@ -294,6 +305,15 @@ func (s *Service) startBackground(ctx context.Context, group *sync.WaitGroup, er
 			defer group.Done()
 			if err := s.jobRunner.Run(ctx); err != nil && ctx.Err() == nil {
 				errorsCh <- fmt.Errorf("run worker: %w", err)
+			}
+		}()
+	}
+	if s.outboxRunner != nil {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if err := s.outboxRunner.Run(ctx); err != nil && ctx.Err() == nil {
+				errorsCh <- fmt.Errorf("run outbox: %w", err)
 			}
 		}()
 	}
