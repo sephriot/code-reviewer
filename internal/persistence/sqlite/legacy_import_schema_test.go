@@ -282,8 +282,8 @@ func TestLegacyImportMigrationPreservesFoundationRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migrations) != 8 {
-		t.Fatalf("migration count = %d, want 8", len(migrations))
+	if len(migrations) != 9 {
+		t.Fatalf("migration count = %d, want 9", len(migrations))
 	}
 	if err := store.ensureMigrationTable(ctx); err != nil {
 		t.Fatal(err)

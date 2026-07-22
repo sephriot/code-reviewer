@@ -21,6 +21,7 @@ type ControlReader interface {
 	ListCurrentAttention(context.Context, sqlite.AttentionQuery) (sqlite.AttentionPage, error)
 	ListHistory(context.Context, sqlite.HistoryQuery) (sqlite.HistoryPage, error)
 	PullRequestTimeline(context.Context, sqlite.PullRequestTimelineQuery) (sqlite.PullRequestTimelinePage, error)
+	PullRequestDetail(context.Context, sqlite.PullRequestDetailQuery) (sqlite.PullRequestDetail, error)
 	AnalyticsOverview(context.Context) (sqlite.AnalyticsOverview, error)
 	SettingsSummary(context.Context) (sqlite.SettingsSummary, error)
 }
@@ -57,6 +58,12 @@ func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler
 		"/api/pull-requests/{id}/timeline",
 	} {
 		mux.HandleFunc("GET "+path, handler.timeline)
+	}
+	for _, path := range []string{
+		"/api/v1/pull-requests/{id}",
+		"/api/pull-requests/{id}",
+	} {
+		mux.HandleFunc("GET "+path, handler.pullRequestDetail)
 	}
 	mux.HandleFunc("GET /api/v1/analytics/overview", handler.analyticsOverview)
 	mux.HandleFunc("GET /api/v1/settings", handler.settings)
@@ -115,6 +122,34 @@ type timelineResponse struct {
 	State         sqlite.TimelineState `json:"state"`
 	Current       bool                 `json:"current"`
 	Detail        string               `json:"detail"`
+}
+
+type pullRequestDetailResponse struct {
+	ConnectionID  string `json:"connection_id"`
+	RepositoryID  string `json:"repository_id"`
+	PullRequestID string `json:"pull_request_id"`
+	Owner         string `json:"owner"`
+	Repository    string `json:"repository"`
+	Number        int    `json:"number"`
+	Title         string `json:"title"`
+	State         string `json:"state"`
+	HTMLURL       string `json:"html_url"`
+	Freshness     string `json:"freshness"`
+
+	CurrentRevision struct {
+		ID           string `json:"id"`
+		IdentityKind string `json:"identity_kind"`
+		HeadSHA      string `json:"head_sha"`
+		BaseSHA      string `json:"base_sha"`
+	} `json:"current_revision"`
+	CurrentObservation struct {
+		ID         string    `json:"id"`
+		ObservedAt time.Time `json:"observed_at"`
+	} `json:"current_observation"`
+	CurrentCounts struct {
+		ReviewRuns        int `json:"review_runs"`
+		ProposalRevisions int `json:"proposal_revisions"`
+	} `json:"current_counts"`
 }
 
 type historyResponse struct {
@@ -260,6 +295,60 @@ func (h controlHandler) timeline(response http.ResponseWriter, request *http.Req
 	writeControlJSON(response, http.StatusOK, pageResponse[timelineResponse]{Items: items, NextCursor: page.NextCursor})
 }
 
+func (h controlHandler) pullRequestDetail(response http.ResponseWriter, request *http.Request) {
+	if !isLoopbackRemoteAddress(request.RemoteAddr) {
+		writeControlError(response, http.StatusForbidden, "loopback_required", "pull request detail is available only on loopback", false)
+		return
+	}
+	pullRequestID := strings.TrimSpace(request.PathValue("id"))
+	if pullRequestID == "" || len(pullRequestID) > 256 {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "pull request ID is invalid", false)
+		return
+	}
+	connectionID, err := parseDetailConnectionID(request)
+	if err != nil {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", err.Error(), false)
+		return
+	}
+	if h.reader == nil {
+		writeControlError(response, http.StatusServiceUnavailable, "read_model_unavailable", "control read model is unavailable", true)
+		return
+	}
+	detail, err := h.reader.PullRequestDetail(request.Context(), sqlite.PullRequestDetailQuery{
+		ConnectionID: connectionID, PullRequestID: pullRequestID,
+	})
+	if err != nil {
+		handleReadError(response, err)
+		return
+	}
+	writeControlJSON(response, http.StatusOK, newPullRequestDetailResponse(detail))
+}
+
+func parseDetailConnectionID(request *http.Request) (string, error) {
+	values := request.URL.Query()
+	if len(values) != 1 || len(values["connection_id"]) != 1 {
+		return "", errors.New("connection_id is required")
+	}
+	connectionID := strings.TrimSpace(values.Get("connection_id"))
+	if connectionID == "" || len(connectionID) > 256 {
+		return "", errors.New("connection_id is invalid")
+	}
+	return connectionID, nil
+}
+
+func newPullRequestDetailResponse(detail sqlite.PullRequestDetail) pullRequestDetailResponse {
+	response := pullRequestDetailResponse{
+		ConnectionID: detail.ConnectionID, RepositoryID: detail.RepositoryID, PullRequestID: detail.PullRequestID,
+		Owner: detail.Owner, Repository: detail.Repository, Number: detail.Number, Title: detail.Title,
+		State: detail.State, HTMLURL: detail.HTMLURL, Freshness: detail.Freshness,
+	}
+	response.CurrentRevision.ID, response.CurrentRevision.IdentityKind = detail.CurrentRevisionID, detail.CurrentRevisionIdentityKind
+	response.CurrentRevision.HeadSHA, response.CurrentRevision.BaseSHA = detail.CurrentHeadSHA, detail.CurrentBaseSHA
+	response.CurrentObservation.ID, response.CurrentObservation.ObservedAt = detail.CurrentObservationID, detail.CurrentObservedAt
+	response.CurrentCounts.ReviewRuns, response.CurrentCounts.ProposalRevisions = detail.CurrentReviewRunCount, detail.CurrentProposalRevisionCount
+	return response
+}
+
 func (h controlHandler) analyticsOverview(response http.ResponseWriter, request *http.Request) {
 	if !isLoopbackRemoteAddress(request.RemoteAddr) {
 		writeControlError(response, http.StatusForbidden, "loopback_required", "analytics overview is available only on loopback", false)
@@ -356,6 +445,10 @@ func parsePageParams(request *http.Request, timeline bool) (pageParams, error) {
 }
 
 func handleReadError(response http.ResponseWriter, err error) {
+	if errors.Is(err, sqlite.ErrPullRequestDetailNotFound) {
+		writeControlError(response, http.StatusNotFound, "not_found", "pull request was not found", false)
+		return
+	}
 	if strings.Contains(err.Error(), "read page cursor is invalid") || strings.Contains(err.Error(), "read page limit") || strings.Contains(err.Error(), "timeline connection") {
 		writeControlError(response, http.StatusBadRequest, "invalid_request", "pagination or resource parameters are invalid", false)
 		return

@@ -16,9 +16,11 @@ import (
 type fakeInboxReader struct {
 	attention      sqlite.AttentionPage
 	timeline       sqlite.PullRequestTimelinePage
+	detail         sqlite.PullRequestDetail
 	history        sqlite.HistoryPage
 	attentionQuery sqlite.AttentionQuery
 	timelineQuery  sqlite.PullRequestTimelineQuery
+	detailQuery    sqlite.PullRequestDetailQuery
 	historyQuery   sqlite.HistoryQuery
 	analytics      sqlite.AnalyticsOverview
 	analyticsCalls int
@@ -42,6 +44,11 @@ func (f *fakeInboxReader) PullRequestTimeline(_ context.Context, query sqlite.Pu
 	return f.timeline, f.err
 }
 
+func (f *fakeInboxReader) PullRequestDetail(_ context.Context, query sqlite.PullRequestDetailQuery) (sqlite.PullRequestDetail, error) {
+	f.detailQuery = query
+	return f.detail, f.err
+}
+
 func (f *fakeInboxReader) AnalyticsOverview(_ context.Context) (sqlite.AnalyticsOverview, error) {
 	f.analyticsCalls++
 	return f.analytics, f.err
@@ -61,6 +68,10 @@ func TestControlReadEndpointsAndAliases(t *testing.T) {
 		timeline: sqlite.PullRequestTimelinePage{Items: []sqlite.TimelineItem{{
 			Kind: sqlite.TimelineKindRun, ID: "run-1", ConnectionID: "connection-1", PullRequestID: "pr-1", RevisionID: "revision-1", ObservationID: "observation-1", OccurredAt: time.Unix(2, 0).UTC(), State: sqlite.TimelineStateCurrent, Current: true, Detail: "cli",
 		}}},
+		detail: sqlite.PullRequestDetail{
+			ConnectionID: "connection-1", RepositoryID: "repo-1", PullRequestID: "pr-1", Owner: "owner", Repository: "repository", Number: 1,
+			Title: "Detail", State: "open", Freshness: "fresh", CurrentRevisionID: "revision-1", CurrentObservationID: "observation-1", CurrentObservedAt: time.Unix(2, 0).UTC(),
+		},
 		history: sqlite.HistoryPage{Items: []sqlite.HistoryItem{{
 			Kind: sqlite.HistoryKindCompletedRun, ID: "run-1", ConnectionID: "connection-1", PullRequestID: "pr-1", RevisionID: "revision-1", ObservationID: "observation-1", OccurredAt: time.Unix(3, 0).UTC(), State: sqlite.TimelineStateCurrent, Current: true, Detail: "cli:succeeded",
 		}}},
@@ -99,6 +110,18 @@ func TestControlReadEndpointsAndAliases(t *testing.T) {
 			t.Fatalf("history query = %+v", reader.historyQuery)
 		}
 	}
+	for _, path := range []string{"/api/v1/pull-requests/pr-1?connection_id=connection-1", "/api/pull-requests/pr-1?connection_id=connection-1"} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.RemoteAddr = "127.0.0.1:1234"
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != jsonContentType || response.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("detail %q response = %d headers=%v", path, response.Code, response.Header())
+		}
+		if reader.detailQuery.ConnectionID != "connection-1" || reader.detailQuery.PullRequestID != "pr-1" {
+			t.Fatalf("detail query = %+v", reader.detailQuery)
+		}
+	}
 }
 
 func TestControlRejectsInvalidInputAndDoesNotRead(t *testing.T) {
@@ -108,15 +131,40 @@ func TestControlRejectsInvalidInputAndDoesNotRead(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/inbox?limit=0", "/api/v1/inbox?limit=101", "/api/v1/inbox?limit=1&limit=2", "/api/v1/inbox?unknown=value",
 		"/api/v1/pull-requests/pr-1/timeline", "/api/v1/pull-requests/pr-1/timeline?connection_id=one&connection_id=two", "/api/v1/pull-requests/pr-1/timeline?connection_id=one&limit=nope",
+		"/api/v1/pull-requests/pr-1", "/api/v1/pull-requests/pr-1?connection_id=one&connection_id=two", "/api/v1/pull-requests/pr-1?connection_id=one&limit=1",
 	} {
 		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.RemoteAddr = "127.0.0.1:1234"
+		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusBadRequest {
 			t.Errorf("%q status = %d, want 400", path, response.Code)
 		}
 	}
-	if reader.attentionQuery != (sqlite.AttentionQuery{}) || reader.timelineQuery != (sqlite.PullRequestTimelineQuery{}) || reader.historyQuery != (sqlite.HistoryQuery{}) {
-		t.Fatalf("invalid requests called reader: %+v %+v %+v", reader.attentionQuery, reader.timelineQuery, reader.historyQuery)
+	if reader.attentionQuery != (sqlite.AttentionQuery{}) || reader.timelineQuery != (sqlite.PullRequestTimelineQuery{}) || reader.detailQuery != (sqlite.PullRequestDetailQuery{}) || reader.historyQuery != (sqlite.HistoryQuery{}) {
+		t.Fatalf("invalid requests called reader: %+v %+v %+v %+v", reader.attentionQuery, reader.timelineQuery, reader.detailQuery, reader.historyQuery)
+	}
+}
+
+func TestControlPullRequestDetailRequiresLoopbackAndMapsNotFound(t *testing.T) {
+	t.Parallel()
+	reader := &fakeInboxReader{err: sqlite.ErrPullRequestDetailNotFound}
+	handler := NewControlHandler(Readiness{}, ControlOptions{Reader: reader})
+
+	remote := httptest.NewRequest(http.MethodGet, "/api/v1/pull-requests/pr-1?connection_id=connection-1", nil)
+	remote.RemoteAddr = "198.51.100.7:443"
+	remoteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(remoteResponse, remote)
+	if remoteResponse.Code != http.StatusForbidden || reader.detailQuery != (sqlite.PullRequestDetailQuery{}) {
+		t.Fatalf("remote detail status=%d query=%+v", remoteResponse.Code, reader.detailQuery)
+	}
+
+	local := httptest.NewRequest(http.MethodGet, "/api/v1/pull-requests/pr-1?connection_id=connection-1", nil)
+	local.RemoteAddr = "127.0.0.1:1234"
+	localResponse := httptest.NewRecorder()
+	handler.ServeHTTP(localResponse, local)
+	if localResponse.Code != http.StatusNotFound {
+		t.Fatalf("missing detail status=%d", localResponse.Code)
 	}
 }
 
