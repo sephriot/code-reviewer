@@ -52,6 +52,50 @@ func TestEvaluateRecordsDeterministicPolicyOutcome(t *testing.T) {
 	}
 }
 
+func TestEvaluateAppendsIdempotentNotificationIntentWhenConfigured(t *testing.T) {
+	target := testTarget()
+	rule := testRule()
+	events := &eventAppender{}
+	service := Service{
+		Reader: readerFunc{target: target, rule: rule},
+		Recorder: recorderFunc(func(context.Context, sqlite.RecordPolicyEvaluationInput) (sqlite.RecordPolicyEvaluationResult, error) {
+			return sqlite.RecordPolicyEvaluationResult{PolicyEvaluationID: "evaluation-1", ProposalID: "proposal-1"}, nil
+		}),
+		Events: events,
+	}
+	if _, err := service.Evaluate(context.Background(), Request{AssessmentID: target.AssessmentID, RuleKey: rule.RuleKey, RuleVersionID: rule.VersionID}); err != nil {
+		t.Fatal(err)
+	}
+	if events.event.ID != notificationEventID("evaluation-1") || events.event.AggregateType != "policy_evaluation" || events.event.AggregateID != "evaluation-1" || events.event.EventType != "policy.evaluated" || len(events.outbox) != 1 || events.outbox[0].Topic != "notification.dispatch.v1" {
+		t.Fatalf("event=%+v outbox=%+v", events.event, events.outbox)
+	}
+	var outbox struct {
+		DomainEventID string          `json:"domain_event_id"`
+		DedupeKey     string          `json:"dedupe_key"`
+		Payload       json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(events.outbox[0].Payload, &outbox); err != nil {
+		t.Fatal(err)
+	}
+	if outbox.DomainEventID != events.event.ID || outbox.DedupeKey != "policy-evaluation:evaluation-1" || string(outbox.Payload) != `{"policy_evaluation_id":"evaluation-1","proposal_id":"proposal-1","disposition":"propose_changes"}` {
+		t.Fatalf("outbox=%+v", outbox)
+	}
+}
+
+func TestEvaluateReturnsNotificationWriteFailureAfterRecording(t *testing.T) {
+	target := testTarget()
+	service := Service{
+		Reader: readerFunc{target: target, rule: testRule()},
+		Recorder: recorderFunc(func(context.Context, sqlite.RecordPolicyEvaluationInput) (sqlite.RecordPolicyEvaluationResult, error) {
+			return sqlite.RecordPolicyEvaluationResult{PolicyEvaluationID: "evaluation-1"}, nil
+		}),
+		Events: &eventAppender{err: errors.New("database offline")},
+	}
+	if _, err := service.Evaluate(context.Background(), Request{AssessmentID: target.AssessmentID, RuleKey: "assigned-default", RuleVersionID: "rule-version-1"}); err == nil || !strings.Contains(err.Error(), "append policy notification") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
 func TestEvaluateRejectsUnsafePublicationConfigBeforeRecording(t *testing.T) {
 	target := testTarget()
 	rule := testRule()
@@ -124,6 +168,17 @@ type recorderFunc func(context.Context, sqlite.RecordPolicyEvaluationInput) (sql
 
 func (f recorderFunc) RecordPolicyEvaluation(ctx context.Context, input sqlite.RecordPolicyEvaluationInput) (sqlite.RecordPolicyEvaluationResult, error) {
 	return f(ctx, input)
+}
+
+type eventAppender struct {
+	event  sqlite.DomainEventInput
+	outbox []sqlite.OutboxInput
+	err    error
+}
+
+func (r *eventAppender) AppendEventWithOutbox(_ context.Context, event sqlite.DomainEventInput, outbox []sqlite.OutboxInput) (sqlite.AppendedEvent, error) {
+	r.event, r.outbox = event, outbox
+	return sqlite.AppendedEvent{EventID: event.ID}, r.err
 }
 
 func testTarget() sqlite.PolicyEvaluationTarget {

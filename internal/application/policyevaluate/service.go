@@ -6,6 +6,8 @@ package policyevaluate
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,10 +45,18 @@ type Recorder interface {
 	RecordPolicyEvaluation(context.Context, sqlite.RecordPolicyEvaluationInput) (sqlite.RecordPolicyEvaluationResult, error)
 }
 
+// EventAppender commits a policy outcome notification intent and its durable
+// outbox delivery. It is optional so read-only or historical evaluation flows
+// retain their existing no-notification behavior.
+type EventAppender interface {
+	AppendEventWithOutbox(context.Context, sqlite.DomainEventInput, []sqlite.OutboxInput) (sqlite.AppendedEvent, error)
+}
+
 // Service is the bounded policy evaluation application boundary.
 type Service struct {
 	Reader   Reader
 	Recorder Recorder
+	Events   EventAppender
 	Now      func() time.Time
 }
 
@@ -140,7 +150,47 @@ func (s Service) Evaluate(ctx context.Context, request Request) (Result, error) 
 	if err != nil {
 		return Result{}, fmt.Errorf("record policy evaluation: %w", err)
 	}
+	if s.Events != nil {
+		if err := s.appendNotificationIntent(ctx, recorded, outcome.Disposition); err != nil {
+			return Result{}, err
+		}
+	}
 	return Result{Target: target, Rule: rule, Outcome: outcome, Evaluation: recorded}, nil
+}
+
+func (s Service) appendNotificationIntent(ctx context.Context, recorded sqlite.RecordPolicyEvaluationResult, disposition policy.Disposition) error {
+	if recorded.PolicyEvaluationID == "" {
+		return errors.New("recorded policy evaluation has no identity")
+	}
+	eventID := notificationEventID(recorded.PolicyEvaluationID)
+	notificationPayload, err := json.Marshal(struct {
+		PolicyEvaluationID string `json:"policy_evaluation_id"`
+		ProposalID         string `json:"proposal_id,omitempty"`
+		Disposition        string `json:"disposition"`
+	}{recorded.PolicyEvaluationID, recorded.ProposalID, string(disposition)})
+	if err != nil {
+		return fmt.Errorf("encode policy notification payload: %w", err)
+	}
+	outboxPayload, err := json.Marshal(struct {
+		DomainEventID string          `json:"domain_event_id"`
+		DedupeKey     string          `json:"dedupe_key"`
+		Payload       json.RawMessage `json:"payload"`
+	}{eventID, "policy-evaluation:" + recorded.PolicyEvaluationID, notificationPayload})
+	if err != nil {
+		return fmt.Errorf("encode policy notification outbox payload: %w", err)
+	}
+	if _, err := s.Events.AppendEventWithOutbox(ctx, sqlite.DomainEventInput{
+		ID: eventID, AggregateType: "policy_evaluation", AggregateID: recorded.PolicyEvaluationID,
+		EventType: "policy.evaluated", EventVersion: 1, Payload: notificationPayload,
+	}, []sqlite.OutboxInput{{Topic: "notification.dispatch.v1", Payload: outboxPayload}}); err != nil {
+		return fmt.Errorf("append policy notification intent: %w", err)
+	}
+	return nil
+}
+
+func notificationEventID(policyEvaluationID string) string {
+	digest := sha256.Sum256([]byte("policy-evaluated-notification:v1:" + policyEvaluationID))
+	return "notification-event-" + hex.EncodeToString(digest[:])
 }
 
 type publicationConfig struct {

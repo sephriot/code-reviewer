@@ -50,6 +50,9 @@ func TestHandlerEvaluatesCurrentMatchingAutomaticPolicy(t *testing.T) {
 	if len(store.recorded) != 1 {
 		t.Fatalf("policy records=%+v", store.recorded)
 	}
+	if len(store.events) != 1 || store.events[0].EventType != "policy.evaluated" {
+		t.Fatalf("policy notification events=%+v", store.events)
+	}
 	recorded := store.recorded[0]
 	if recorded.AssessmentID != "assessment-1" || recorded.MatchedRuleID != "rule-1" ||
 		recorded.MatchedRuleVersionID != "rule-version-1" || recorded.CreatedAt != time.Unix(7, 0).UTC() {
@@ -207,6 +210,7 @@ func fmtError(err error) error { return errors.Join(errors.New("review execution
 type automaticPolicyStore struct {
 	target   sqlite.AutomaticWatchRuleTarget
 	recorded []sqlite.RecordPolicyEvaluationInput
+	events   []sqlite.DomainEventInput
 }
 
 func (s *automaticPolicyStore) LoadAutomaticWatchRuleTarget(context.Context, string, string) (sqlite.AutomaticWatchRuleTarget, error) {
@@ -227,6 +231,11 @@ func (s *automaticPolicyStore) LoadActivePolicyRule(context.Context, string, str
 func (s *automaticPolicyStore) RecordPolicyEvaluation(_ context.Context, input sqlite.RecordPolicyEvaluationInput) (sqlite.RecordPolicyEvaluationResult, error) {
 	s.recorded = append(s.recorded, input)
 	return sqlite.RecordPolicyEvaluationResult{PolicyEvaluationID: "evaluation-1", ProposalID: "proposal-1", Created: true}, nil
+}
+
+func (s *automaticPolicyStore) AppendEventWithOutbox(_ context.Context, event sqlite.DomainEventInput, _ []sqlite.OutboxInput) (sqlite.AppendedEvent, error) {
+	s.events = append(s.events, event)
+	return sqlite.AppendedEvent{EventID: event.ID}, nil
 }
 
 func automaticWatchTarget(triggerKind, profileID, profileVersionID string) sqlite.AutomaticWatchRuleTarget {

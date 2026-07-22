@@ -42,6 +42,7 @@ type RunEvents interface {
 type AutomaticPolicyStore interface {
 	policyevaluate.Reader
 	policyevaluate.Recorder
+	policyevaluate.EventAppender
 	LoadAutomaticWatchRuleTarget(context.Context, string, string) (sqlite.AutomaticWatchRuleTarget, error)
 }
 
@@ -112,7 +113,7 @@ func (h Handler) evaluateAutomaticPolicy(ctx context.Context, execution reviewex
 		rule.ProfileVersionID != execution.Target.Profile.ProfileVersionID {
 		return nil
 	}
-	_, err = (policyevaluate.Service{Reader: h.AutomaticPolicyStore, Recorder: h.AutomaticPolicyStore, Now: h.Now}).Evaluate(ctx, policyevaluate.Request{
+	_, err = (policyevaluate.Service{Reader: h.AutomaticPolicyStore, Recorder: h.AutomaticPolicyStore, Events: h.AutomaticPolicyStore, Now: h.Now}).Evaluate(ctx, policyevaluate.Request{
 		AssessmentID: execution.Recorded.AssessmentID, RuleKey: rule.RuleKey, RuleVersionID: rule.VersionID,
 	})
 	if err != nil {
