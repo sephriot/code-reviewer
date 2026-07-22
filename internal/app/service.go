@@ -284,7 +284,7 @@ func (s webhookReconciliationScheduler) Schedule(ctx context.Context) error {
 }
 
 func publicationMutationOptions(cfg config.Config, store *storagesqlite.Store) api.PublicationMutationOptions {
-	options := api.PublicationMutationOptions{Effects: store, UncertaintyResolver: store}
+	options := api.PublicationMutationOptions{Effects: store, AtomicEffects: store, UncertaintyResolver: store}
 	if cfg.PublicationMode == config.PublicationSimulated {
 		options.Scheduler = publishworker.Scheduler{Store: store}
 	}

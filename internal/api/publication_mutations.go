@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/sephriot/code-reviewer/internal/application/publishworker"
 	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 )
 
@@ -14,6 +16,9 @@ import (
 // authorize one durable effect from an already-approved proposal revision.
 type PublicationEffectCreator interface {
 	CreatePublicationEffect(context.Context, sqlite.CreatePublicationEffectInput) (sqlite.CreatePublicationEffectResult, error)
+}
+type AtomicPublicationEffectCreator interface {
+	CreatePublicationEffectAndEnsureJob(context.Context, sqlite.CreatePublicationEffectInput, sqlite.PublicationEffectJobFactory) (sqlite.CreatePublicationEffectResult, error)
 }
 
 // PublicationUncertaintyResolver records a human terminal classification of
@@ -39,6 +44,7 @@ type EnabledPublicationScheduler interface {
 // schedulers fail closed if their matching runtime mode is unavailable.
 type PublicationMutationOptions struct {
 	Effects             PublicationEffectCreator
+	AtomicEffects       AtomicPublicationEffectCreator
 	Scheduler           SimulatedPublicationScheduler
 	EnabledScheduler    EnabledPublicationScheduler
 	UncertaintyResolver PublicationUncertaintyResolver
@@ -49,7 +55,7 @@ type PublicationMutationOptions struct {
 // must mount it under MutationAuth.Wrap.
 func NewPublicationMutationHandler(options PublicationMutationOptions) http.Handler {
 	mux := http.NewServeMux()
-	handler := publicationMutationHandler{effects: options.Effects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, uncertaintyResolver: options.UncertaintyResolver, now: options.Now}
+	handler := publicationMutationHandler{effects: options.Effects, atomicEffects: options.AtomicEffects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, uncertaintyResolver: options.UncertaintyResolver, now: options.Now}
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate", handler.simulate)
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch", handler.dispatch)
 	mux.HandleFunc("POST /api/v1/mutate/publication-effects/{id}/uncertainty-resolution", handler.resolveUncertainty)
@@ -60,7 +66,7 @@ func registerPublicationMutationRoutes(mux *http.ServeMux, options PublicationMu
 	if mux == nil {
 		return
 	}
-	handler := publicationMutationHandler{effects: options.Effects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, uncertaintyResolver: options.UncertaintyResolver, now: options.Now}
+	handler := publicationMutationHandler{effects: options.Effects, atomicEffects: options.AtomicEffects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, uncertaintyResolver: options.UncertaintyResolver, now: options.Now}
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate", handler.simulate)
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch", handler.dispatch)
 	mux.HandleFunc("POST /api/v1/mutate/publication-effects/{id}/uncertainty-resolution", handler.resolveUncertainty)
@@ -68,6 +74,7 @@ func registerPublicationMutationRoutes(mux *http.ServeMux, options PublicationMu
 
 type publicationMutationHandler struct {
 	effects             PublicationEffectCreator
+	atomicEffects       AtomicPublicationEffectCreator
 	scheduler           SimulatedPublicationScheduler
 	enabledScheduler    EnabledPublicationScheduler
 	uncertaintyResolver PublicationUncertaintyResolver
@@ -103,6 +110,10 @@ type publicationUncertaintyResolutionResponse struct {
 }
 
 func (h publicationMutationHandler) simulate(response http.ResponseWriter, request *http.Request) {
+	if h.atomicEffects != nil {
+		h.atomic(response, request, []sqlite.PublicationMode{sqlite.PublicationModeDisabled, sqlite.PublicationModeSimulated})
+		return
+	}
 	effect, ok := h.createEffect(response, request, []sqlite.PublicationMode{sqlite.PublicationModeDisabled, sqlite.PublicationModeSimulated})
 	if !ok {
 		return
@@ -130,6 +141,10 @@ func (h publicationMutationHandler) simulate(response http.ResponseWriter, reque
 // dispatch is an explicit human request for one enabled external publication.
 // It never schedules disabled or simulated effects.
 func (h publicationMutationHandler) dispatch(response http.ResponseWriter, request *http.Request) {
+	if h.atomicEffects != nil {
+		h.atomic(response, request, []sqlite.PublicationMode{sqlite.PublicationModeEnabled})
+		return
+	}
 	effect, ok := h.createEffect(response, request, []sqlite.PublicationMode{sqlite.PublicationModeEnabled})
 	if !ok {
 		return
@@ -149,6 +164,54 @@ func (h publicationMutationHandler) dispatch(response http.ResponseWriter, reque
 		Created:         effect.Created,
 		Job:             publicationJobResponse(job),
 	})
+}
+
+func (h publicationMutationHandler) atomic(response http.ResponseWriter, request *http.Request, modes []sqlite.PublicationMode) {
+	proposalRevisionID, ok := validProposalRevisionPathID(request)
+	if !ok {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "proposal revision ID is invalid", false)
+		return
+	}
+	var body simulatePublicationRequest
+	if err := decodeProposalMutationJSON(response, request, &body); err != nil {
+		writeMutationDecodeError(response, err)
+		return
+	}
+	if !validPublicationIdempotencyKey(body.IdempotencyKey) {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "idempotency key is invalid", false)
+		return
+	}
+	effect, err := h.atomicEffects.CreatePublicationEffectAndEnsureJob(request.Context(), sqlite.CreatePublicationEffectInput{ProposalRevisionID: proposalRevisionID, IdempotencyKey: body.IdempotencyKey, AllowedModes: modes, CreatedAt: h.currentTime()}, atomicPublicationJob)
+	if err != nil {
+		writePublicationMutationStoreError(response, err)
+		return
+	}
+	result := publicationResponse{EffectID: effect.EffectID, PublicationMode: string(effect.PublicationMode), Created: effect.Created, Job: publicationJobResponseValue(effect.Job)}
+	writePublicationResponse(response, effect.Created, result)
+}
+func publicationJobResponseValue(job *sqlite.EnsureJobResult) *struct {
+	ID      string `json:"id"`
+	Created bool   `json:"created"`
+} {
+	if job == nil {
+		return nil
+	}
+	return publicationJobResponse(*job)
+}
+func atomicPublicationJob(effectID string, mode sqlite.PublicationMode) (sqlite.JobInput, error) {
+	payload, err := json.Marshal(struct {
+		EffectID string `json:"effect_id"`
+	}{effectID})
+	if err != nil {
+		return sqlite.JobInput{}, err
+	}
+	if mode == sqlite.PublicationModeSimulated {
+		return sqlite.JobInput{Kind: publishworker.SimulateJobKind, ResourceType: "publication_effect", ResourceID: effectID, DedupeKey: publishworker.SimulateJobKind + ":" + effectID, Payload: payload, MaxAttempts: 3}, nil
+	}
+	if mode == sqlite.PublicationModeEnabled {
+		return sqlite.JobInput{Kind: publishworker.EnabledJobKind, ResourceType: "publication_effect", ResourceID: effectID, DedupeKey: publishworker.EnabledJobKind + ":" + effectID, Payload: payload, MaxAttempts: 1}, nil
+	}
+	return sqlite.JobInput{}, errors.New("publication job mode unsupported")
 }
 
 // resolveUncertainty records an explicit human terminal resolution. It never
