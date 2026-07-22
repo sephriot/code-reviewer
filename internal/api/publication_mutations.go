@@ -22,21 +22,29 @@ type SimulatedPublicationScheduler interface {
 	Schedule(context.Context, string) (sqlite.EnsureJobResult, error)
 }
 
-// PublicationMutationOptions supplies the narrow capabilities for local
-// simulated-publication requests. A nil Scheduler fails closed when a
-// database has simulated mode but this runtime has not enabled its worker.
-type PublicationMutationOptions struct {
-	Effects   PublicationEffectCreator
-	Scheduler SimulatedPublicationScheduler
-	Now       func() time.Time
+// EnabledPublicationScheduler queues one guarded GitHub publication job.
+// It is exposed separately from simulated scheduling so enabled mode cannot
+// be selected accidentally by a local simulation request.
+type EnabledPublicationScheduler interface {
+	Schedule(context.Context, string) (sqlite.EnsureJobResult, error)
 }
 
-// NewPublicationMutationHandler exposes local simulated-publication requests.
-// Callers must mount it under MutationAuth.Wrap.
+// PublicationMutationOptions supplies narrow publication capabilities. Nil
+// schedulers fail closed if their matching runtime mode is unavailable.
+type PublicationMutationOptions struct {
+	Effects          PublicationEffectCreator
+	Scheduler        SimulatedPublicationScheduler
+	EnabledScheduler EnabledPublicationScheduler
+	Now              func() time.Time
+}
+
+// NewPublicationMutationHandler exposes guarded publication requests. Callers
+// must mount it under MutationAuth.Wrap.
 func NewPublicationMutationHandler(options PublicationMutationOptions) http.Handler {
 	mux := http.NewServeMux()
-	handler := publicationMutationHandler{effects: options.Effects, scheduler: options.Scheduler, now: options.Now}
+	handler := publicationMutationHandler{effects: options.Effects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, now: options.Now}
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate", handler.simulate)
+	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch", handler.dispatch)
 	return mux
 }
 
@@ -44,14 +52,16 @@ func registerPublicationMutationRoutes(mux *http.ServeMux, options PublicationMu
 	if mux == nil {
 		return
 	}
-	handler := publicationMutationHandler{effects: options.Effects, scheduler: options.Scheduler, now: options.Now}
+	handler := publicationMutationHandler{effects: options.Effects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, now: options.Now}
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate", handler.simulate)
+	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch", handler.dispatch)
 }
 
 type publicationMutationHandler struct {
-	effects   PublicationEffectCreator
-	scheduler SimulatedPublicationScheduler
-	now       func() time.Time
+	effects          PublicationEffectCreator
+	scheduler        SimulatedPublicationScheduler
+	enabledScheduler EnabledPublicationScheduler
+	now              func() time.Time
 }
 
 type simulatePublicationRequest struct {
@@ -60,7 +70,7 @@ type simulatePublicationRequest struct {
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
-type simulatePublicationResponse struct {
+type publicationResponse struct {
 	EffectID        string `json:"effect_id"`
 	PublicationMode string `json:"publication_mode"`
 	Created         bool   `json:"created"`
@@ -71,34 +81,11 @@ type simulatePublicationResponse struct {
 }
 
 func (h publicationMutationHandler) simulate(response http.ResponseWriter, request *http.Request) {
-	proposalRevisionID, ok := validProposalRevisionPathID(request)
+	effect, ok := h.createEffect(response, request, []sqlite.PublicationMode{sqlite.PublicationModeDisabled, sqlite.PublicationModeSimulated})
 	if !ok {
-		writeControlError(response, http.StatusBadRequest, "invalid_request", "proposal revision ID is invalid", false)
 		return
 	}
-	if h.effects == nil {
-		writeControlError(response, http.StatusServiceUnavailable, "mutation_unavailable", "publication mutation service is unavailable", true)
-		return
-	}
-	var input simulatePublicationRequest
-	if err := decodeProposalMutationJSON(response, request, &input); err != nil {
-		writeMutationDecodeError(response, err)
-		return
-	}
-	if !validPublicationIdempotencyKey(input.IdempotencyKey) {
-		writeControlError(response, http.StatusBadRequest, "invalid_request", "idempotency key is invalid", false)
-		return
-	}
-	effect, err := h.effects.CreatePublicationEffect(request.Context(), sqlite.CreatePublicationEffectInput{
-		ProposalRevisionID: proposalRevisionID,
-		IdempotencyKey:     input.IdempotencyKey,
-		CreatedAt:          h.currentTime(),
-	})
-	if err != nil {
-		writePublicationMutationStoreError(response, err)
-		return
-	}
-	result := simulatePublicationResponse{
+	result := publicationResponse{
 		EffectID:        effect.EffectID,
 		PublicationMode: string(effect.PublicationMode),
 		Created:         effect.Created,
@@ -113,13 +100,80 @@ func (h publicationMutationHandler) simulate(response http.ResponseWriter, reque
 			writeControlError(response, http.StatusServiceUnavailable, "simulation_schedule_failed", "could not schedule simulated publication", true)
 			return
 		}
-		result.Job = &struct {
-			ID      string `json:"id"`
-			Created bool   `json:"created"`
-		}{ID: job.ID, Created: job.Created}
+		result.Job = publicationJobResponse(job)
 	}
+	writePublicationResponse(response, effect.Created, result)
+}
+
+// dispatch is an explicit human request for one enabled external publication.
+// It never schedules disabled or simulated effects.
+func (h publicationMutationHandler) dispatch(response http.ResponseWriter, request *http.Request) {
+	effect, ok := h.createEffect(response, request, []sqlite.PublicationMode{sqlite.PublicationModeEnabled})
+	if !ok {
+		return
+	}
+	if h.enabledScheduler == nil {
+		writeControlError(response, http.StatusServiceUnavailable, "publication_unavailable", "enabled publication worker is unavailable", true)
+		return
+	}
+	job, err := h.enabledScheduler.Schedule(request.Context(), effect.EffectID)
+	if err != nil {
+		writeControlError(response, http.StatusServiceUnavailable, "publication_schedule_failed", "could not schedule enabled publication", true)
+		return
+	}
+	writePublicationResponse(response, effect.Created, publicationResponse{
+		EffectID:        effect.EffectID,
+		PublicationMode: string(effect.PublicationMode),
+		Created:         effect.Created,
+		Job:             publicationJobResponse(job),
+	})
+}
+
+func (h publicationMutationHandler) createEffect(response http.ResponseWriter, request *http.Request, allowedModes []sqlite.PublicationMode) (sqlite.CreatePublicationEffectResult, bool) {
+	proposalRevisionID, ok := validProposalRevisionPathID(request)
+	if !ok {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "proposal revision ID is invalid", false)
+		return sqlite.CreatePublicationEffectResult{}, false
+	}
+	if h.effects == nil {
+		writeControlError(response, http.StatusServiceUnavailable, "mutation_unavailable", "publication mutation service is unavailable", true)
+		return sqlite.CreatePublicationEffectResult{}, false
+	}
+	var input simulatePublicationRequest
+	if err := decodeProposalMutationJSON(response, request, &input); err != nil {
+		writeMutationDecodeError(response, err)
+		return sqlite.CreatePublicationEffectResult{}, false
+	}
+	if !validPublicationIdempotencyKey(input.IdempotencyKey) {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "idempotency key is invalid", false)
+		return sqlite.CreatePublicationEffectResult{}, false
+	}
+	effect, err := h.effects.CreatePublicationEffect(request.Context(), sqlite.CreatePublicationEffectInput{
+		ProposalRevisionID: proposalRevisionID,
+		IdempotencyKey:     input.IdempotencyKey,
+		AllowedModes:       allowedModes,
+		CreatedAt:          h.currentTime(),
+	})
+	if err != nil {
+		writePublicationMutationStoreError(response, err)
+		return sqlite.CreatePublicationEffectResult{}, false
+	}
+	return effect, true
+}
+
+func publicationJobResponse(job sqlite.EnsureJobResult) *struct {
+	ID      string `json:"id"`
+	Created bool   `json:"created"`
+} {
+	return &struct {
+		ID      string `json:"id"`
+		Created bool   `json:"created"`
+	}{ID: job.ID, Created: job.Created}
+}
+
+func writePublicationResponse(response http.ResponseWriter, created bool, result publicationResponse) {
 	status := http.StatusCreated
-	if !effect.Created {
+	if !created {
 		status = http.StatusOK
 	}
 	writeControlJSON(response, status, result)
@@ -172,6 +226,8 @@ func writePublicationMutationStoreError(response http.ResponseWriter, err error)
 		writeControlError(response, http.StatusConflict, "publication_conflict", "publication effect conflicts with existing immutable facts", false)
 	case errors.Is(err, sqlite.ErrPublicationModeUnsupported):
 		writeControlError(response, http.StatusConflict, "publication_mode_unsupported", "publication mode is not supported", false)
+	case errors.Is(err, sqlite.ErrPublicationModeNotAllowed):
+		writeControlError(response, http.StatusConflict, "enabled_publication_required", "GitHub publication requires enabled publication mode", false)
 	case errors.Is(err, sqlite.ErrCanonicalReviewTargetNotFound), strings.Contains(err.Error(), "no longer matches current canonical evidence"):
 		writeControlError(response, http.StatusConflict, "proposal_not_current", "proposal no longer matches current canonical evidence", false)
 	default:

@@ -139,7 +139,7 @@
               <label class="field" for="decision-reason">Decision reason (optional)
                 <textarea class="compact" id="decision-reason" maxlength="4096" placeholder="Why this is ready, or why it needs change"></textarea>
               </label>
-              <div class="action-row"><button class="action" type="button" data-decision="approve">Approve revision</button><button class="action danger" type="button" data-decision="reject">Reject revision</button><button class="action" id="simulate-publication" type="button">Simulate approved revision</button></div>
+              <div class="action-row"><button class="action" type="button" data-decision="approve">Approve revision</button><button class="action danger" type="button" data-decision="reject">Reject revision</button><button class="action" id="simulate-publication" type="button">Simulate approved revision</button><button class="action danger" id="dispatch-publication" type="button" hidden>Send approved review to GitHub</button></div>
             </fieldset>
           </form>
           <p class="mutation-status" id="mutation-status" role="status" aria-live="polite">Select a pending proposal to unlock local actions.</p>
@@ -227,11 +227,13 @@
       const mutationStatus = document.querySelector('#mutation-status');
       const createRevision = document.querySelector('#create-revision');
       const simulatePublication = document.querySelector('#simulate-publication');
+      const dispatchPublication = document.querySelector('#dispatch-publication');
       const decisionButtons = Array.from(document.querySelectorAll('[data-decision]'));
       let selectedItem = null;
       let activeMutation = false;
       let mutationRecordsAvailable = false;
       let notificationPreferences = null;
+      let publicationMode = 'unknown';
       let notificationPreferencesBusy = false;
       const formatTime = (value) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'unknown time' : new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(date); };
       const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value || '—'; if (className) node.className = className; return node; };
@@ -274,14 +276,16 @@
         clearReadFailure(historyMessage, entries.length ? 'Completed runs, immutable decisions, and publication attempts.' : 'No terminal lifecycle outcomes yet.');
       }
       function renderSettings(value) {
+		publicationMode = value.publication_mode || 'unknown';
         settingsItems.replaceChildren();
         const rows = [
-          ['Publication mode', value.publication_mode || 'unknown', value.publication_mode === 'disabled' || value.publication_mode === 'simulated'],
+          ['Publication mode', publicationMode, ['disabled', 'simulated', 'enabled'].includes(publicationMode)],
           ['Active watch rules', value.configured?.active_rules ?? 0], ['Review profiles', value.configured?.profiles ?? 0],
           ['Schema version', `${value.schema?.version ?? '—'} / ${value.schema?.latest ?? '—'}`, Boolean(value.schema?.current)], ['Pending migrations', value.schema?.pending ?? '—', (value.schema?.pending ?? 1) === 0]
         ];
         rows.forEach(([label, valueText, good]) => { const labelNode = text('dt', label); const valueNode = text('dd', String(valueText)); if (good !== undefined) valueNode.dataset.good = String(good); settingsItems.append(labelNode, valueNode); });
         clearReadFailure(settingsMessage, 'Safe local summary only. Credentials and token references stay out of the dashboard.');
+		syncMutationControls();
       }
       const localDateTimeInput = (value) => {
         if (!value) return '';
@@ -333,6 +337,8 @@
         createRevision.disabled = activeMutation || !hasProposal;
         decisionButtons.forEach((button) => { button.disabled = activeMutation || !hasProposal || !hasRevision; });
         simulatePublication.disabled = activeMutation || !hasRevision;
+		dispatchPublication.hidden = publicationMode !== 'enabled';
+		dispatchPublication.disabled = activeMutation || !hasRevision || publicationMode !== 'enabled';
       }
       function setMutationContext(item, events) {
         proposalControls.hidden = false;
@@ -429,6 +435,18 @@
           const result = await postMutation(`/api/v1/mutate/proposal-revisions/${encodeURIComponent(revision)}/publication/simulate`, { idempotency_key:newCommandID() });
           if (result.job) setMutationStatus('ready', 'Local simulation queued. No GitHub action will run.');
           else setMutationStatus('ready', 'Effect recorded while publication is disabled. No GitHub action will run.');
+          await reloadInbox();
+        } catch (error) { setMutationStatus('error', error.message); }
+        finally { setMutationBusy(false); }
+      });
+      dispatchPublication.addEventListener('click', async () => {
+        const revision = proposalRevisionID.value;
+        if (!revision) { setMutationStatus('error', 'Choose one approved proposal revision before publication.'); return; }
+        if (!window.confirm('Queue this approved revision for GitHub publication? This can post an approval, comment, or change request.')) return;
+        setMutationBusy(true); setMutationStatus('idle', 'Queuing guarded GitHub publication.');
+        try {
+          const result = await postMutation(`/api/v1/mutate/proposal-revisions/${encodeURIComponent(revision)}/publication/dispatch`, { idempotency_key:newCommandID() });
+          setMutationStatus('ready', result.job ? 'Publication queued. GitHub result will appear in history.' : 'Publication effect recorded.');
           await reloadInbox();
         } catch (error) { setMutationStatus('error', error.message); }
         finally { setMutationBusy(false); }

@@ -1,6 +1,6 @@
 # Code Reviewer — v2 control plane
 
-`reviewd` is a local Go control plane for evidence-bound GitHub pull-request review. It keeps an append-only SQLite record of observations, canonical diffs, review runs, assessments, policy evaluations, proposals, decisions, and simulated publication attempts.
+`reviewd` is a local Go control plane for evidence-bound GitHub pull-request review. It keeps an append-only SQLite record of observations, canonical diffs, review runs, assessments, policy evaluations, proposals, decisions, and publication attempts.
 
 This is a ground-up replacement. Legacy Python runtime, legacy dashboard, and `data/reviews.db` are not part of v2 operation.
 
@@ -8,10 +8,10 @@ This is a ground-up replacement. Legacy Python runtime, legacy dashboard, and `d
 
 - Use a separate v2 database: default `data/control-plane.db`.
 - `data/reviews.db` is legacy input only. Never point `reviewd` or v2 migrations at it.
-- GitHub traffic in this release is GET-only: discovery, PR detail, diff, file list, and tree reads.
+- GitHub discovery, PR detail, diff, file-list, and tree traffic are GET-only. A separate, bounded publisher can make one explicitly requested review write only in `enabled` mode.
 - Review engines receive a bounded JSON bundle through stdin, run in a fresh directory, and receive no GitHub credentials or inherited environment.
 - All review, policy, proposal, and publication records are immutable and tied to currently verified canonical evidence.
-- Real GitHub publication is unavailable. `disabled` is default; `simulated` records a local simulated attempt only. Neither mode can approve, comment on, or request changes on GitHub.
+- `disabled` is default. `simulated` records a local simulated attempt only. `enabled` requires configured shadow reconciliation, a GitHub token, and explicit dispatch; it revalidates live diff anchors before a single non-retrying GitHub write.
 
 ## Prerequisites
 
@@ -212,7 +212,7 @@ go run ./cmd/reviewd
 
 Review execution requires enabled shadow reconciliation because it uses that configured GET-only connection to rebuild evidence.
 
-## Policy, proposal, and simulated publication
+## Policy, proposal, and guarded publication
 
 `reviewctl policy evaluate` evaluates one completed assessment against an already persisted active immutable rule version:
 
@@ -286,11 +286,13 @@ go run ./cmd/reviewctl proposal decide \
 
 Both commands reject likely secret-bearing arguments and file content. Decisions are immutable local evidence, not GitHub instructions.
 
-`reviewctl proposal publish --proposal-revision-id ID --simulate` records an effect only for an approved, current proposal revision. In `simulated` mode it queues one local durable `{"simulated":true}` attempt; in `disabled` mode it records the effect without dispatch. There is no code path in this release that performs a GitHub write. Do not rely on this system to publish reviews.
+`reviewctl proposal publish --proposal-revision-id ID --simulate` records an effect only for an approved, current proposal revision. In `simulated` mode it queues one local durable `{"simulated":true}` attempt; in `disabled` mode it records the effect without dispatch. It refuses enabled mode.
+
+`reviewctl proposal publish --proposal-revision-id ID --dispatch` works only in `enabled` mode and queues one guarded publication job for `reviewd`; it does not write from `reviewctl`. Enabled runtime requires configured shadow reconciliation and GitHub token. Before posting, worker fetches live diff, converts invalid inline comments to review-body findings, claims durable one-shot dispatch, and records success or uncertainty without automatic retry.
 
 ## Control API and dashboard
 
-Start `reviewd`, then open <http://127.0.0.1:8080/>. Dashboard shows current attention, immutable timeline records, local lifecycle analytics, guarded local proposal edits/decisions, and explicit local publication simulation. On load it obtains a short-lived, HttpOnly, SameSite-Strict session cookie from the loopback server; browser code never sees the credential. It cannot publish to GitHub; keep the listener on loopback.
+Start `reviewd`, then open <http://127.0.0.1:8080/>. Dashboard shows current attention, immutable timeline records, local lifecycle analytics, guarded local proposal edits/decisions, and explicit local publication simulation. In `enabled` mode only, an extra browser-confirmed control can queue one guarded GitHub publication. On load it obtains a short-lived, HttpOnly, SameSite-Strict session cookie from the loopback server; browser code never sees the credential. Keep the listener on loopback.
 
 ```bash
 curl http://127.0.0.1:8080/api/v1/health/live
@@ -309,7 +311,7 @@ curl http://127.0.0.1:8080/api/v1/analytics/overview
 | `REVIEWD_DATABASE_PATH` | `data/control-plane.db` | Separate v2 SQLite database |
 | `REVIEWD_LISTEN_ADDRESS` | `127.0.0.1:8080` | Loopback-only API listener |
 | `REVIEWD_MIGRATION_MODE` | `check` | `check` or explicit `apply` |
-| `REVIEWD_PUBLICATION_MODE` | `disabled` | `disabled` or local-only `simulated` |
+| `REVIEWD_PUBLICATION_MODE` | `disabled` | `disabled`, local-only `simulated`, or guarded `enabled` |
 | `REVIEWD_SHADOW_RECONCILE_ENABLED` | `false` | Enables GET-only scheduler |
 | `REVIEWD_GITHUB_CONNECTION_ID` | empty | Local connection identity; required when scheduler enabled |
 | `REVIEWD_GITHUB_API_BASE_URL` | `https://api.github.com` | GitHub REST API base URL |

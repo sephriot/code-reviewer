@@ -98,12 +98,22 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 			status.Pending,
 		))
 	}
+	if _, err := store.SetPublicationMode(ctx, storagesqlite.PublicationMode(cfg.PublicationMode), time.Now().UTC()); err != nil {
+		return closeOnError(fmt.Errorf("set publication mode: %w", err))
+	}
 
 	mutationAuth, err := api.NewMutationAuth()
 	if err != nil {
 		return closeOnError(fmt.Errorf("create control mutation auth: %w", err))
 	}
-	webhookOptions, err := githubWebhookOptions(cfg.GitHubWebhook, cfg.ShadowReconciliation, store, os.LookupEnv)
+	webhookReconciliation := cfg.ShadowReconciliation
+	if cfg.PublicationMode == config.PublicationEnabled {
+		// Existing reconciliation writes projections only while the durable
+		// publication gate is disabled. Enabled dispatch validates live diff
+		// directly, so suppress webhook-triggered projection writes here.
+		webhookReconciliation.Enabled = false
+	}
+	webhookOptions, err := githubWebhookOptions(cfg.GitHubWebhook, webhookReconciliation, store, os.LookupEnv)
 	if err != nil {
 		return closeOnError(fmt.Errorf("configure github webhook ingress: %w", err))
 	}
@@ -190,7 +200,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		Owner: workerOwner() + ":outbox",
 	}
 	service := &Service{store: store, server: server, jobRunner: runner, outboxRunner: outboxRunner, publicationMode: cfg.PublicationMode}
-	if cfg.ShadowReconciliation.Enabled {
+	if cfg.ShadowReconciliation.Enabled && cfg.PublicationMode != config.PublicationEnabled {
 		reconciliationConfig := reconcile.Config{
 			ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
 			APIBaseURL:        cfg.ShadowReconciliation.APIBaseURL,
@@ -243,6 +253,9 @@ func publicationMutationOptions(cfg config.Config, store *storagesqlite.Store) a
 	options := api.PublicationMutationOptions{Effects: store}
 	if cfg.PublicationMode == config.PublicationSimulated {
 		options.Scheduler = publishworker.Scheduler{Store: store}
+	}
+	if cfg.PublicationMode == config.PublicationEnabled {
+		options.EnabledScheduler = publishworker.EnabledScheduler{Store: store}
 	}
 	return options
 }

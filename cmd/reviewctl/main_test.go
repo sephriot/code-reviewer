@@ -53,7 +53,7 @@ func TestDatabaseMigrateThenStatus(t *testing.T) {
 	if err := run(context.Background(), []string{"db", "migrate", "--database", path, "--apply"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), `"current": 11`) {
+	if !strings.Contains(output.String(), `"current": 12`) {
 		t.Fatalf("migration output = %s", output.String())
 	}
 	output.Reset()
@@ -306,7 +306,7 @@ func TestPolicyEvaluateRequiresInputsAndCurrentSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close() }()
-	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 11`); err != nil {
+	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 12`); err != nil {
 		t.Fatal(err)
 	}
 	err = run(context.Background(), []string{
@@ -552,7 +552,7 @@ func TestProposalPublishSchedulesOneSimulatedJob(t *testing.T) {
 	}
 }
 
-func TestProposalPublishRecordsEnabledIntentWithoutDispatch(t *testing.T) {
+func TestProposalPublishDispatchesEnabledEffectOnlyWithExplicitFlag(t *testing.T) {
 	databasePath, proposalRevisionID := seedApprovedProposalRevision(t)
 	database, err := sql.Open("sqlite", databasePath)
 	if err != nil {
@@ -566,22 +566,40 @@ func TestProposalPublishRecordsEnabledIntentWithoutDispatch(t *testing.T) {
 	err = run(context.Background(), []string{
 		"proposal", "publish", "--database", databasePath, "--proposal-revision-id", proposalRevisionID, "--simulate",
 	}, &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "publication mode is not allowed") {
+		t.Fatalf("enabled simulation error = %v", err)
+	}
+	for _, table := range []string{"publication_effects", "publication_attempts", "jobs", "domain_events", "outbox"} {
+		assertCLIQueryCount(t, database, table, 0)
+	}
+	output.Reset()
+	err = run(context.Background(), []string{
+		"proposal", "publish", "--database", databasePath, "--proposal-revision-id", proposalRevisionID, "--dispatch",
+	}, &output, &output)
 	if err != nil {
-		t.Fatalf("enabled publication error = %v", err)
+		t.Fatalf("enabled dispatch error = %v", err)
 	}
 	var result struct {
 		PublicationMode string `json:"publication_mode"`
 		Created         bool   `json:"created"`
-		Job             any    `json:"job"`
+		Job             *struct {
+			ID      string `json:"id"`
+			Created bool   `json:"created"`
+		} `json:"job"`
 	}
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.PublicationMode != "enabled" || !result.Created || result.Job != nil {
+	if result.PublicationMode != "enabled" || !result.Created || result.Job == nil || !result.Job.Created || result.Job.ID == "" {
 		t.Fatalf("enabled publication output = %s", output.String())
 	}
 	assertCLIQueryCount(t, database, "publication_effects", 1)
-	for _, table := range []string{"publication_attempts", "jobs", "domain_events", "outbox"} {
+	assertCLIQueryCount(t, database, "jobs", 1)
+	var kind string
+	if err := database.QueryRow(`SELECT kind FROM jobs`).Scan(&kind); err != nil || kind != publishworker.EnabledJobKind {
+		t.Fatalf("enabled publication job kind=%q err=%v", kind, err)
+	}
+	for _, table := range []string{"publication_attempts", "domain_events", "outbox"} {
 		assertCLIQueryCount(t, database, table, 0)
 	}
 }
@@ -605,7 +623,7 @@ func TestProposalPublishRejectsSecretsInvalidIDsAndOutdatedSchema(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close() }()
-	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 11`); err != nil {
+	if _, err := database.Exec(`DELETE FROM schema_migrations WHERE version = 12`); err != nil {
 		t.Fatal(err)
 	}
 	err = run(context.Background(), []string{

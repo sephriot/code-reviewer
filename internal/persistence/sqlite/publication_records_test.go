@@ -163,6 +163,24 @@ func TestCreatePublicationEffectEnabledPersistsIntentWithoutAttempt(t *testing.T
 	}
 }
 
+func TestCreatePublicationEffectRejectsDisallowedModeWithoutEffect(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedApprovedPublicationProposal(t, ctx)
+	setPublicationMode(t, ctx, store, PublicationModeEnabled)
+
+	_, err := store.CreatePublicationEffect(ctx, CreatePublicationEffectInput{
+		ProposalRevisionID: fixture.proposalRevisionID,
+		AllowedModes:       []PublicationMode{PublicationModeSimulated},
+		CreatedAt:          time.Unix(72, 0).UTC(),
+	})
+	if !errors.Is(err, ErrPublicationModeNotAllowed) {
+		t.Fatalf("CreatePublicationEffect() error = %v", err)
+	}
+	for _, table := range []string{"publication_effects", "publication_attempts", "jobs", "domain_events", "outbox"} {
+		assertTableCount(t, ctx, store.db, table, 0)
+	}
+}
+
 type approvedPublicationProposalFixture struct {
 	proposalRevisionID string
 	decisionID         string

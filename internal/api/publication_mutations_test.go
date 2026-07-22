@@ -51,7 +51,7 @@ func TestPublicationMutationCreatesDisabledEffectWithoutJob(t *testing.T) {
 	if mutations.effectInput.ProposalRevisionID != "revision-1" || mutations.effectInput.IdempotencyKey != "publish:one" || !mutations.effectInput.CreatedAt.Equal(now) || mutations.scheduled != "" {
 		t.Fatalf("effect=%+v scheduled=%q", mutations.effectInput, mutations.scheduled)
 	}
-	var body simulatePublicationResponse
+	var body publicationResponse
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
@@ -71,12 +71,49 @@ func TestPublicationMutationSchedulesOnlySimulatedEffect(t *testing.T) {
 	if response.Code != http.StatusOK || mutations.scheduled != "effect-1" {
 		t.Fatalf("status=%d scheduled=%q body=%s", response.Code, mutations.scheduled, response.Body.String())
 	}
-	var body simulatePublicationResponse
+	var body publicationResponse
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
 	if body.Job == nil || body.Job.ID != "job-1" || !body.Job.Created {
 		t.Fatalf("body = %+v", body)
+	}
+}
+
+func TestPublicationDispatchSchedulesOnlyEnabledEffect(t *testing.T) {
+	t.Parallel()
+	mutations := &fakePublicationMutations{
+		effect: sqlite.CreatePublicationEffectResult{EffectID: "effect-1", PublicationMode: sqlite.PublicationModeEnabled},
+		job:    sqlite.EnsureJobResult{ID: "job-1", Created: true},
+	}
+	handler := NewPublicationMutationHandler(PublicationMutationOptions{Effects: mutations, EnabledScheduler: mutations})
+	response := servePublicationDispatch(handler, `{}`)
+	if response.Code != http.StatusOK || mutations.scheduled != "effect-1" {
+		t.Fatalf("status=%d scheduled=%q body=%s", response.Code, mutations.scheduled, response.Body.String())
+	}
+	var body publicationResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Job == nil || body.Job.ID != "job-1" || !body.Job.Created {
+		t.Fatalf("body = %+v", body)
+	}
+}
+
+func TestPublicationDispatchFailsClosedOutsideEnabledMode(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []sqlite.PublicationMode{sqlite.PublicationModeDisabled, sqlite.PublicationModeSimulated} {
+		t.Run(string(mode), func(t *testing.T) {
+			mutations := &fakePublicationMutations{effectErr: sqlite.ErrPublicationModeNotAllowed}
+			response := servePublicationDispatch(NewPublicationMutationHandler(PublicationMutationOptions{Effects: mutations, EnabledScheduler: mutations}), `{}`)
+			if response.Code != http.StatusConflict || mutations.scheduled != "" || !strings.Contains(response.Body.String(), "enabled_publication_required") || len(mutations.effectInput.AllowedModes) != 1 || mutations.effectInput.AllowedModes[0] != sqlite.PublicationModeEnabled {
+				t.Fatalf("mode=%q status=%d scheduled=%q body=%s", mode, response.Code, mutations.scheduled, response.Body.String())
+			}
+		})
+	}
+	missing := &fakePublicationMutations{effect: sqlite.CreatePublicationEffectResult{EffectID: "effect-1", PublicationMode: sqlite.PublicationModeEnabled}}
+	if response := servePublicationDispatch(NewPublicationMutationHandler(PublicationMutationOptions{Effects: missing}), `{}`); response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "publication_unavailable") {
+		t.Fatalf("missing scheduler status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
@@ -130,6 +167,14 @@ func TestPublicationMutationRejectsMalformedRequestsAndNeedsOuterGuard(t *testin
 func servePublicationMutation(handler http.Handler, body string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/proposal-revisions/revision-1/publication/simulate", strings.NewReader(body))
+	request.Header.Set("Content-Type", jsonContentType)
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func servePublicationDispatch(handler http.Handler, body string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/proposal-revisions/revision-1/publication/dispatch", strings.NewReader(body))
 	request.Header.Set("Content-Type", jsonContentType)
 	handler.ServeHTTP(response, request)
 	return response

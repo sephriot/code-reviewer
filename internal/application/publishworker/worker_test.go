@@ -147,6 +147,43 @@ func TestSchedulerRequiresStore(t *testing.T) {
 	}
 }
 
+func TestEnabledSchedulerQueuesOneEffectBoundJobWithoutRetry(t *testing.T) {
+	store := &publicationSchedulerStore{}
+	result, err := (EnabledScheduler{
+		Store: store,
+		Now:   func() time.Time { return time.Unix(8, 0).UTC() },
+	}).Schedule(context.Background(), "effect-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ID != "job-1" || !result.Created {
+		t.Fatalf("result = %+v", result)
+	}
+	input := store.input
+	if input.Kind != EnabledJobKind || input.ResourceType != "publication_effect" ||
+		input.ResourceID != "effect-1" || input.DedupeKey != EnabledJobKind+":effect-1" ||
+		string(input.Payload) != `{"effect_id":"effect-1"}` ||
+		!input.AvailableAt.Equal(time.Unix(8, 0).UTC()) || input.MaxAttempts != 1 {
+		t.Fatalf("job input = %+v", input)
+	}
+}
+
+func TestEnabledSchedulerFailsClosedBeforeWriting(t *testing.T) {
+	store := &publicationSchedulerStore{}
+	for _, effectID := range []string{"", " effect-1", "effect/1"} {
+		_, err := (EnabledScheduler{Store: store}).Schedule(context.Background(), effectID)
+		if err == nil || !strings.Contains(err.Error(), "effect ID") {
+			t.Fatalf("effect ID %q error = %v", effectID, err)
+		}
+	}
+	if store.called {
+		t.Fatalf("store was called for invalid effect: %+v", store)
+	}
+	if _, err := (EnabledScheduler{}).Schedule(context.Background(), "effect-1"); err == nil || !strings.Contains(err.Error(), "store") {
+		t.Fatalf("Schedule() error = %v", err)
+	}
+}
+
 func publicationJob(payload string) sqlite.Job {
 	return sqlite.Job{Kind: SimulateJobKind, Payload: []byte(payload)}
 }

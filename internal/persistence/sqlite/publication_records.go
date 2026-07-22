@@ -26,6 +26,9 @@ var (
 	ErrPublicationAuthorizationNotFound = errors.New("approved proposal revision not found")
 	// ErrPublicationModeUnsupported means persisted publication mode is unknown.
 	ErrPublicationModeUnsupported = errors.New("publication mode is not safe for local effect creation")
+	// ErrPublicationModeNotAllowed means caller's explicit operation cannot use
+	// the durable publication mode observed within effect authorization.
+	ErrPublicationModeNotAllowed = errors.New("publication mode is not allowed for this operation")
 )
 
 // PublicationMode is the durable mode observed while authorizing an effect.
@@ -46,6 +49,7 @@ const (
 type CreatePublicationEffectInput struct {
 	ProposalRevisionID string
 	IdempotencyKey     string
+	AllowedModes       []PublicationMode
 	CreatedAt          time.Time
 }
 
@@ -72,6 +76,9 @@ func (s *Store) CreatePublicationEffect(ctx context.Context, input CreatePublica
 		mode, err := loadSafePublicationMode(ctx, conn)
 		if err != nil {
 			return err
+		}
+		if !normalized.allows(mode) {
+			return fmt.Errorf("%w: mode=%q", ErrPublicationModeNotAllowed, mode)
 		}
 		authorization, err := loadApprovedPublicationAuthorization(ctx, conn, normalized.ProposalRevisionID)
 		if err != nil {
@@ -143,6 +150,7 @@ VALUES (?, 'proposal_revision', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 type normalizedCreatePublicationEffectInput struct {
 	ProposalRevisionID string
 	IdempotencyKey     string
+	AllowedModes       map[PublicationMode]struct{}
 	CreatedAt          time.Time
 }
 
@@ -151,6 +159,13 @@ func normalizeCreatePublicationEffectInput(input CreatePublicationEffectInput) (
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	if input.ProposalRevisionID == "" || len(input.IdempotencyKey) > 512 {
 		return normalizedCreatePublicationEffectInput{}, errors.New("publication effect input is invalid")
+	}
+	allowedModes := make(map[PublicationMode]struct{}, len(input.AllowedModes))
+	for _, mode := range input.AllowedModes {
+		if mode != PublicationModeDisabled && mode != PublicationModeSimulated && mode != PublicationModeEnabled {
+			return normalizedCreatePublicationEffectInput{}, errors.New("publication effect allowed mode is invalid")
+		}
+		allowedModes[mode] = struct{}{}
 	}
 	if input.CreatedAt.IsZero() {
 		input.CreatedAt = time.Now().UTC()
@@ -161,8 +176,16 @@ func normalizeCreatePublicationEffectInput(input CreatePublicationEffectInput) (
 		return normalizedCreatePublicationEffectInput{}, errors.New("publication effect time is invalid")
 	}
 	return normalizedCreatePublicationEffectInput{
-		ProposalRevisionID: input.ProposalRevisionID, IdempotencyKey: input.IdempotencyKey, CreatedAt: input.CreatedAt,
+		ProposalRevisionID: input.ProposalRevisionID, IdempotencyKey: input.IdempotencyKey, AllowedModes: allowedModes, CreatedAt: input.CreatedAt,
 	}, nil
+}
+
+func (input normalizedCreatePublicationEffectInput) allows(mode PublicationMode) bool {
+	if len(input.AllowedModes) == 0 {
+		return true
+	}
+	_, allowed := input.AllowedModes[mode]
+	return allowed
 }
 
 func loadSafePublicationMode(ctx context.Context, conn *sql.Conn) (PublicationMode, error) {

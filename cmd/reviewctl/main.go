@@ -304,9 +304,9 @@ func proposalDecide(ctx context.Context, args []string, stdout, stderr io.Writer
 }
 
 // proposalPublish records an effect derived from an approved immutable
-// proposal revision. --simulate is an explicit local acknowledgement only;
-// it never grants GitHub write authority. A simulated database mode queues a
-// local durable simulation job, while disabled mode records no job.
+// proposal revision. --simulate can only create disabled or local simulated
+// effects. --dispatch is the separate explicit acknowledgement required to
+// queue one guarded enabled-publication job.
 func proposalPublish(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := rejectSecretBearingManualArguments(args); err != nil {
 		return err
@@ -320,11 +320,12 @@ func proposalPublish(ctx context.Context, args []string, stdout, stderr io.Write
 	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
 	proposalRevisionID := flags.String("proposal-revision-id", "", "approved immutable proposal revision ID")
 	simulate := flags.Bool("simulate", false, "acknowledge local simulated publication only")
+	dispatch := flags.Bool("dispatch", false, "queue one guarded enabled GitHub publication")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || !*simulate || strings.TrimSpace(*proposalRevisionID) == "" {
-		return errors.New("--proposal-revision-id and explicit --simulate are required")
+	if flags.NArg() != 0 || (*simulate == *dispatch) || strings.TrimSpace(*proposalRevisionID) == "" {
+		return errors.New("--proposal-revision-id and exactly one of --simulate or --dispatch are required")
 	}
 	if !validManualIdentifier(*proposalRevisionID) {
 		return errors.New("proposal revision ID is invalid")
@@ -337,8 +338,13 @@ func proposalPublish(ctx context.Context, args []string, stdout, stderr io.Write
 		return err
 	}
 	defer func() { _ = store.Close() }()
+	allowedModes := []storagesqlite.PublicationMode{storagesqlite.PublicationModeDisabled, storagesqlite.PublicationModeSimulated}
+	if *dispatch {
+		allowedModes = []storagesqlite.PublicationMode{storagesqlite.PublicationModeEnabled}
+	}
 	effect, err := store.CreatePublicationEffect(ctx, storagesqlite.CreatePublicationEffectInput{
 		ProposalRevisionID: *proposalRevisionID,
+		AllowedModes:       allowedModes,
 		CreatedAt:          time.Now().UTC(),
 	})
 	if err != nil {
@@ -361,6 +367,16 @@ func proposalPublish(ctx context.Context, args []string, stdout, stderr io.Write
 		job, scheduleErr := (publishworker.Scheduler{Store: store}).Schedule(ctx, effect.EffectID)
 		if scheduleErr != nil {
 			return fmt.Errorf("schedule simulated publication: %w", scheduleErr)
+		}
+		result.Job = &struct {
+			ID      string `json:"id"`
+			Created bool   `json:"created"`
+		}{ID: job.ID, Created: job.Created}
+	}
+	if effect.PublicationMode == storagesqlite.PublicationModeEnabled {
+		job, scheduleErr := (publishworker.EnabledScheduler{Store: store}).Schedule(ctx, effect.EffectID)
+		if scheduleErr != nil {
+			return fmt.Errorf("schedule enabled publication: %w", scheduleErr)
 		}
 		result.Job = &struct {
 			ID      string `json:"id"`
