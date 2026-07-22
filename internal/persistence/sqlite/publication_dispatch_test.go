@@ -116,6 +116,63 @@ SET current_revision_id = NULL WHERE pull_request_id = 'pr-1'`); err != nil {
 	assertTableCount(t, ctx, store.db, "publication_dispatch_claims", 0)
 }
 
+func TestRecordEnabledPublicationAttemptRequiresClaimAndIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedApprovedPublicationProposal(t, ctx)
+	setPublicationMode(t, ctx, store, PublicationModeEnabled)
+	effect := createPublicationEffect(t, ctx, store, fixture.proposalRevisionID, "publish:outcome:enabled")
+	input := RecordEnabledPublicationAttemptInput{
+		EffectID: effect.EffectID, Outcome: PublicationAttemptSucceeded,
+		ResponseJSON: []byte(`{"state":"APPROVED"}`), GitHubArtifactID: "77",
+		CompletedAt: time.Unix(101, 0).UTC(),
+	}
+	if _, err := store.RecordEnabledPublicationAttempt(ctx, input); !errors.Is(err, ErrPublicationEffectNotDispatchable) {
+		t.Fatalf("unclaimed outcome = %v", err)
+	}
+	if _, err := store.ClaimEnabledPublicationAttempt(ctx, effect.EffectID, time.Unix(100, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.RecordEnabledPublicationAttempt(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.RecordEnabledPublicationAttempt(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Created || first.AttemptID == "" || second.Created || second.AttemptID != first.AttemptID {
+		t.Fatalf("attempts = %+v / %+v", first, second)
+	}
+	assertTableCount(t, ctx, store.db, "publication_attempts", 1)
+
+	conflict := input
+	conflict.ResponseJSON = []byte(`{"state":"COMMENTED"}`)
+	if _, err := store.RecordEnabledPublicationAttempt(ctx, conflict); !errors.Is(err, ErrPublicationAttemptConflict) {
+		t.Fatalf("conflicting outcome = %v", err)
+	}
+}
+
+func TestRecordEnabledPublicationAttemptRejectsUnsafeOutcomeMetadata(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedApprovedPublicationProposal(t, ctx)
+	setPublicationMode(t, ctx, store, PublicationModeEnabled)
+	effect := createPublicationEffect(t, ctx, store, fixture.proposalRevisionID, "publish:outcome:invalid")
+	if _, err := store.ClaimEnabledPublicationAttempt(ctx, effect.EffectID, time.Unix(102, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []RecordEnabledPublicationAttemptInput{
+		{EffectID: effect.EffectID, Outcome: PublicationAttemptSucceeded, ResponseJSON: []byte(`[]`), GitHubArtifactID: "77"},
+		{EffectID: effect.EffectID, Outcome: PublicationAttemptSucceeded, ResponseJSON: []byte(`{}`)},
+		{EffectID: effect.EffectID, Outcome: PublicationAttemptUncertain, ResponseJSON: []byte(`{}`)},
+		{EffectID: effect.EffectID, Outcome: "failed_retryable", ResponseJSON: []byte(`{}`), ErrorClass: "network", ErrorMessage: "lost"},
+	} {
+		if _, err := store.RecordEnabledPublicationAttempt(ctx, input); err == nil {
+			t.Fatalf("accepted unsafe input = %+v", input)
+		}
+	}
+	assertTableCount(t, ctx, store.db, "publication_attempts", 0)
+}
+
 func TestPublicationDispatchRejectsAbsentStaleAndConflictingEffects(t *testing.T) {
 	ctx := context.Background()
 	store, fixture := seedApprovedPublicationProposal(t, ctx)

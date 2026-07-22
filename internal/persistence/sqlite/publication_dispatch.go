@@ -10,7 +10,12 @@ import (
 	"time"
 )
 
-const maxPublicationEffectIDBytes = 512
+const (
+	maxPublicationEffectIDBytes          = 512
+	maxPublicationAttemptResponseBytes   = 64 * 1024
+	maxPublicationAttemptErrorBytes      = 4 * 1024
+	maxPublicationAttemptArtifactIDBytes = 512
+)
 
 var (
 	// ErrPublicationEffectNotFound means no immutable publication effect has
@@ -48,6 +53,37 @@ type ClaimEnabledPublicationAttemptResult struct {
 	Effect    PublicationEffectTarget
 	ClaimID   string
 	ClaimedAt time.Time
+	Created   bool
+}
+
+// PublicationAttemptOutcome is the terminal local classification of one
+// enabled request. Any result after a request may have been transmitted is
+// uncertain rather than retryable.
+type PublicationAttemptOutcome string
+
+const (
+	PublicationAttemptSucceeded      PublicationAttemptOutcome = "succeeded"
+	PublicationAttemptFailedTerminal PublicationAttemptOutcome = "failed_terminal"
+	PublicationAttemptUncertain      PublicationAttemptOutcome = "uncertain"
+)
+
+// RecordEnabledPublicationAttemptInput records one terminal outcome for the
+// existing pre-send claim. Response data must be bounded JSON metadata, never
+// raw provider bodies or credentials.
+type RecordEnabledPublicationAttemptInput struct {
+	EffectID         string
+	Outcome          PublicationAttemptOutcome
+	ResponseJSON     []byte
+	ErrorClass       string
+	ErrorMessage     string
+	GitHubArtifactID string
+	CompletedAt      time.Time
+}
+
+// RecordEnabledPublicationAttemptResult identifies one immutable recorded
+// outcome. Replays with identical facts return the existing record.
+type RecordEnabledPublicationAttemptResult struct {
+	AttemptID string
 	Created   bool
 }
 
@@ -134,6 +170,107 @@ VALUES (?, ?, 1, ?, ?)`, claimID, effect.ID, effect.PayloadSHA256, claimedAt.Uni
 		return ClaimEnabledPublicationAttemptResult{}, fmt.Errorf("claim enabled publication attempt: %w", err)
 	}
 	return result, nil
+}
+
+// RecordEnabledPublicationAttempt records a terminal outcome only for the
+// existing current enabled claim. It does not send a request or create another
+// claim, so a crash path cannot accidentally produce a duplicate GitHub write.
+func (s *Store) RecordEnabledPublicationAttempt(ctx context.Context, input RecordEnabledPublicationAttemptInput) (RecordEnabledPublicationAttemptResult, error) {
+	normalized, err := normalizeRecordEnabledPublicationAttemptInput(input)
+	if err != nil {
+		return RecordEnabledPublicationAttemptResult{}, err
+	}
+	var result RecordEnabledPublicationAttemptResult
+	err = withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
+		effect, err := loadCurrentPublicationDispatchEffect(ctx, conn, normalized.EffectID)
+		if err != nil {
+			return err
+		}
+		if effect.PublicationMode != PublicationModeEnabled {
+			return fmt.Errorf("%w: effect=%q mode=%q", ErrPublicationEffectNotDispatchable, effect.ID, effect.PublicationMode)
+		}
+		claim, found, err := loadPublicationDispatchClaim(ctx, conn, effect.ID)
+		if err != nil {
+			return err
+		}
+		if !found || claim.ClaimedAtUS > normalized.CompletedAt.UnixMicro() {
+			return fmt.Errorf("%w: effect=%q has no valid pre-send claim", ErrPublicationEffectNotDispatchable, effect.ID)
+		}
+		existing, found, err := loadEnabledPublicationAttempt(ctx, conn, effect.ID)
+		if err != nil {
+			return err
+		}
+		if found {
+			if !existing.matches(effect, claim, normalized) {
+				return fmt.Errorf("%w: effect=%q attempt=%q", ErrPublicationAttemptConflict, effect.ID, existing.ID)
+			}
+			result = RecordEnabledPublicationAttemptResult{AttemptID: existing.ID}
+			return nil
+		}
+		attemptID := stableID("publication-attempt", effect.ID, "1")
+		if _, err := conn.ExecContext(ctx, `
+INSERT INTO publication_attempts(
+ id, effect_id, attempt_number, publication_mode, outcome, request_sha256,
+ response_json, error_class, error_message, github_artifact_id,
+ attempted_at_us, completed_at_us, created_at_us)
+VALUES (?, ?, 1, 'enabled', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			attemptID, effect.ID, normalized.Outcome, effect.PayloadSHA256,
+			normalized.ResponseJSON, nullableString(normalized.ErrorClass), nullableString(normalized.ErrorMessage),
+			nullableString(normalized.GitHubArtifactID), claim.ClaimedAtUS, normalized.CompletedAt.UnixMicro(), normalized.CompletedAt.UnixMicro()); err != nil {
+			return fmt.Errorf("insert enabled publication attempt: %w", err)
+		}
+		result = RecordEnabledPublicationAttemptResult{AttemptID: attemptID, Created: true}
+		return nil
+	})
+	if err != nil {
+		return RecordEnabledPublicationAttemptResult{}, fmt.Errorf("record enabled publication attempt: %w", err)
+	}
+	return result, nil
+}
+
+type normalizedRecordEnabledPublicationAttemptInput struct {
+	EffectID         string
+	Outcome          PublicationAttemptOutcome
+	ResponseJSON     []byte
+	ErrorClass       string
+	ErrorMessage     string
+	GitHubArtifactID string
+	CompletedAt      time.Time
+}
+
+func normalizeRecordEnabledPublicationAttemptInput(input RecordEnabledPublicationAttemptInput) (normalizedRecordEnabledPublicationAttemptInput, error) {
+	effectID, err := normalizePublicationEffectID(input.EffectID)
+	if err != nil {
+		return normalizedRecordEnabledPublicationAttemptInput{}, err
+	}
+	if input.Outcome != PublicationAttemptSucceeded && input.Outcome != PublicationAttemptFailedTerminal && input.Outcome != PublicationAttemptUncertain {
+		return normalizedRecordEnabledPublicationAttemptInput{}, errors.New("enabled publication attempt outcome is invalid")
+	}
+	response, err := normalizeBoundedJSONObject(input.ResponseJSON, maxPublicationAttemptResponseBytes)
+	if err != nil {
+		return normalizedRecordEnabledPublicationAttemptInput{}, fmt.Errorf("enabled publication attempt response: %w", err)
+	}
+	input.ErrorClass = strings.TrimSpace(input.ErrorClass)
+	input.ErrorMessage = strings.TrimSpace(input.ErrorMessage)
+	input.GitHubArtifactID = strings.TrimSpace(input.GitHubArtifactID)
+	if len(input.ErrorClass) > maxPublicationAttemptErrorBytes || len(input.ErrorMessage) > maxPublicationAttemptErrorBytes || len(input.GitHubArtifactID) > maxPublicationAttemptArtifactIDBytes {
+		return normalizedRecordEnabledPublicationAttemptInput{}, errors.New("enabled publication attempt metadata exceeds maximum size")
+	}
+	if input.Outcome == PublicationAttemptSucceeded && (input.ErrorClass != "" || input.ErrorMessage != "" || input.GitHubArtifactID == "") {
+		return normalizedRecordEnabledPublicationAttemptInput{}, errors.New("successful enabled publication attempt metadata is invalid")
+	}
+	if input.Outcome != PublicationAttemptSucceeded && (input.ErrorClass == "" || input.ErrorMessage == "") {
+		return normalizedRecordEnabledPublicationAttemptInput{}, errors.New("failed enabled publication attempt metadata is invalid")
+	}
+	completedAt, err := normalizePublicationAttemptTime(input.CompletedAt)
+	if err != nil {
+		return normalizedRecordEnabledPublicationAttemptInput{}, err
+	}
+	return normalizedRecordEnabledPublicationAttemptInput{
+		EffectID: effectID, Outcome: input.Outcome, ResponseJSON: response,
+		ErrorClass: input.ErrorClass, ErrorMessage: input.ErrorMessage,
+		GitHubArtifactID: input.GitHubArtifactID, CompletedAt: completedAt,
+	}, nil
 }
 
 // RecordSimulatedPublicationAttempt writes at most one exact simulated
@@ -348,6 +485,59 @@ FROM publication_attempts WHERE effect_id = ? ORDER BY attempt_number, id`, effe
 type publicationDispatchClaim struct {
 	ID          string
 	ClaimedAtUS int64
+}
+
+type storedEnabledPublicationAttempt struct {
+	ID               string
+	AttemptNumber    int
+	PublicationMode  string
+	Outcome          string
+	RequestSHA256    string
+	ResponseJSON     []byte
+	ErrorClass       sql.NullString
+	ErrorMessage     sql.NullString
+	GitHubArtifactID sql.NullString
+	AttemptedAtUS    int64
+	CompletedAtUS    int64
+}
+
+func loadEnabledPublicationAttempt(ctx context.Context, conn *sql.Conn, effectID string) (storedEnabledPublicationAttempt, bool, error) {
+	var attempt storedEnabledPublicationAttempt
+	err := conn.QueryRowContext(ctx, `
+SELECT id, attempt_number, publication_mode, outcome, request_sha256, response_json,
+       error_class, error_message, github_artifact_id, attempted_at_us, completed_at_us
+FROM publication_attempts WHERE effect_id = ?`, effectID).Scan(
+		&attempt.ID, &attempt.AttemptNumber, &attempt.PublicationMode, &attempt.Outcome, &attempt.RequestSHA256,
+		&attempt.ResponseJSON, &attempt.ErrorClass, &attempt.ErrorMessage, &attempt.GitHubArtifactID,
+		&attempt.AttemptedAtUS, &attempt.CompletedAtUS,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storedEnabledPublicationAttempt{}, false, nil
+	}
+	if err != nil {
+		return storedEnabledPublicationAttempt{}, false, fmt.Errorf("load enabled publication attempt: %w", err)
+	}
+	return attempt, true, nil
+}
+
+func (attempt storedEnabledPublicationAttempt) matches(effect publicationDispatchEffect, claim publicationDispatchClaim, input normalizedRecordEnabledPublicationAttemptInput) bool {
+	return attempt.ID == stableID("publication-attempt", effect.ID, "1") && attempt.AttemptNumber == 1 &&
+		attempt.PublicationMode == string(PublicationModeEnabled) && attempt.Outcome == string(input.Outcome) &&
+		attempt.RequestSHA256 == effect.PayloadSHA256 && bytes.Equal(attempt.ResponseJSON, input.ResponseJSON) &&
+		matchesNullableString(attempt.ErrorClass, input.ErrorClass) && matchesNullableString(attempt.ErrorMessage, input.ErrorMessage) &&
+		matchesNullableString(attempt.GitHubArtifactID, input.GitHubArtifactID) && attempt.AttemptedAtUS == claim.ClaimedAtUS &&
+		attempt.CompletedAtUS == input.CompletedAt.UnixMicro()
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func matchesNullableString(stored sql.NullString, value string) bool {
+	return (value == "" && !stored.Valid) || (value != "" && stored.Valid && stored.String == value)
 }
 
 func loadPublicationDispatchClaim(ctx context.Context, conn *sql.Conn, effectID string) (publicationDispatchClaim, bool, error) {
