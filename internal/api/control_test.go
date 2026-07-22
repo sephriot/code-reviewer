@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,8 @@ type fakeInboxReader struct {
 	timeline       sqlite.PullRequestTimelinePage
 	attentionQuery sqlite.AttentionQuery
 	timelineQuery  sqlite.PullRequestTimelineQuery
+	analytics      sqlite.AnalyticsOverview
+	analyticsCalls int
 	err            error
 }
 
@@ -28,6 +31,11 @@ func (f *fakeInboxReader) ListCurrentAttention(_ context.Context, query sqlite.A
 func (f *fakeInboxReader) PullRequestTimeline(_ context.Context, query sqlite.PullRequestTimelineQuery) (sqlite.PullRequestTimelinePage, error) {
 	f.timelineQuery = query
 	return f.timeline, f.err
+}
+
+func (f *fakeInboxReader) AnalyticsOverview(_ context.Context) (sqlite.AnalyticsOverview, error) {
+	f.analyticsCalls++
+	return f.analytics, f.err
 }
 
 func TestControlReadEndpointsAndAliases(t *testing.T) {
@@ -95,6 +103,60 @@ func TestControlReadFailureAndUnsupportedMethod(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/inbox", nil))
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("method status = %d", response.Code)
+	}
+}
+
+func TestControlAnalyticsOverviewIsLoopbackReadOnlyAndStructured(t *testing.T) {
+	t.Parallel()
+	reader := &fakeInboxReader{analytics: sqlite.AnalyticsOverview{
+		ObservedPullRequests: 2, ReviewRuns: 3, Assessments: 4, PolicyEvaluations: 5,
+		HumanReviewEvaluations: 1, Proposals: 6, ProposalRevisions: 7, ProposalApprovals: 2,
+		ProposalRejections: 3, PublicationEffects: 8, PublicationAttempts: 9,
+		SimulatedPublicationAttempts: 4, SuccessfulPublicationAttempts: 2,
+		RetryablePublicationFailures: 1, TerminalPublicationFailures: 1, UncertainPublicationAttempts: 1,
+	}}
+	handler := NewControlHandler(Readiness{}, ControlOptions{Reader: reader})
+
+	remote := httptest.NewRequest(http.MethodGet, "/api/v1/analytics/overview", nil)
+	remote.RemoteAddr = "198.51.100.7:443"
+	remoteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(remoteResponse, remote)
+	if remoteResponse.Code != http.StatusForbidden || reader.analyticsCalls != 0 {
+		t.Fatalf("remote status=%d calls=%d", remoteResponse.Code, reader.analyticsCalls)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/analytics/overview", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != jsonContentType || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("analytics response=%d headers=%v", response.Code, response.Header())
+	}
+	var body struct {
+		ObservedPullRequests int `json:"observed_pull_requests"`
+		Reviews              struct {
+			Runs int `json:"runs"`
+		} `json:"reviews"`
+		Proposals struct {
+			Rejected int `json:"rejected"`
+		} `json:"proposals"`
+		Publications struct {
+			FailedTerminal int `json:"failed_terminal"`
+		} `json:"publications"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ObservedPullRequests != 2 || body.Reviews.Runs != 3 || body.Proposals.Rejected != 3 || body.Publications.FailedTerminal != 1 || reader.analyticsCalls != 1 {
+		t.Fatalf("analytics body=%+v calls=%d", body, reader.analyticsCalls)
+	}
+
+	invalid := httptest.NewRequest(http.MethodGet, "/api/v1/analytics/overview?limit=1", nil)
+	invalid.RemoteAddr = "127.0.0.1:1234"
+	invalidResponse := httptest.NewRecorder()
+	handler.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusBadRequest || reader.analyticsCalls != 1 {
+		t.Fatalf("invalid status=%d calls=%d", invalidResponse.Code, reader.analyticsCalls)
 	}
 }
 
