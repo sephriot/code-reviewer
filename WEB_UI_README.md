@@ -40,6 +40,8 @@ All responses have `Cache-Control: no-store`.
 | `GET /api/v1/inbox` | Current attention page |
 | `GET /api/v1/pull-requests/{id}/timeline?connection_id=ID` | Immutable pull-request timeline |
 | `GET /api/v1/analytics/overview` | Durable review lifecycle totals |
+| `GET /api/v1/history` | Cursor-paginated terminal runs, decisions, and publication attempts |
+| `GET /api/v1/settings` | Safe local publication mode and active policy/profile summary |
 | `GET /api/v1/session` | Loopback-only opaque browser-session bootstrap |
 | `POST /api/v1/mutate/proposals/{id}/revisions` | Append a local human proposal revision |
 | `POST /api/v1/mutate/proposals/{id}/decisions` | Record one local decision for an owned revision |
