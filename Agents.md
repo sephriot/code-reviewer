@@ -16,6 +16,8 @@ The code reviewer is an asynchronous service that watches GitHub pull requests a
 - Partial reconciliation generations may add positive facts. Only complete, coverage-verified generations may remove relationships or advance a complete checkpoint.
 - `reviewctl github reconcile --shadow` is the only Phase 1 observation entrypoint. It requires an existing current control-plane database, `publication_mode=disabled`, a secret reference, and performs GET-only GitHub traffic with no jobs, events, outbox rows, or publication effects.
 - Search absence alone never closes a relationship. Closure requires a complete scan and a same-generation authoritative PR observation proving the relationship was removed or the PR became terminal.
+- Signed loopback GitHub webhook ingress retains metadata only. When shadow reconciliation is enabled, it ensures the existing GET-only reconciliation job; reconciliation then queues canonical hydration. Ingress never calls or publishes to GitHub.
+- Notification dispatch uses retained domain events, fenced outbox delivery, and durable local jobs. Policy outcomes from automatic reviews emit `policy.evaluated` notification intents. Browser, sound, and TTS remain explicit local no-op adapters until separately implemented; log delivery is active.
 
 Core behaviors:
 - Poll GitHub for review requests using minimal metadata and avoid reprocessing the same commit.
