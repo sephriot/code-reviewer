@@ -33,17 +33,19 @@ func TestLoad(t *testing.T) {
 	t.Parallel()
 
 	values := map[string]string{
-		EnvDatabasePath:            "/var/lib/reviewd/control-plane.db",
-		EnvListenAddress:           "[::1]:9090",
-		EnvMigrationMode:           "apply",
-		EnvPublicationMode:         "simulated",
-		EnvShadowReconcileEnabled:  "true",
-		EnvGitHubConnectionID:      "github:local",
-		EnvGitHubAPIBaseURL:        "https://api.github.com",
-		EnvGitHubTokenEnvironment:  "TEST_GITHUB_TOKEN",
-		EnvShadowReconcileInterval: "2m",
-		EnvReviewExecutionEnabled:  "true",
-		EnvReviewEngineArgv:        `["/usr/local/bin/review-engine","--json"]`,
+		EnvDatabasePath:                   "/var/lib/reviewd/control-plane.db",
+		EnvListenAddress:                  "[::1]:9090",
+		EnvMigrationMode:                  "apply",
+		EnvPublicationMode:                "simulated",
+		EnvShadowReconcileEnabled:         "true",
+		EnvGitHubConnectionID:             "github:local",
+		EnvGitHubAPIBaseURL:               "https://api.github.com",
+		EnvGitHubTokenEnvironment:         "TEST_GITHUB_TOKEN",
+		EnvShadowReconcileInterval:        "2m",
+		EnvReviewExecutionEnabled:         "true",
+		EnvReviewEngineArgv:               `["/usr/local/bin/review-engine","--json"]`,
+		EnvGitHubWebhookEnabled:           "true",
+		EnvGitHubWebhookSecretEnvironment: "TEST_GITHUB_WEBHOOK_SECRET",
 	}
 	got, err := Load(func(key string) (string, bool) {
 		value, ok := values[key]
@@ -71,6 +73,9 @@ func TestLoad(t *testing.T) {
 	if !got.ReviewExecution.Enabled || len(got.ReviewExecution.EngineArgv) != 2 ||
 		got.ReviewExecution.EngineArgv[0] != "/usr/local/bin/review-engine" {
 		t.Errorf("ReviewExecution = %#v", got.ReviewExecution)
+	}
+	if !got.GitHubWebhook.Enabled || got.GitHubWebhook.SecretEnvironment != "TEST_GITHUB_WEBHOOK_SECRET" {
+		t.Errorf("GitHubWebhook = %#v", got.GitHubWebhook)
 	}
 }
 
@@ -110,6 +115,20 @@ func TestValidate(t *testing.T) {
 		mutate    func(*Config)
 		wantError string
 	}{
+		{
+			name: "enabled webhook missing signing-secret reference",
+			mutate: func(cfg *Config) {
+				cfg.GitHubWebhook.Enabled = true
+			},
+			wantError: "webhook secret environment",
+		},
+		{
+			name: "enabled webhook has invalid signing-secret reference",
+			mutate: func(cfg *Config) {
+				cfg.GitHubWebhook = GitHubWebhookConfig{Enabled: true, SecretEnvironment: "secret value"}
+			},
+			wantError: "webhook secret environment",
+		},
 		{
 			name: "empty database path",
 			mutate: func(cfg *Config) {

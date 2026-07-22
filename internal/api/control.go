@@ -34,6 +34,7 @@ type ControlOptions struct {
 	ProposalMutations       ProposalMutationOptions
 	PublicationMutations    PublicationMutationOptions
 	NotificationPreferences NotificationPreferencesOptions
+	GitHubWebhooks          GitHubWebhookOptions
 }
 
 // NewControlHandler exposes health plus the read-only inbox and timeline.
@@ -72,6 +73,7 @@ func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler
 	registerProposalMutationRoutes(mux, options.ProposalMutations)
 	registerPublicationMutationRoutes(mux, options.PublicationMutations)
 	registerNotificationPreferenceRoutes(mux, options.NotificationPreferences)
+	registerGitHubWebhookRoute(mux, options.GitHubWebhooks)
 	return mux
 }
 

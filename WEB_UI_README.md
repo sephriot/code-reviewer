@@ -89,6 +89,8 @@ Token values are never sent to dashboard or stored in job payloads. `--token-env
 
 For background GET-only observation, configure `reviewd` with `REVIEWD_SHADOW_RECONCILE_ENABLED=true`, connection ID, token environment name, and a positive interval. See [README.md](README.md#observe-github-safely).
 
+Optional signed webhook ingress is separate from dashboard traffic. It remains loopback-only and records verified delivery metadata only; it starts no job and does not call or publish to GitHub. See [README.md](README.md#receive-github-webhooks-safely).
+
 ## Publication status
 
 Dashboard is not a GitHub publication interface. Current release supports only:

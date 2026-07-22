@@ -38,6 +38,11 @@ const (
 	EnvReviewExecutionEnabled = "REVIEWD_REVIEW_EXECUTION_ENABLED"
 	// EnvReviewEngineArgv supplies the trusted review engine command as a JSON argv array.
 	EnvReviewEngineArgv = "REVIEWD_REVIEW_ENGINE_ARGV"
+	// EnvGitHubWebhookEnabled enables signed GitHub webhook ingress on loopback.
+	EnvGitHubWebhookEnabled = "REVIEWD_GITHUB_WEBHOOK_ENABLED"
+	// EnvGitHubWebhookSecretEnvironment names, but never contains, the signing
+	// secret environment variable.
+	EnvGitHubWebhookSecretEnvironment = "REVIEWD_GITHUB_WEBHOOK_SECRET_ENVIRONMENT"
 )
 
 // MigrationMode controls how reviewd treats pending schema migrations at startup.
@@ -69,6 +74,7 @@ type Config struct {
 	PublicationMode      PublicationMode            `json:"publication_mode"`
 	ShadowReconciliation ShadowReconciliationConfig `json:"shadow_reconciliation"`
 	ReviewExecution      ReviewExecutionConfig      `json:"review_execution"`
+	GitHubWebhook        GitHubWebhookConfig        `json:"github_webhook"`
 }
 
 // ShadowReconciliationConfig configures opt-in, GET-only GitHub observation.
@@ -87,6 +93,13 @@ type ShadowReconciliationConfig struct {
 type ReviewExecutionConfig struct {
 	Enabled    bool     `json:"enabled"`
 	EngineArgv []string `json:"engine_argv"`
+}
+
+// GitHubWebhookConfig configures local signed webhook ingress. SecretEnvironment
+// is a process-environment reference, never a signing secret value.
+type GitHubWebhookConfig struct {
+	Enabled           bool   `json:"enabled"`
+	SecretEnvironment string `json:"secret_environment"`
 }
 
 // Default returns the safe local bootstrap configuration.
@@ -176,6 +189,16 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		}
 		cfg.ReviewExecution.EngineArgv = argv
 	}
+	if value, ok := lookup(EnvGitHubWebhookEnabled); ok {
+		enabled, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: must be true or false", EnvGitHubWebhookEnabled)
+		}
+		cfg.GitHubWebhook.Enabled = enabled
+	}
+	if value, ok := lookup(EnvGitHubWebhookSecretEnvironment); ok {
+		cfg.GitHubWebhook.SecretEnvironment = strings.TrimSpace(value)
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -200,7 +223,10 @@ func (cfg Config) Validate() error {
 	if err := validateShadowReconciliation(cfg.ShadowReconciliation); err != nil {
 		return err
 	}
-	return validateReviewExecution(cfg.ReviewExecution, cfg.ShadowReconciliation)
+	if err := validateReviewExecution(cfg.ReviewExecution, cfg.ShadowReconciliation); err != nil {
+		return err
+	}
+	return validateGitHubWebhook(cfg.GitHubWebhook)
 }
 
 func validateDatabasePath(path string) error {
@@ -299,6 +325,26 @@ func validateReviewExecution(review ReviewExecutionConfig, shadow ShadowReconcil
 		if strings.ContainsRune(argument, 0) {
 			return errors.New("review execution engine argv cannot contain NUL")
 		}
+	}
+	return nil
+}
+
+func validateGitHubWebhook(webhook GitHubWebhookConfig) error {
+	if !webhook.Enabled {
+		return nil
+	}
+	name := strings.TrimSpace(webhook.SecretEnvironment)
+	if name == "" {
+		return errors.New("github webhook secret environment is required when enabled")
+	}
+	if len(name) > 256 {
+		return errors.New("github webhook secret environment is invalid")
+	}
+	for index, character := range name {
+		if (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || character == '_' || (index > 0 && character >= '0' && character <= '9') {
+			continue
+		}
+		return errors.New("github webhook secret environment is invalid")
 	}
 	return nil
 }

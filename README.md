@@ -126,6 +126,18 @@ go run ./cmd/reviewd
 
 `REVIEWD_GITHUB_TOKEN_ENVIRONMENT` contains a variable name, not a token. `REVIEWD_GITHUB_API_BASE_URL` defaults to `https://api.github.com`.
 
+## Receive GitHub webhooks safely
+
+Optional webhook ingress listens only on the same loopback control listener. Put a trusted local tunnel or proxy in front of it if GitHub must reach this machine; do not expose `reviewd` directly. Enable it with a reference to an environment variable holding the GitHub webhook signing secret:
+
+```bash
+REVIEWD_GITHUB_WEBHOOK_ENABLED=true \
+REVIEWD_GITHUB_WEBHOOK_SECRET_ENVIRONMENT=GITHUB_WEBHOOK_SECRET \
+reviewd
+```
+
+`REVIEWD_GITHUB_WEBHOOK_SECRET_ENVIRONMENT` contains only the environment-variable name. The secret is neither saved nor returned. This foundation verifies `X-Hub-Signature-256`, accepts bounded `ping`, `pull_request`, and `pull_request_review` payloads, and retains only delivery metadata plus payload hash for idempotency. It starts no job and makes no GitHub call; periodic GET-only reconciliation remains correctness source.
+
 ## Review workflow
 
 1. Reconcile and hydrate a PR until it has current canonical evidence.
@@ -291,6 +303,8 @@ curl http://127.0.0.1:8080/api/v1/analytics/overview
 | `REVIEWD_SHADOW_RECONCILE_INTERVAL` | `5m` | Positive scheduling interval |
 | `REVIEWD_REVIEW_EXECUTION_ENABLED` | `false` | Enables local CLI review worker |
 | `REVIEWD_REVIEW_ENGINE_ARGV` | empty | JSON argv array for trusted engine |
+| `REVIEWD_GITHUB_WEBHOOK_ENABLED` | `false` | Enables loopback-only signed GitHub webhook ingress |
+| `REVIEWD_GITHUB_WEBHOOK_SECRET_ENVIRONMENT` | empty | Name of process variable holding webhook signing secret; required when enabled |
 
 Inspect effective non-secret configuration:
 

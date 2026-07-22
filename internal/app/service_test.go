@@ -145,6 +145,24 @@ func TestNewWiresLoopbackProtectionForFutureMutations(t *testing.T) {
 	}
 }
 
+func TestGitHubWebhookOptionsUsesOnlyNamedSecretReference(t *testing.T) {
+	t.Parallel()
+	store := &sqlite.Store{}
+	options, err := githubWebhookOptions(config.GitHubWebhookConfig{Enabled: true, SecretEnvironment: "TEST_WEBHOOK_SECRET"}, store, func(name string) (string, bool) {
+		if name != "TEST_WEBHOOK_SECRET" {
+			t.Fatalf("lookup name=%q", name)
+		}
+		return "webhook-signing-secret", true
+	})
+	if err != nil || !options.Enabled || options.Store != store || string(options.Secret) != "webhook-signing-secret" {
+		t.Fatalf("options=%+v err=%v", options, err)
+	}
+	_, err = githubWebhookOptions(config.GitHubWebhookConfig{Enabled: true, SecretEnvironment: "TEST_WEBHOOK_SECRET"}, store, func(string) (string, bool) { return "", false })
+	if err == nil || strings.Contains(err.Error(), "TEST_WEBHOOK_SECRET") {
+		t.Fatalf("missing secret error=%v", err)
+	}
+}
+
 func TestEnvironmentReaderFactoryUsesOnlyNamedEnvironmentReference(t *testing.T) {
 	t.Parallel()
 	factory := environmentReaderFactory(func(name string) (string, bool) {

@@ -98,6 +98,10 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	if err != nil {
 		return closeOnError(fmt.Errorf("create control mutation auth: %w", err))
 	}
+	webhookOptions, err := githubWebhookOptions(cfg.GitHubWebhook, store, os.LookupEnv)
+	if err != nil {
+		return closeOnError(fmt.Errorf("configure github webhook ingress: %w", err))
+	}
 	controlAPI := api.NewControlHandler(api.Readiness{
 		Ping: store.Ping,
 		SchemaStatus: func(ctx context.Context) (api.SchemaStatus, error) {
@@ -113,6 +117,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		ProposalMutations:       api.ProposalMutationOptions{Revisions: store, Decisions: store},
 		PublicationMutations:    publicationMutationOptions(cfg, store),
 		NotificationPreferences: api.NotificationPreferencesOptions{Store: store},
+		GitHubWebhooks:          webhookOptions,
 	})
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
@@ -179,6 +184,20 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		service.scheduleInterval = cfg.ShadowReconciliation.Interval
 	}
 	return service, nil
+}
+
+func githubWebhookOptions(cfg config.GitHubWebhookConfig, store *storagesqlite.Store, lookup func(string) (string, bool)) (api.GitHubWebhookOptions, error) {
+	if !cfg.Enabled {
+		return api.GitHubWebhookOptions{}, nil
+	}
+	if store == nil || lookup == nil {
+		return api.GitHubWebhookOptions{}, errors.New("github webhook ingress dependencies are unavailable")
+	}
+	secret, found := lookup(cfg.SecretEnvironment)
+	if !found || len(secret) < 16 || len(secret) > 4096 {
+		return api.GitHubWebhookOptions{}, errors.New("github webhook signing secret is unavailable")
+	}
+	return api.GitHubWebhookOptions{Enabled: true, Secret: []byte(secret), Store: store}, nil
 }
 
 func publicationMutationOptions(cfg config.Config, store *storagesqlite.Store) api.PublicationMutationOptions {
