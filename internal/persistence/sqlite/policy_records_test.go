@@ -137,6 +137,13 @@ WHERE proposal.id = ?`, result.ProposalID).Scan(&kind, &body); err != nil {
 	if kind != "approval" || body != "" {
 		t.Fatalf("auto approval proposal = kind=%q body=%q", kind, body)
 	}
+	var decision, actorKind, actorID, reason string
+	if err := store.db.QueryRowContext(ctx, `SELECT decision, actor_kind, actor_id, reason FROM decisions WHERE proposal_revision_id = ?`, result.ProposalRevisionID).Scan(&decision, &actorKind, &actorID, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if decision != "approve" || actorKind != "policy" || actorID != "policy:rule-version-1" || reason != "automatic approval authorized by immutable policy" {
+		t.Fatalf("auto approval decision = %q,%q,%q,%q", decision, actorKind, actorID, reason)
+	}
 }
 
 type policyRecordFixture struct {

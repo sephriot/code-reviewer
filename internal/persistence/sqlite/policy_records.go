@@ -75,8 +75,8 @@ type RecordPolicyEvaluationResult struct {
 // RecordPolicyEvaluation atomically stores a completed assessment's resolved
 // policy evidence. Proposal dispositions, including an automatically
 // publishable approval, create exactly one policy-owned initial proposal
-// revision. It creates no decisions, effects, jobs, events, outbox records,
-// or GitHub work.
+// revision. Automatic approval also records a policy-owned approval decision.
+// It creates no effects, jobs, events, outbox records, or GitHub work.
 func (s *Store) RecordPolicyEvaluation(ctx context.Context, input RecordPolicyEvaluationInput) (RecordPolicyEvaluationResult, error) {
 	normalized, err := normalizeRecordPolicyEvaluationInput(input)
 	if err != nil {
@@ -164,6 +164,22 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'policy', ?, ?, ?, ?)`,
 		}
 		result.ProposalID = proposalID
 		result.ProposalRevisionID = revisionID
+		if normalized.Disposition == PolicyDispositionAutoPublishApproval {
+			decisionID := stableID("policy-auto-approval", evaluationID)
+			if _, err := conn.ExecContext(ctx, `
+INSERT INTO decisions(
+ id, proposal_id, proposal_revision_id, policy_evaluation_id, assessment_id,
+ run_id, intent_id, connection_id, repository_id, pull_request_id, revision_id,
+ observation_id, decision, actor_kind, actor_id, idempotency_key, reason, created_at_us)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approve', 'policy', ?, ?, ?, ?)`,
+				decisionID, proposalID, revisionID, evaluationID, assessment.AssessmentID,
+				assessment.RunID, assessment.IntentID, assessment.ConnectionID, target.RepositoryID,
+				assessment.PullRequestID, assessment.RevisionID, assessment.ObservationID,
+				"policy:"+normalized.MatchedRuleVersionID, "policy-auto-approval:"+evaluationID,
+				"automatic approval authorized by immutable policy", createdAt); err != nil {
+				return fmt.Errorf("insert policy auto-approval decision: %w", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
