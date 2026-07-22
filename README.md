@@ -27,6 +27,20 @@ go test ./...
 
 ## Set up the control-plane database
 
+For normal local startup, copy the v2 template and run the launcher. `run.sh`
+loads `.env.v2` first, then falls back to legacy `.env` only for inherited
+credentials such as `GITHUB_TOKEN`; legacy Python settings do not configure
+the Go daemon.
+
+```bash
+cp .env.v2.example .env.v2
+./run.sh
+```
+
+Open <http://127.0.0.1:8080/> after startup. The launcher defaults to the
+separate `data/control-plane.db`, applies known migrations, and keeps
+publication disabled.
+
 Create or advance only the v2 database. `--apply` is required for schema writes.
 
 ```bash
