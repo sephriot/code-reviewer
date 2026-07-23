@@ -155,7 +155,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 			ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
 			APIBaseURL:        cfg.ShadowReconciliation.APIBaseURL,
 			CredentialRefKind: "environment",
-			CredentialLocator: cfg.ShadowReconciliation.TokenEnvironment,
+			CredentialLocator: "env:" + cfg.ShadowReconciliation.TokenEnvironment,
 		}),
 	}
 	if cfg.ReviewExecution.Enabled {
@@ -210,7 +210,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 			ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
 			APIBaseURL:        cfg.ShadowReconciliation.APIBaseURL,
 			CredentialRefKind: "environment",
-			CredentialLocator: cfg.ShadowReconciliation.TokenEnvironment,
+			CredentialLocator: "env:" + cfg.ShadowReconciliation.TokenEnvironment,
 		}
 		reconciliationScheduler := reconcileworker.Scheduler{Store: store}
 		hydrationScheduler := hydrateworker.Scheduler{Store: store}
@@ -266,7 +266,7 @@ func githubWebhookOptions(cfg config.GitHubWebhookConfig, reconciliation config.
 	options := api.GitHubWebhookOptions{Enabled: true, Secret: []byte(secret), Store: store}
 	if reconciliation.Enabled {
 		scheduler := reconcileworker.Scheduler{Store: store}
-		reconciliationConfig := reconcile.Config{ConnectionID: reconciliation.ConnectionID, APIBaseURL: reconciliation.APIBaseURL, CredentialRefKind: "environment", CredentialLocator: reconciliation.TokenEnvironment}
+		reconciliationConfig := reconcile.Config{ConnectionID: reconciliation.ConnectionID, APIBaseURL: reconciliation.APIBaseURL, CredentialRefKind: "environment", CredentialLocator: "env:" + reconciliation.TokenEnvironment}
 		options.Scheduler = webhookReconciliationScheduler{scheduler: scheduler, config: reconciliationConfig}
 	}
 	return options, nil
@@ -297,7 +297,7 @@ func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (r
 		ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
 		APIBaseURL:        cfg.ShadowReconciliation.APIBaseURL,
 		CredentialRefKind: "environment",
-		CredentialLocator: cfg.ShadowReconciliation.TokenEnvironment,
+		CredentialLocator: "env:" + cfg.ShadowReconciliation.TokenEnvironment,
 	}
 	executor := reviewexecute.Service{
 		Targets:   store,
@@ -478,9 +478,10 @@ func environmentReaderFactory(lookup func(string) (string, bool)) reconcileworke
 		if lookup == nil {
 			return nil, worker.Permanent(errors.New("GitHub environment credential lookup is required"))
 		}
-		token, ok := lookup(reconciliationConfig.CredentialLocator)
+		locator := strings.TrimPrefix(reconciliationConfig.CredentialLocator, "env:")
+		token, ok := lookup(locator)
 		if !ok || strings.TrimSpace(token) == "" {
-			return nil, worker.Permanent(fmt.Errorf("GitHub token environment %q is not set", reconciliationConfig.CredentialLocator))
+			return nil, worker.Permanent(fmt.Errorf("GitHub token environment %q is not set", locator))
 		}
 		reader, err := githubadapter.NewClient(reconciliationConfig.APIBaseURL, token, nil)
 		if err != nil {
