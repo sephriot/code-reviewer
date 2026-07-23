@@ -61,6 +61,8 @@ it in the same commit as every meaningful implementation stage.
       and verifies local control-desk bootstrap.
 - [x] Isolated Playwright fixture verifies GET-only reconciliation, canonical
       hydration, and live inbox refresh against a fake loopback GitHub API.
+- [x] Isolated Playwright fixture verifies automatic-rule selection and trusted
+      engine execution after canonical hydration.
 - [ ] End-to-end browser workflow: reconcile, hydrate, queue, run, policy
       proposal, human decision, and simulated publication.
 - [x] Runtime Activity exposes bounded durable job failure class and reason for
