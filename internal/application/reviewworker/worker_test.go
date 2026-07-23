@@ -160,6 +160,7 @@ func TestHandlerRecordsOnlySafeClassifiedFailures(t *testing.T) {
 		{name: "provider rate", execution: fmtError(&githubadapter.HTTPError{StatusCode: 429, Message: "token=never-store-this"}), kind: sqlite.ReviewRunEventFailedRetryable, code: "rate_limited"},
 		{name: "stale", execution: fmtError(sqlite.ErrReviewRunExecutionTargetNotFound), kind: sqlite.ReviewRunEventFailedTerminal, code: "stale_evidence", permanent: true},
 		{name: "invalid output", execution: errors.New("validate review engine assessment: raw stdout must not persist"), kind: sqlite.ReviewRunEventFailedTerminal, code: "validation_failed", permanent: true},
+		{name: "coverage invalid", execution: errors.New("validate review engine assessment: assessment coverage is invalid"), kind: sqlite.ReviewRunEventFailedTerminal, code: "validation_failed", permanent: true},
 		{name: "native provider", execution: errors.New("run review engine: native engine execution: exit status 1"), kind: sqlite.ReviewRunEventFailedTerminal, code: "configuration_invalid", permanent: true},
 	}
 	for _, test := range testCases {
@@ -181,6 +182,9 @@ func TestHandlerRecordsOnlySafeClassifiedFailures(t *testing.T) {
 			}
 			if test.name == "native provider" && !strings.Contains(err.Error(), "run its status command") {
 				t.Fatalf("missing operator guidance: %v", err)
+			}
+			if test.name == "coverage invalid" && !strings.Contains(err.Error(), "assessment coverage is invalid") {
+				t.Fatalf("missing validation diagnostic: %v", err)
 			}
 			if len(events.inputs) != 1 {
 				t.Fatalf("events=%+v", events.inputs)

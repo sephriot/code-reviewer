@@ -233,12 +233,27 @@ func safeFailureSummary(cause error) string {
 	case strings.Contains(message, "sandbox"):
 		return "native provider sandbox configuration blocked execution"
 	case strings.Contains(message, "validate review engine assessment"):
-		return "provider assessment failed validation"
+		return assessmentValidationSummary(message)
 	case strings.Contains(message, "review execution dependencies"):
 		return "review execution dependencies are unavailable"
 	default:
 		return "review execution failed"
 	}
+}
+
+func assessmentValidationSummary(message string) string {
+	const prefix = "validate review engine assessment: "
+	position := strings.Index(message, prefix)
+	if position < 0 {
+		return "provider assessment failed validation"
+	}
+	detail := strings.TrimSpace(message[position+len(prefix):])
+	// Assessment validation produces contract-only diagnostics. Keep this
+	// bounded so a future wrapped engine error cannot become a payload leak.
+	if detail == "" || len(detail) > 240 || strings.Contains(detail, "stdout") || strings.Contains(detail, "token=") {
+		return "provider assessment failed validation"
+	}
+	return "provider assessment invalid: " + detail
 }
 
 func classifyFailure(err error) failure {
