@@ -56,6 +56,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return databaseVerifyBackup(ctx, args[2:], stdout, stderr)
 	case "db ownership-probe":
 		return databaseOwnershipProbe(ctx, args[2:], stdout, stderr)
+	case "db checkpoint":
+		return databaseCheckpoint(ctx, args[2:], stdout, stderr)
 	case "legacy inspect":
 		return legacyInspect(ctx, args[2:], stdout, stderr)
 	case "legacy import":
@@ -93,7 +95,7 @@ Usage: reviewctl <group> <command> [options]
 
 Groups and commands:
   config validate                 validate environment configuration
-  db status|migrate|backup|verify-backup|ownership-probe
+  db status|migrate|backup|verify-backup|ownership-probe|checkpoint
   legacy inspect|import           retain/import format-v1 legacy backup
   github reconcile|hydrate        GET-only GitHub evidence operations
   profile create                  add immutable review profile version
@@ -1194,6 +1196,33 @@ func databaseOwnershipProbe(ctx context.Context, args []string, stdout, stderr i
 		ExclusiveLock bool   `json:"exclusive_lock"`
 		Heartbeat     bool   `json:"heartbeat"`
 	}{StateDir: *stateDir, ExclusiveLock: true, Heartbeat: true})
+}
+
+func databaseCheckpoint(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("db checkpoint", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.StringVar(&cfg.DatabasePath, "database", cfg.DatabasePath, "control-plane SQLite database")
+	name := flags.String("name", "", "unique cutover checkpoint name")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*name) == "" {
+		return errors.New("--name is required")
+	}
+	store, err := openCurrentControlPlane(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	checkpoint, err := store.CreateCutoverCheckpoint(ctx, *name, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, checkpoint)
 }
 
 func validateConfig(stdout io.Writer) error {
