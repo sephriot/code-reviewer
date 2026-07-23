@@ -25,4 +25,6 @@ fi
 
 export REVIEWD_DATABASE_PATH REVIEWD_LISTEN_ADDRESS REVIEWD_MIGRATION_MODE REVIEWD_PUBLICATION_MODE
 
-exec go run ./cmd/reviewd "$@"
+go build ./cmd/reviewd
+exec > >(tee -a data/reviewd.log) 2>&1
+exec ./reviewd "$@"
