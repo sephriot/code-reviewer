@@ -26,11 +26,29 @@ func NormalizeNativeOutput(provider Provider, raw []byte) ([]byte, error) {
 	for _, key := range []string{"result", "output", "text", "message"} {
 		var value string
 		if field, ok := direct[key]; ok && json.Unmarshal(field, &value) == nil {
-			candidate := bytes.TrimSpace([]byte(value))
-			if json.Valid(candidate) {
+			if candidate, valid := assessmentDocument([]byte(value)); valid {
 				return candidate, nil
 			}
 		}
 	}
 	return nil, errors.New("native engine output has no assessment JSON document")
+}
+
+func assessmentDocument(raw []byte) ([]byte, bool) {
+	candidate := bytes.TrimSpace(raw)
+	if bytes.HasPrefix(candidate, []byte("```")) {
+		newline := bytes.IndexByte(candidate, '\n')
+		if newline < 0 || !bytes.HasSuffix(candidate, []byte("```")) {
+			return nil, false
+		}
+		language := bytes.TrimSpace(candidate[3:newline])
+		if len(language) != 0 && !bytes.Equal(language, []byte("json")) {
+			return nil, false
+		}
+		candidate = bytes.TrimSpace(candidate[newline+1 : len(candidate)-3])
+	}
+	if !json.Valid(candidate) {
+		return nil, false
+	}
+	return candidate, true
 }
