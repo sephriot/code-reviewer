@@ -55,8 +55,8 @@ it in the same commit as every meaningful implementation stage.
       count; hydration is disabled when canonical evidence exists.
 - [x] Dashboard control to re-check automatic policy and queue an eligible
       review. Runtime Activity shows durable job outcome.
-- [ ] Dashboard setup/help for profiles, active policy rules, and trusted local
-      review-engine configuration; retain CLI as complete fallback.
+- [x] Dashboard readiness guide for profiles, active policy rules, and trusted
+      local review-engine configuration; `reviewctl` remains complete fallback.
 - [ ] End-to-end browser test: reconcile, hydrate, queue, run, policy proposal,
       human decision, and simulated publication.
 - [x] Runtime Activity exposes bounded durable job failure class and reason for

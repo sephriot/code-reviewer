@@ -90,6 +90,14 @@
     .settings-list dt { color:var(--muted); font-size:11px; }
     .settings-list dd { margin:0; color:var(--ink); font-size:11px; font-weight:700; text-align:right; }
     .settings-list dd[data-good="true"] { color:var(--signal); }
+    .setup-guide { margin-top:18px; padding-top:18px; border-top:1px solid var(--line); }
+    .setup-guide h3 { margin:0; color:var(--ink); font-size:11px; letter-spacing:.11em; text-transform:uppercase; }
+    .setup-list { display:grid; gap:7px; margin:12px 0 0; padding:0; list-style:none; }
+    .setup-item { display:grid; grid-template-columns:8px minmax(0,1fr); gap:9px; padding:8px 0; border-bottom:1px solid var(--line); }
+    .setup-item .mark { width:7px; height:7px; margin-top:4px; box-shadow:none; background:var(--muted); }
+    .setup-item[data-ready="true"] .mark { background:var(--signal); }
+    .setup-item strong { display:block; color:var(--ink); font-size:11px; }
+    .setup-item span { display:block; margin-top:2px; color:var(--muted); font-size:10px; line-height:1.35; }
     .notification-form { display:grid; gap:12px; margin-top:18px; padding-top:18px; border-top:1px solid var(--line); }
     .notification-form fieldset { display:grid; gap:12px; min-width:0; margin:0; padding:0; border:0; }
     .channel-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
@@ -184,6 +192,10 @@
             <div class="section-head"><h2 id="settings-heading">Local configuration</h2><span class="pill">No secrets</span></div>
             <p class="notice" id="settings-message">Loading safe configuration summary.</p>
             <dl class="settings-list" id="settings-items" aria-live="polite"></dl>
+            <section class="setup-guide" aria-labelledby="review-setup-heading">
+              <h3 id="review-setup-heading">Review setup</h3>
+              <ol class="setup-list" id="review-setup-items" aria-live="polite"></ol>
+            </section>
             <form class="notification-form" id="notification-preferences-form" novalidate aria-labelledby="notification-preferences-heading">
               <div class="section-head"><h2 id="notification-preferences-heading">Local notifications</h2><span class="pill">Safe controls</span></div>
               <fieldset id="notification-preferences-fields" disabled>
@@ -235,6 +247,7 @@
       const activityItems = document.querySelector('#activity-items');
       const settingsMessage = document.querySelector('#settings-message');
       const settingsItems = document.querySelector('#settings-items');
+      const reviewSetupItems = document.querySelector('#review-setup-items');
       const notificationPreferencesForm = document.querySelector('#notification-preferences-form');
       const notificationPreferencesFields = document.querySelector('#notification-preferences-fields');
       const notificationPreferencesStatus = document.querySelector('#notification-preferences-status');
@@ -336,9 +349,25 @@
           ['Review runtime', reviewExecutionEnabled ? 'enabled' : 'disabled', reviewExecutionEnabled]
         ];
         rows.forEach(([label, valueText, good]) => { const labelNode = text('dt', label); const valueNode = text('dd', String(valueText)); if (good !== undefined) valueNode.dataset.good = String(good); settingsItems.append(labelNode, valueNode); });
+        renderReviewSetup(value);
         clearReadFailure(settingsMessage, 'Safe local summary only. Credentials and token references stay out of the dashboard.');
 		syncMutationControls();
 		syncReviewControls();
+      }
+      function renderReviewSetup(value) {
+        reviewSetupItems.replaceChildren();
+        const profiles = Number(value.configured?.profiles || 0);
+        const rules = Number(value.configured?.active_rules || 0);
+        const steps = [
+          [profiles > 0, 'Immutable review profile', profiles > 0 ? `${profiles} configured.` : 'Create one with reviewctl profile create.'],
+          [rules > 0, 'Active policy rule', rules > 0 ? `${rules} active.` : 'Apply one with reviewctl policy apply; automatic rules may queue reviews.'],
+          [reviewExecutionEnabled, 'Trusted local engine', reviewExecutionEnabled ? 'Runtime enabled. Engine argv remains private.' : 'Set REVIEWD_REVIEW_EXECUTION_ENABLED and REVIEWD_REVIEW_ENGINE_ARGV in .env.v2, then restart reviewd.']
+        ];
+        steps.forEach(([ready, title, detail]) => {
+          const item = document.createElement('li'); item.className = 'setup-item'; item.dataset.ready = String(ready);
+          const mark = text('span', '', 'mark'); mark.setAttribute('aria-hidden', 'true');
+          const copy = document.createElement('div'); copy.append(text('strong', title), text('span', detail)); item.append(mark, copy); reviewSetupItems.append(item);
+        });
       }
       const localDateTimeInput = (value) => {
         if (!value) return '';
