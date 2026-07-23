@@ -239,6 +239,22 @@ See [policy guide](docs/POLICIES.md) for `match`, `review`, priority, trigger,
 and publication fields. In short: `match` selects PRs; `review` is retained
 future execution metadata and is not interpreted yet, so use `{}`.
 
+### Enable trusted local review execution
+
+After a profile and policy exist, edit `.env.v2` with an executable you trust:
+
+```dotenv
+REVIEWD_REVIEW_EXECUTION_ENABLED=true
+REVIEWD_REVIEW_ENGINE_ARGV='["/usr/local/bin/review-engine","--input","-"]'
+```
+
+The value is JSON argv, not a shell command: first element is executable, each
+later element is one argument. The engine reads one evidence bundle from stdin
+and must return one v1 assessment JSON object on stdout. It receives no GitHub
+token. Stop `./run.sh` with `Ctrl-C`, run `./run.sh` again, then confirm
+**Review runtime enabled** in Control Desk settings. Keep it `false` until the
+adapter has been tested.
+
 ```bash
 go run ./cmd/reviewctl policy apply \
   --database data/control-plane.db \
