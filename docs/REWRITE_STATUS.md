@@ -26,6 +26,9 @@ it in the same commit as every meaningful implementation stage.
 - Review profiles, review runs, assessment validation, policy, proposals,
   decisions, simulated publication, guarded enabled publication, outbox, and
   local notification delivery have Go implementations and tests.
+- Writer-ownership foundation holds an exclusive local advisory lock and a
+  monotonic ownership generation in separate SQLite state. Runtime credential
+  and publisher wiring remains outstanding.
 
 ## Verified facts
 
