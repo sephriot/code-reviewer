@@ -368,7 +368,11 @@ func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (r
 		if authPath == "" {
 			return reviewworker.Handler{}, errors.New("review engine provider is invalid")
 		}
-		adapter, err = engine.NewNative(engine.NativeConfig{Provider: provider, Executable: cfg.ReviewExecution.EngineArgv[0], AuthPath: authPath, BridgeRoot: cfg.ReviewExecution.AuthRoot})
+		executable := string(provider)
+		if len(cfg.ReviewExecution.EngineArgv) > 0 {
+			executable = cfg.ReviewExecution.EngineArgv[0]
+		}
+		adapter, err = engine.NewNative(engine.NativeConfig{Provider: provider, Executable: executable, AuthPath: authPath, BridgeRoot: cfg.ReviewExecution.AuthRoot})
 	}
 	if err != nil {
 		return reviewworker.Handler{}, fmt.Errorf("configure review engine: %w", err)

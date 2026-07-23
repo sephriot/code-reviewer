@@ -347,6 +347,12 @@ func validateReviewExecution(review ReviewExecutionConfig, shadow ShadowReconcil
 	if review.Provider != "" && (strings.TrimSpace(review.AuthRoot) == "" || filepath.Clean(review.AuthRoot) == ".") {
 		return errors.New("review engine auth root is invalid")
 	}
+	if review.Provider != "" {
+		if review.Provider != "claude" && review.Provider != "codex" && review.Provider != "agent" {
+			return errors.New("review engine provider must be claude, codex, or agent")
+		}
+		return nil
+	}
 	if len(review.EngineArgv) == 0 || strings.TrimSpace(review.EngineArgv[0]) == "" {
 		return errors.New("review execution engine argv is required when enabled")
 	}
