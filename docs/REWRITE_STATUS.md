@@ -100,6 +100,8 @@ it in the same commit as every meaningful implementation stage.
 - Runtime and dashboard commands: `README.md`, `WEB_UI_README.md`.
 - `data/reviewd.log` is process output. Durable job/event/outbox state is
   available from dashboard Runtime Activity and `/api/v1/activity`.
+- Operator command discovery and safe first-use workflow live in README's
+  **Using `reviewctl`** section; use `reviewctl --help` before command flags.
 - Recent important fix: credentials stored as `env:VARIABLE_NAME` must be
   normalized to `VARIABLE_NAME` only when resolving process environment. Do not
   pass a token value where a token environment-variable name is expected.

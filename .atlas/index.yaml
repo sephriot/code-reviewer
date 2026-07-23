@@ -1,4 +1,4 @@
-next_id: 35
+next_id: 36
 entries:
 - id: K-000001
   title: 'Project architecture: async polling monitor with human-in-the-loop approval'
@@ -466,3 +466,12 @@ entries:
   sources:
   - internal/persistence/sqlite/publication_dispatch.go
   - migrations/sqlite/0013_publication_uncertainty_resolutions.sql
+- id: K-000035
+  title: reviewctl must expose command discovery
+  type: decision
+  confidence: high
+  tags:
+  - cli
+  - usability
+  sources:
+  - cmd/reviewctl/main.go

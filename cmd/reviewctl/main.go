@@ -34,8 +34,13 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) < 2 {
-		return errors.New("usage: reviewctl <config|db|legacy|github|profile|review|policy|proposal|publication> <command> [options]")
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		_, err := io.WriteString(stdout, reviewctlHelp)
+		return err
+	}
+	if len(args) == 1 || args[1] == "--help" || args[1] == "-h" {
+		_, err := io.WriteString(stdout, reviewctlHelp)
+		return err
 	}
 	switch args[0] + " " + args[1] {
 	case "config validate":
@@ -78,6 +83,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("unknown command %q", args[0]+" "+args[1])
 	}
 }
+
+const reviewctlHelp = `reviewctl — local control-plane operator CLI
+
+Usage: reviewctl <group> <command> [options]
+
+Groups and commands:
+  config validate                 validate environment configuration
+  db status|migrate|backup|verify-backup
+  legacy inspect|import           retain/import format-v1 legacy backup
+  github reconcile|hydrate        GET-only GitHub evidence operations
+  profile create                  add immutable review profile version
+  review queue|schedule           queue a pinned or policy-eligible review
+  policy apply|evaluate           manage/evaluate immutable rule generations
+  proposal edit|decide|publish    append review revisions and human decisions
+  publication resolve             record manual uncertain-delivery resolution
+
+Run ` + "`reviewctl <group> --help`" + ` for group commands. Run a full command
+with ` + "`--help`" + ` for its flags, for example ` + "`reviewctl db migrate --help`" + `.
+`
 
 const (
 	maxManualInputBytes          = 64 << 10

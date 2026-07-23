@@ -22,6 +22,18 @@ import (
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 )
 
+func TestRunHelpListsOperatorCommands(t *testing.T) {
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"--help"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"db status|migrate|backup|verify-backup", "github reconcile|hydrate", "proposal edit|decide|publish"} {
+		if !strings.Contains(output.String(), command) {
+			t.Fatalf("help missing %q: %s", command, output.String())
+		}
+	}
+}
+
 func TestDatabaseMigrateRequiresExplicitApply(t *testing.T) {
 	var output bytes.Buffer
 	err := run(

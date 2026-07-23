@@ -1,0 +1,11 @@
+id: K-000035
+title: reviewctl must expose command discovery
+type: decision
+confidence: high
+summary: reviewctl accepts help, --help, and -h without a command and lists every operator command group; command-level flag help remains available through --help.
+tags:
+- cli
+- usability
+sources:
+- cmd/reviewctl/main.go
+updated_at: 2026-07-23

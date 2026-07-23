@@ -41,6 +41,44 @@ Open <http://127.0.0.1:8080/> after startup. The launcher defaults to the
 separate `data/control-plane.db`, applies known migrations, and keeps
 publication disabled.
 
+## Using `reviewctl`
+
+`reviewctl` is the operator CLI. It is not required for normal dashboard use:
+start `reviewd`, let it reconcile, then select PRs in the Control Desk. Use
+`reviewctl` when bootstrapping, diagnosing, importing history, or deliberately
+changing review policy.
+
+Start with discovery, never guessed commands:
+
+```bash
+go run ./cmd/reviewctl --help
+go run ./cmd/reviewctl db migrate --help
+```
+
+Normal safe operator path:
+
+1. `./run.sh`; open the dashboard and confirm **Read model online**.
+2. Check database state: `go run ./cmd/reviewctl db status --database data/control-plane.db`.
+3. Let startup reconciliation find PRs. Use dashboard **Build canonical evidence** for a selected PR when needed.
+4. Use `github reconcile` or `github hydrate` only for a manual GET-only retry.
+5. Create a profile and apply a policy only when ready to execute trusted local reviews.
+6. Keep publication `disabled`; dashboard simulation never writes GitHub. Enabled dispatch is a separate deliberate cutover step.
+
+Command map:
+
+| Need | Command group | Safety |
+| --- | --- | --- |
+| Check or migrate v2 database | `db status`, `db migrate --apply` | Migration changes only v2 DB. |
+| Preserve/import old Python history | `db backup`, `legacy inspect`, `legacy import --apply` | Legacy DB is source-only. |
+| Discover or hydrate PR facts | `github reconcile --shadow`, `github hydrate --shadow` | GitHub GET only. |
+| Define review behavior | `profile create`, `policy apply` | Immutable local records. |
+| Run a review | `review queue`, `review schedule` | Requires canonical evidence and trusted engine. |
+| Make a human decision | `proposal edit`, `proposal decide` | Append-only; no GitHub write. |
+| Record/safely dispatch publication | `proposal publish --simulate` | Simulation is local; `--dispatch` needs enabled mode. |
+
+Never pass a GitHub token as a command argument. Use `--token-env GITHUB_TOKEN`.
+Never use `data/reviews.db` as `--database`; it is legacy input only.
+
 Create or advance only the v2 database. `--apply` is required for schema writes.
 
 ```bash
