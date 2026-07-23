@@ -39,7 +39,8 @@ const (
 	// EnvReviewExecutionEnabled enables local, read-only CLI review execution.
 	EnvReviewExecutionEnabled = "REVIEWD_REVIEW_EXECUTION_ENABLED"
 	// EnvReviewEngineArgv supplies the trusted review engine command as a JSON argv array.
-	EnvReviewEngineArgv = "REVIEWD_REVIEW_ENGINE_ARGV"
+	EnvReviewEngineArgv     = "REVIEWD_REVIEW_ENGINE_ARGV"
+	EnvReviewEngineAuthRoot = "REVIEWD_REVIEW_ENGINE_AUTH_ROOT"
 	// EnvGitHubWebhookEnabled enables signed GitHub webhook ingress on loopback.
 	EnvGitHubWebhookEnabled = "REVIEWD_GITHUB_WEBHOOK_ENABLED"
 	// EnvGitHubWebhookSecretEnvironment names, but never contains, the signing
@@ -98,6 +99,7 @@ type ShadowReconciliationConfig struct {
 type ReviewExecutionConfig struct {
 	Enabled    bool     `json:"enabled"`
 	EngineArgv []string `json:"engine_argv"`
+	AuthRoot   string   `json:"engine_auth_root"`
 }
 
 // GitHubWebhookConfig configures local signed webhook ingress. SecretEnvironment
@@ -119,6 +121,7 @@ func Default() Config {
 			APIBaseURL: "https://api.github.com",
 			Interval:   5 * time.Minute,
 		},
+		ReviewExecution: ReviewExecutionConfig{AuthRoot: filepath.Join(".reviewd", "engine-auth")},
 	}
 }
 
@@ -197,6 +200,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			return Config{}, fmt.Errorf("%s: %w", EnvReviewEngineArgv, err)
 		}
 		cfg.ReviewExecution.EngineArgv = argv
+	}
+	if value, ok := lookup(EnvReviewEngineAuthRoot); ok {
+		cfg.ReviewExecution.AuthRoot = strings.TrimSpace(value)
 	}
 	if value, ok := lookup(EnvGitHubWebhookEnabled); ok {
 		enabled, err := strconv.ParseBool(strings.TrimSpace(value))
@@ -332,6 +338,9 @@ func validateReviewExecution(review ReviewExecutionConfig, shadow ShadowReconcil
 	}
 	if !shadow.Enabled {
 		return errors.New("review execution requires enabled shadow reconciliation")
+	}
+	if strings.TrimSpace(review.AuthRoot) == "" || filepath.Clean(review.AuthRoot) == "." {
+		return errors.New("review engine auth root is invalid")
 	}
 	if len(review.EngineArgv) == 0 || strings.TrimSpace(review.EngineArgv[0]) == "" {
 		return errors.New("review execution engine argv is required when enabled")
