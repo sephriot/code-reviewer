@@ -193,6 +193,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 			return closeOnError(err)
 		}
 		reviewHandler.AutomaticPublication = automaticPublication{store: store}
+		reviewHandler.Notifications = store
 		handlers[reviewworker.ExecuteJobKind] = reviewHandler
 	}
 	if cfg.PublicationMode == config.PublicationSimulated {

@@ -206,6 +206,28 @@ func TestHandlerRetriesLifecycleWriteFailure(t *testing.T) {
 	}
 }
 
+func TestHandlerEmitsReviewLifecycleNotifications(t *testing.T) {
+	notifications := &notificationEventRecorder{}
+	handler := Handler{
+		Executor: executorFunc(func(context.Context, string) (reviewexecute.Result, error) {
+			return reviewexecute.Result{}, nil
+		}),
+		Events:        &eventRecorder{},
+		Notifications: notifications,
+	}
+	if err := handler.Handle(context.Background(), reviewJob(`{"run_id":"run-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifications.events) != 2 || notifications.events[0].EventType != "review.started" || notifications.events[1].EventType != "review.completed" {
+		t.Fatalf("events=%+v", notifications.events)
+	}
+	for _, event := range notifications.events {
+		if event.AggregateType != "review_run" || event.AggregateID != "run-1" || len(event.Payload) == 0 {
+			t.Fatalf("event=%+v", event)
+		}
+	}
+}
+
 func reviewJob(payload string) sqlite.Job {
 	return sqlite.Job{Kind: ExecuteJobKind, Payload: []byte(payload)}
 }
@@ -219,6 +241,16 @@ func (f executorFunc) Execute(ctx context.Context, runID string) (reviewexecute.
 type eventRecorder struct {
 	inputs []sqlite.AppendReviewRunEventInput
 	err    error
+}
+
+type notificationEventRecorder struct{ events []sqlite.DomainEventInput }
+
+func (r *notificationEventRecorder) AppendEventWithOutbox(_ context.Context, event sqlite.DomainEventInput, outbox []sqlite.OutboxInput) (sqlite.AppendedEvent, error) {
+	if len(outbox) != 1 || outbox[0].Topic != "notification.dispatch.v1" {
+		return sqlite.AppendedEvent{}, errors.New("unexpected notification outbox")
+	}
+	r.events = append(r.events, event)
+	return sqlite.AppendedEvent{EventID: event.ID}, nil
 }
 
 func (r *eventRecorder) AppendReviewRunEvent(_ context.Context, input sqlite.AppendReviewRunEventInput) (sqlite.AppendReviewRunEventResult, error) {

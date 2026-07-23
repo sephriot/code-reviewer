@@ -4,10 +4,12 @@ package reviewworker
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -38,6 +40,12 @@ type RunEvents interface {
 	AppendReviewRunEvent(context.Context, sqlite.AppendReviewRunEventInput) (sqlite.AppendReviewRunEventResult, error)
 }
 
+// NotificationEvents appends a retained local-notification intent. Notification
+// failures never stop a review; the durable review lifecycle remains primary.
+type NotificationEvents interface {
+	AppendEventWithOutbox(context.Context, sqlite.DomainEventInput, []sqlite.OutboxInput) (sqlite.AppendedEvent, error)
+}
+
 // AutomaticPolicyStore supplies the bounded current-rule and immutable policy
 // evaluation capabilities used only after an automatic review succeeds.
 type AutomaticPolicyStore interface {
@@ -58,6 +66,7 @@ type AutomaticPublication interface {
 type Handler struct {
 	Executor             Executor
 	Events               RunEvents
+	Notifications        NotificationEvents
 	AutomaticPolicyStore AutomaticPolicyStore
 	AutomaticPublication AutomaticPublication
 	Now                  func() time.Time
@@ -75,6 +84,7 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 	if h.Executor == nil || h.Events == nil {
 		return h.recordFailure(ctx, runID, failureTerminal, "configuration_invalid", errors.New("review execution dependencies are unavailable"))
 	}
+	h.notifyLifecycle(ctx, runID, "review.started")
 
 	execution, err := h.Executor.Execute(ctx, runID)
 	if err == nil {
@@ -84,10 +94,44 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 			// job permanently and leave publication unavailable.
 			return worker.Permanent(err)
 		}
+		h.notifyLifecycle(ctx, runID, "review.completed")
 		return nil
 	}
 	result := classifyFailure(err)
-	return h.recordFailure(ctx, runID, result.kind, result.code, err)
+	recordErr := h.recordFailure(ctx, runID, result.kind, result.code, err)
+	h.notifyLifecycle(ctx, runID, "review.failed")
+	return recordErr
+}
+
+func (h Handler) notifyLifecycle(ctx context.Context, runID, eventType string) {
+	if h.Notifications == nil {
+		return
+	}
+	digest := sha256.Sum256([]byte("review-lifecycle-notification:v1:" + eventType + ":" + runID))
+	eventID := fmt.Sprintf("notification-event-%x", digest[:])
+	payload, err := json.Marshal(struct {
+		RunID string `json:"run_id"`
+		Phase string `json:"phase"`
+	}{RunID: runID, Phase: eventType})
+	if err != nil {
+		slog.Default().Warn("review lifecycle notification encoding failed", "event_type", eventType)
+		return
+	}
+	outboxPayload, err := json.Marshal(struct {
+		DomainEventID string          `json:"domain_event_id"`
+		DedupeKey     string          `json:"dedupe_key"`
+		Payload       json.RawMessage `json:"payload"`
+	}{DomainEventID: eventID, DedupeKey: "review-lifecycle:" + eventType + ":" + runID, Payload: payload})
+	if err != nil {
+		slog.Default().Warn("review lifecycle notification encoding failed", "event_type", eventType)
+		return
+	}
+	if _, err := h.Notifications.AppendEventWithOutbox(ctx, sqlite.DomainEventInput{
+		ID: eventID, AggregateType: "review_run", AggregateID: runID,
+		EventType: eventType, EventVersion: 1, Payload: payload,
+	}, []sqlite.OutboxInput{{Topic: "notification.dispatch.v1", Payload: outboxPayload}}); err != nil {
+		slog.Default().Warn("review lifecycle notification scheduling failed", "event_type", eventType, "error", err)
+	}
 }
 
 func (h Handler) evaluateAutomaticPolicy(ctx context.Context, execution reviewexecute.Result) error {
