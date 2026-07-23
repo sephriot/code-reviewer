@@ -16,7 +16,8 @@ it in the same commit as every meaningful implementation stage.
 - Startup schedules GET-only GitHub reconciliation and canonical hydration.
 - Dashboard shows observed pull requests when no attention record exists,
   immutable timeline, durable activity, history, analytics, settings, and
-  notification preferences.
+  notification preferences. Runtime Activity, history, analytics, and settings
+  refresh every 10 seconds without page reload.
 - Selected PR can queue canonical evidence hydration from dashboard. It creates
   or reuses one durable `github.hydrate.v1` job and cannot write to GitHub.
 - Review profiles, review runs, assessment validation, policy, proposals,

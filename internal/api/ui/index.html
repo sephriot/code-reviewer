@@ -609,7 +609,7 @@
       });
       proposalID.addEventListener('change', syncMutationControls);
       proposalRevisionID.addEventListener('change', syncMutationControls);
-      bootstrapSession().then(() => Promise.all([reloadInbox(), refreshNotificationPreferences(), deliverBrowserNotifications()])).then(() => { setConnection('ready', 'Read model online'); setInterval(() => { deliverBrowserNotifications().catch(() => {}); }, 10000); }).catch((error) => { inboxMessage.textContent = error.message; inboxMessage.setAttribute('role', 'alert'); setConnection('error', 'Read model unavailable'); });
+      bootstrapSession().then(() => Promise.all([reloadInbox(), refreshNotificationPreferences(), deliverBrowserNotifications()])).then(() => { setConnection('ready', 'Read model online'); setInterval(() => { deliverBrowserNotifications().catch(() => {}); refreshTelemetry().catch(() => {}); }, 10000); }).catch((error) => { inboxMessage.textContent = error.message; inboxMessage.setAttribute('role', 'alert'); setConnection('error', 'Read model unavailable'); });
     })();
   </script>
 </body>
