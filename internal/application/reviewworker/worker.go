@@ -210,6 +210,9 @@ func classifyFailure(err error) failure {
 		strings.Contains(err.Error(), "review execution context is required") {
 		return failure{kind: failureTerminal, code: "configuration_invalid"}
 	}
+	if strings.Contains(err.Error(), "native engine") || strings.Contains(err.Error(), "sandbox") {
+		return failure{kind: failureTerminal, code: "native_provider_invalid"}
+	}
 	return failure{kind: failureRetryable, code: "internal_error"}
 }
 

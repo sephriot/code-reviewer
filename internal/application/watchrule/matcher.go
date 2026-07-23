@@ -193,7 +193,16 @@ func (match match) matches(facts Facts) (bool, error) {
 		if err != nil {
 			return false, invalidFacts("repository name: " + err.Error())
 		}
-		if !slices.Contains(match.repositoryNames, name) {
+		matched := slices.Contains(match.repositoryNames, name)
+		if !matched {
+			for _, pattern := range match.repositoryNames {
+				if strings.HasSuffix(pattern, "/*") && strings.HasPrefix(name, strings.TrimSuffix(pattern, "*")) {
+					matched = true
+					break
+				}
+			}
+		}
+		if !matched {
 			return false, nil
 		}
 	}
@@ -327,7 +336,7 @@ func normalizeRelationship(value string) (string, error) {
 func normalizeRepositoryName(value string) (string, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
 	parts := strings.Split(value, "/")
-	if len(parts) != 2 || !validAtom(parts[0]) || !validAtom(parts[1]) {
+	if len(parts) != 2 || !validAtom(parts[0]) || (!validAtom(parts[1]) && parts[1] != "*") {
 		return "", errors.New("must be owner/name")
 	}
 	return value, nil
