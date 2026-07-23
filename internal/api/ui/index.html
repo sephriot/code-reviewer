@@ -158,6 +158,11 @@
             <p class="notice" id="history-message">Loading immutable outcomes.</p>
             <ol class="history-list" id="history-items" aria-label="Recent terminal outcomes"></ol>
           </section>
+          <section aria-labelledby="activity-heading">
+            <div class="section-head"><h2 id="activity-heading">Runtime activity</h2><span class="pill">Local</span></div>
+            <p class="notice" id="activity-message">Loading durable jobs and events.</p>
+            <ol class="history-list" id="activity-items" aria-label="Recent runtime activity"></ol>
+          </section>
           <section aria-labelledby="settings-heading">
             <div class="section-head"><h2 id="settings-heading">Local configuration</h2><span class="pill">No secrets</span></div>
             <p class="notice" id="settings-message">Loading safe configuration summary.</p>
@@ -204,6 +209,8 @@
       const historyMessage = document.querySelector('#history-message');
       const historyCount = document.querySelector('#history-count');
       const historyItems = document.querySelector('#history-items');
+      const activityMessage = document.querySelector('#activity-message');
+      const activityItems = document.querySelector('#activity-items');
       const settingsMessage = document.querySelector('#settings-message');
       const settingsItems = document.querySelector('#settings-items');
       const notificationPreferencesForm = document.querySelector('#notification-preferences-form');
@@ -276,6 +283,12 @@
         });
         clearReadFailure(historyMessage, entries.length ? 'Completed runs, immutable decisions, and publication attempts.' : 'No terminal lifecycle outcomes yet.');
       }
+      function renderActivity(page) {
+        const entries = Array.isArray(page.items) ? page.items : [];
+        activityItems.replaceChildren();
+        entries.forEach((entry) => { const item = document.createElement('li'); item.className = 'history-item'; const copy = document.createElement('div'); copy.append(text('strong', `${entry.kind} · ${entry.state}`), text('span', entry.detail)); item.append(copy, text('time', formatTime(entry.occurred_at))); activityItems.append(item); });
+        clearReadFailure(activityMessage, entries.length ? 'Durable jobs, events, and delivery state.' : 'No durable runtime activity yet.');
+      }
       function renderSettings(value) {
 		publicationMode = value.publication_mode || 'unknown';
         settingsItems.replaceChildren();
@@ -317,10 +330,11 @@
         catch (error) { notificationPreferences = null; syncNotificationPreferenceControls(); setNotificationPreferencesStatus('error', error.message); }
       }
       async function refreshTelemetry() {
-        const results = await Promise.allSettled([api('/api/v1/analytics/overview'), api('/api/v1/history?limit=8'), api('/api/v1/settings')]);
-        const [overview, history, settings] = results;
+        const results = await Promise.allSettled([api('/api/v1/analytics/overview'), api('/api/v1/history?limit=8'), api('/api/v1/activity'), api('/api/v1/settings')]);
+        const [overview, history, activity, settings] = results;
         if (overview.status === 'fulfilled') renderOverview(overview.value); else { overviewMetrics.replaceChildren(); showReadFailure(overviewMessage, overview.reason); }
         if (history.status === 'fulfilled') renderHistory(history.value); else { historyItems.replaceChildren(); historyCount.textContent = '—'; showReadFailure(historyMessage, history.reason); }
+        if (activity.status === 'fulfilled') renderActivity(activity.value); else { activityItems.replaceChildren(); showReadFailure(activityMessage, activity.reason); }
         if (settings.status === 'fulfilled') renderSettings(settings.value); else { settingsItems.replaceChildren(); showReadFailure(settingsMessage, settings.reason); }
       }
       function clearMutationContext(message) {

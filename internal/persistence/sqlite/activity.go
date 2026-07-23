@@ -8,11 +8,11 @@ import (
 
 // ActivityItem is a safe, durable runtime record for local diagnostics.
 type ActivityItem struct {
-	Kind       string
-	ID         string
-	State      string
-	Detail     string
-	OccurredAt time.Time
+	Kind       string    `json:"kind"`
+	ID         string    `json:"id"`
+	State      string    `json:"state"`
+	Detail     string    `json:"detail"`
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // ListActivity returns recent durable job and event state without payloads.
