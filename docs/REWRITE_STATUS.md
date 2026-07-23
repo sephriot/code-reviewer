@@ -108,6 +108,8 @@ it in the same commit as every meaningful implementation stage.
   retained-but-not-yet-interpreted runtime metadata.
 - `REVIEWD_WRITER_OWNERSHIP_STATE_DIR` makes shared local writer lock location
   explicit for future controlled cutover.
+- `reviewctl db ownership-probe` proves one exclusive local lock and a durable
+  heartbeat before writer cutover.
 - Recent important fix: credentials stored as `env:VARIABLE_NAME` must be
   normalized to `VARIABLE_NAME` only when resolving process environment. Do not
   pass a token value where a token environment-variable name is expected.

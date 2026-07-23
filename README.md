@@ -81,6 +81,11 @@ Never use `data/reviews.db` as `--database`; it is legacy input only.
 Enabled publication stores its separate local writer lock under
 `data/writer-ownership` by default; set `REVIEWD_WRITER_OWNERSHIP_STATE_DIR`
 only when both writer binaries can access the same local state directory.
+Before cutover, verify host lock behavior with:
+
+```bash
+go run ./cmd/reviewctl db ownership-probe --state-dir data/writer-ownership
+```
 
 Create or advance only the v2 database. `--apply` is required for schema writes.
 

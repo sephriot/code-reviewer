@@ -23,6 +23,7 @@ import (
 	"github.com/sephriot/code-reviewer/internal/application/watchschedule"
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/legacy"
+	"github.com/sephriot/code-reviewer/internal/ownership"
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 )
 
@@ -53,6 +54,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return databaseBackup(ctx, args[2:], stdout, stderr)
 	case "db verify-backup":
 		return databaseVerifyBackup(ctx, args[2:], stdout, stderr)
+	case "db ownership-probe":
+		return databaseOwnershipProbe(ctx, args[2:], stdout, stderr)
 	case "legacy inspect":
 		return legacyInspect(ctx, args[2:], stdout, stderr)
 	case "legacy import":
@@ -90,7 +93,7 @@ Usage: reviewctl <group> <command> [options]
 
 Groups and commands:
   config validate                 validate environment configuration
-  db status|migrate|backup|verify-backup
+  db status|migrate|backup|verify-backup|ownership-probe
   legacy inspect|import           retain/import format-v1 legacy backup
   github reconcile|hydrate        GET-only GitHub evidence operations
   profile create                  add immutable review profile version
@@ -1156,6 +1159,41 @@ func databaseVerifyBackup(ctx context.Context, args []string, stdout, stderr io.
 		return err
 	}
 	return writeJSON(stdout, verified)
+}
+
+// databaseOwnershipProbe proves this host can hold one exclusive local writer
+// lock and rejects a simultaneous second owner. Run before a shared cutover.
+func databaseOwnershipProbe(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	cfg, err := config.LoadEnv()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("db ownership-probe", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	stateDir := flags.String("state-dir", cfg.WriterOwnershipStateDir, "shared local writer-ownership state directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("db ownership-probe accepts no positional arguments")
+	}
+	first, err := ownership.Acquire(ctx, *stateDir, "reviewctl-probe-primary", "lock-integration-probe", time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("acquire primary ownership probe: %w", err)
+	}
+	defer func() { _ = first.Close() }()
+	_, secondErr := ownership.Acquire(ctx, *stateDir, "reviewctl-probe-secondary", "lock-integration-probe", time.Now().UTC())
+	if !errors.Is(secondErr, ownership.ErrHeld) {
+		return fmt.Errorf("ownership lock probe did not reject second owner: %w", secondErr)
+	}
+	if err := first.Heartbeat(ctx, time.Now().UTC()); err != nil {
+		return fmt.Errorf("heartbeat ownership probe: %w", err)
+	}
+	return writeJSON(stdout, struct {
+		StateDir      string `json:"state_dir"`
+		ExclusiveLock bool   `json:"exclusive_lock"`
+		Heartbeat     bool   `json:"heartbeat"`
+	}{StateDir: *stateDir, ExclusiveLock: true, Heartbeat: true})
 }
 
 func validateConfig(stdout io.Writer) error {

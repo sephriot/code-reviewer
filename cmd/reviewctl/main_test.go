@@ -34,6 +34,16 @@ func TestRunHelpListsOperatorCommands(t *testing.T) {
 	}
 }
 
+func TestDatabaseOwnershipProbe(t *testing.T) {
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"db", "ownership-probe", "--state-dir", filepath.Join(t.TempDir(), "ownership")}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"exclusive_lock": true`) || !strings.Contains(output.String(), `"heartbeat": true`) {
+		t.Fatalf("probe output = %s", output.String())
+	}
+}
+
 func TestDatabaseMigrateRequiresExplicitApply(t *testing.T) {
 	var output bytes.Buffer
 	err := run(
