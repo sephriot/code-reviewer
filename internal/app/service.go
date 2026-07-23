@@ -342,7 +342,7 @@ func (s *Service) Run(ctx context.Context, logger *slog.Logger) error {
 	defer cancelRuntime()
 	backgroundErrors := make(chan error, 2)
 	var background sync.WaitGroup
-	s.startBackground(runtimeCtx, &background, backgroundErrors)
+	s.startBackground(runtimeCtx, logger, &background, backgroundErrors)
 
 	serveError := make(chan error, 1)
 	go func() {
@@ -384,7 +384,7 @@ func (s *Service) Run(ctx context.Context, logger *slog.Logger) error {
 	}
 }
 
-func (s *Service) startBackground(ctx context.Context, group *sync.WaitGroup, errorsCh chan<- error) {
+func (s *Service) startBackground(ctx context.Context, logger *slog.Logger, group *sync.WaitGroup, errorsCh chan<- error) {
 	if s.jobRunner != nil {
 		group.Add(1)
 		go func() {
@@ -407,7 +407,18 @@ func (s *Service) startBackground(ctx context.Context, group *sync.WaitGroup, er
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if err := runScheduler(ctx, s.scheduleInterval, s.schedule); err != nil && ctx.Err() == nil {
+			logger.Info("shadow reconciliation scheduler started", "interval", s.scheduleInterval)
+			schedule := func(ctx context.Context) error {
+				logger.Info("scheduling shadow reconciliation and hydration")
+				err := s.schedule(ctx)
+				if err != nil {
+					logger.Error("could not schedule shadow reconciliation", "error", err)
+					return err
+				}
+				logger.Info("shadow reconciliation and hydration scheduled")
+				return nil
+			}
+			if err := runScheduler(ctx, s.scheduleInterval, schedule); err != nil && ctx.Err() == nil {
 				errorsCh <- err
 			}
 		}()
