@@ -21,3 +21,13 @@ func TestNativeInvocationUsesStructuredModes(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeInvocationReservesSchemaArgument(t *testing.T) {
+	invocation, err := (NativeConfig{Provider: ProviderClaude, Executable: "claude", AuthPath: "/auth", BridgeRoot: ".reviewd"}).Invocation("/tmp/bridge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := invocation.Argv[len(invocation.Argv)-1], "/tmp/bridge/assessment-schema.json"; got != want {
+		t.Fatalf("schema placeholder=%q want=%q", got, want)
+	}
+}

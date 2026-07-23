@@ -43,6 +43,15 @@ func (n *Native) Review(ctx context.Context, input json.RawMessage) (Result, err
 	if err := WriteAssessmentSchema(invocation.SchemaPath); err != nil {
 		return Result{}, err
 	}
+	if n.config.Provider == ProviderClaude {
+		// Claude Code accepts the schema document itself, whereas Codex expects
+		// the path supplied in its --output-schema option.
+		schema, readErr := os.ReadFile(invocation.SchemaPath)
+		if readErr != nil {
+			return Result{}, fmt.Errorf("read assessment schema for Claude: %w", readErr)
+		}
+		invocation.Argv[len(invocation.Argv)-1] = string(schema)
+	}
 	// Subscription CLIs are installed as launcher scripts and load provider
 	// state from their ordinary user home. A deny-by-default macOS profile
 	// breaks those launchers before they can authenticate, yielding opaque
@@ -52,7 +61,7 @@ func (n *Native) Review(ctx context.Context, input json.RawMessage) (Result, err
 	// executable through REVIEWD_REVIEW_ENGINE_PROVIDER.
 	command := exec.CommandContext(ctx, invocation.Argv[0], invocation.Argv[1:]...)
 	command.Dir = home
-	command.Stdin = bytes.NewReader(input)
+	command.Stdin = bytes.NewReader(nativeReviewPrompt(input))
 	output, err := command.Output()
 	if err != nil {
 		return Result{Stdout: output, Executable: invocation.Argv[0]}, fmt.Errorf("native engine execution: %w", err)
