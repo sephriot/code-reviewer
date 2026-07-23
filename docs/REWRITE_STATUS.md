@@ -1,6 +1,8 @@
 # Go Rewrite Status
 
-Last verified checkpoint: `a3fa373` (`feat(dashboard): queue selected evidence`)
+Last implementation checkpoint: `82ce414` (`feat(dashboard): refresh runtime activity`).
+Last full verification checkpoint: `1005372` (`go test ./...`, `go vet
+./...`, and `go test -race ./...`).
 
 This file is the handoff checklist for work after the Go rewrite begins. Update
 it in the same commit as every meaningful implementation stage.
