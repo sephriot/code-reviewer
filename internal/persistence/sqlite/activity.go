@@ -20,7 +20,7 @@ func (s *Store) ListActivity(ctx context.Context, limit int) ([]ActivityItem, er
 	if limit < 1 || limit > 100 {
 		return nil, fmt.Errorf("activity limit is invalid")
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT kind, id, state, detail, occurred_at_us FROM (SELECT 'job', id, state, kind, updated_at_us FROM jobs UNION ALL SELECT 'event', id, 'recorded', event_type, occurred_at_us FROM domain_events UNION ALL SELECT 'outbox', id, state, topic, updated_at_us FROM outbox) ORDER BY occurred_at_us DESC, id DESC LIMIT ?", limit)
+	rows, err := s.db.QueryContext(ctx, "SELECT kind, id, state, detail, occurred_at_us FROM (SELECT 'job' AS kind, id, state, kind AS detail, updated_at_us AS occurred_at_us FROM jobs UNION ALL SELECT 'event' AS kind, id, 'recorded' AS state, event_type AS detail, occurred_at_us FROM domain_events UNION ALL SELECT 'outbox' AS kind, id, state, topic AS detail, updated_at_us AS occurred_at_us FROM outbox) ORDER BY occurred_at_us DESC, id DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, fmt.Errorf("list activity: %w", err)
 	}
