@@ -129,8 +129,8 @@
     </header>
     <main>
       <section class="inbox" aria-labelledby="inbox-heading">
-        <div class="section-head"><h2 id="inbox-heading">Attention queue</h2><span class="count" id="inbox-count">—</span></div>
-        <p class="notice" id="inbox-message">Loading durable review state.</p>
+        <div class="section-head"><h2 id="inbox-heading">Needs your attention</h2><span class="count" id="inbox-count">—</span></div>
+        <p class="notice" id="inbox-message">Loading PRs that need a decision or intervention.</p>
         <ul class="items" id="inbox-items" aria-label="Items needing attention"></ul>
       </section>
       <section class="detail" aria-labelledby="timeline-heading">
@@ -170,14 +170,14 @@
       </section>
       <section class="telemetry" aria-label="Control-plane read-only telemetry">
         <section aria-labelledby="overview-heading">
-          <div class="section-head"><h2 id="overview-heading">Lifecycle totals</h2><span class="pill">Read only</span></div>
+          <div class="section-head"><h2 id="overview-heading">Review analytics</h2><span class="pill">Read only</span></div>
           <p class="notice" id="overview-message">Loading durable totals.</p>
           <dl class="metrics" id="overview-metrics" aria-live="polite"></dl>
         </section>
         <section class="telemetry-side" aria-label="History and local configuration">
           <section aria-labelledby="history-heading">
-            <div class="section-head"><h2 id="history-heading">Recent terminal history</h2><span class="count" id="history-count">—</span></div>
-            <p class="notice" id="history-message">Loading immutable outcomes.</p>
+            <div class="section-head"><h2 id="history-heading">Your decision history</h2><span class="count" id="history-count">—</span></div>
+            <p class="notice" id="history-message">Loading approvals, rejections, and sent feedback.</p>
             <ol class="history-list" id="history-items" aria-label="Recent terminal outcomes"></ol>
           </section>
           <section aria-labelledby="activity-heading">
@@ -343,7 +343,7 @@
           const copy = document.createElement('div'); copy.append(text('strong', entry.pull_request_id || entry.kind), text('span', `${entry.kind || 'event'} · ${entry.detail || 'no detail'}`));
           item.append(copy, text('time', formatTime(entry.occurred_at))); historyItems.append(item);
         });
-        clearReadFailure(historyMessage, entries.length ? 'Completed runs, immutable decisions, and publication attempts.' : 'No terminal lifecycle outcomes yet.');
+        clearReadFailure(historyMessage, entries.length ? 'Your approvals, rejections, and feedback delivery attempts.' : 'No decisions or feedback deliveries yet.');
       }
       function renderActivity(page) {
         const entries = Array.isArray(page.items) ? page.items : [];
@@ -509,13 +509,13 @@
         createRevision.textContent = busy ? 'Saving revision…' : 'Save new revision';
       }
       async function reloadInbox(preferredID) {
-        const [page, inventory] = await Promise.all([api('/api/v1/inbox'), api('/api/v1/pull-requests?limit=50'), refreshTelemetry()]);
+        const [page] = await Promise.all([api('/api/v1/inbox'), refreshTelemetry()]);
         const attention = page.items || [];
-        const items = attention.length ? attention : (inventory.items || []).map((item) => ({ id:item.pull_request_id, pull_request_id:item.pull_request_id, connection_id:item.connection_id, state:item.state, occurred_at:item.observed_at, title:item.title, detail:`${item.repository} #${item.number} · ${item.title}` }));
+        const items = attention;
         inbox.replaceChildren();
         inboxCount.textContent = `${items.length} OPEN`;
         inboxMessage.removeAttribute('role');
-        inboxMessage.textContent = items.length ? (attention.length ? '' : 'Showing observed pull requests. No current review attention.') : 'No observed pull requests yet.';
+        inboxMessage.textContent = items.length ? 'PRs with pending feedback, a failed review, or a human-review request.' : 'Nothing needs your attention right now.';
         items.forEach(addInboxItem);
         const next = items.find((item) => item.id === preferredID) || items.find((item) => selectedItem && item.id === selectedItem.id) || items[0];
         const selectionUnchanged = next && selectedItem && next.id === selectedItem.id && next.connection_id === selectedItem.connection_id;
