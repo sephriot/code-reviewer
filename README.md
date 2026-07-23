@@ -343,7 +343,7 @@ go run ./cmd/reviewctl policy apply \
 
 `policy evaluate` deliberately evaluates a named active rule/version rather than selecting one implicitly. It produces only evidence-bound local records and, when appropriate, a policy proposal.
 
-Rule `match` supports strict, fail-closed predicates: `relationships`, `repository_ids`, `repository_names`, `authors`, `labels`, `is_draft`, `states`, and `base_refs`. Predicates combine with AND; relationship and label arrays require all listed values, while repository, author, state, and base-ref arrays match any listed value. Unknown keys, duplicate keys, malformed values, or invalid current facts block selection.
+Rule `match` supports strict, fail-closed predicates: `relationships`, `repository_ids`, `repository_names`, `authors`, `labels`, `is_draft`, `states`, and `base_refs`. Predicates combine with AND; relationship and label arrays require all listed values, while repository, author, state, and base-ref arrays match any listed value. `repository_names` accepts exact `owner/repository` or organization-wide `owner/*`; other globs and regular expressions are rejected. Unknown keys, duplicate keys, malformed values, or invalid current facts block selection.
 
 To select the first enabled rule by priority and queue exactly one durable review only when its trigger is `automatic`:
 

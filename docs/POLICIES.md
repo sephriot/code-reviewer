@@ -47,7 +47,7 @@ Supported fields:
 | --- | --- | --- |
 | `relationships` | non-empty string array | PR has **all** listed relationships, such as `review_requested`. |
 | `repository_ids` | non-empty number array | PR repository ID matches any value. |
-| `repository_names` | non-empty string array | `owner/repo` matches any value. |
+| `repository_names` | non-empty string array | `owner/repo` matches any value. `owner/*` matches every repository in one organization. |
 | `authors` | non-empty string array | author login matches any value. |
 | `labels` | non-empty string array | PR has **all** listed labels. |
 | `is_draft` | boolean | draft state equals value. |
@@ -57,6 +57,15 @@ Supported fields:
 Unknown fields, duplicate fields, empty arrays, malformed values, or invalid
 current facts fail closed. Use repository IDs when a rename-resistant selector
 matters; use names when human readability matters.
+
+To cover an entire organization, use the one supported wildcard form:
+
+```json
+{"repository_names":["spacelift-io/*"]}
+```
+
+Wildcard matching is case-insensitive and matches exactly one owner segment;
+general glob patterns and regular expressions are not supported.
 
 ## `review`: retained execution contract
 

@@ -86,7 +86,7 @@ it in the same commit as every meaningful implementation stage.
       `data/reviewd.log`; no retry storm for local configuration failures.
 - [x] Review lifecycle notifications: `review.started`, `review.completed`,
       and `review.failed` use existing local Sound/TTS/Browser/Log preferences.
-- [ ] Organization wildcard policy selection (`owner/*`) covered by tests and
+- [x] Organization wildcard policy selection (`owner/*`) covered by tests and
       documented.
 - [ ] Backup/restore commandbook and one fixture rehearsal.
 - [ ] Final Go-only cutover: remove legacy Python runtime and its dependencies

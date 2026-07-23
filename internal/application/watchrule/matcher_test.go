@@ -52,6 +52,20 @@ func TestMatchSupportsAnyValueWithinPredicate(t *testing.T) {
 	}
 }
 
+func TestMatchSupportsOrganizationRepositoryWildcard(t *testing.T) {
+	facts := testFacts()
+	facts.RepositoryFullName = "Spacelift-IO/backend"
+	matched, err := Match(facts, []byte(`{"repository_names":["spacelift-io/*"]}`))
+	if err != nil || !matched {
+		t.Fatalf("matched=%t err=%v", matched, err)
+	}
+	facts.RepositoryFullName = "other/backend"
+	matched, err = Match(facts, []byte(`{"repository_names":["spacelift-io/*"]}`))
+	if err != nil || matched {
+		t.Fatalf("cross-organization matched=%t err=%v", matched, err)
+	}
+}
+
 func TestMatchEmptyObjectMatches(t *testing.T) {
 	matched, err := Match(testFacts(), []byte(`{}`))
 	if err != nil {
