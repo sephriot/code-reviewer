@@ -151,3 +151,4 @@ node_modules/
 test-results/
 playwright-report/
 reviews.db
+profiles/

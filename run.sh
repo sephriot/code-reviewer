@@ -22,10 +22,12 @@ fi
 : "${REVIEWD_DATABASE_PATH:=data/control-plane.db}"
 : "${REVIEWD_LISTEN_ADDRESS:=127.0.0.1:8080}"
 : "${REVIEWD_MIGRATION_MODE:=apply}"
-: "${REVIEWD_PUBLICATION_MODE:=disabled}"
+: "${REVIEWD_PUBLICATION_MODE_ENABLED:=false}"
 
-export REVIEWD_DATABASE_PATH REVIEWD_LISTEN_ADDRESS REVIEWD_MIGRATION_MODE REVIEWD_PUBLICATION_MODE
+export REVIEWD_DATABASE_PATH REVIEWD_LISTEN_ADDRESS REVIEWD_MIGRATION_MODE REVIEWD_PUBLICATION_MODE_ENABLED
 
 go build ./cmd/reviewd
+echo "" > data/reviewd.log
 exec > >(tee -a data/reviewd.log) 2>&1
+killall reviewd || true
 exec ./reviewd "$@"

@@ -246,9 +246,14 @@ WITH latest_run_events AS (
  JOIN pull_request_projection_state AS projection
    ON projection.pull_request_id = evaluation.pull_request_id
   AND projection.connection_id = evaluation.connection_id
- WHERE evaluation.revision_id = projection.current_revision_id
+  WHERE evaluation.revision_id = projection.current_revision_id
    AND evaluation.observation_id = projection.current_observation_id
    AND evaluation.disposition = 'require_human_review'
+   AND NOT EXISTS (SELECT 1 FROM decisions AS decision
+                   WHERE decision.connection_id = evaluation.connection_id
+                     AND decision.pull_request_id = evaluation.pull_request_id
+                     AND decision.revision_id = evaluation.revision_id
+                     AND decision.observation_id = evaluation.observation_id)
  UNION ALL
  SELECT 'failed_run', run.id, '', run.connection_id, run.pull_request_id, run.revision_id,
         run.observation_id, event.occurred_at_us, event.event_kind
@@ -257,9 +262,21 @@ WITH latest_run_events AS (
  JOIN pull_request_projection_state AS projection
    ON projection.pull_request_id = run.pull_request_id
   AND projection.connection_id = run.connection_id
- WHERE run.revision_id = projection.current_revision_id
+   WHERE run.revision_id = projection.current_revision_id
    AND run.observation_id = projection.current_observation_id
-  AND event.event_kind IN ('failed_retryable', 'failed_terminal', 'canceled')
+   AND event.event_kind IN ('failed_retryable', 'failed_terminal', 'canceled')
+   AND NOT EXISTS (SELECT 1 FROM decisions AS decision
+                   WHERE decision.connection_id = run.connection_id
+                     AND decision.pull_request_id = run.pull_request_id
+                     AND decision.revision_id = run.revision_id
+                     AND decision.observation_id = run.observation_id)
+   AND NOT EXISTS (SELECT 1 FROM latest_run_events AS later_event
+                   JOIN review_runs AS later_run ON later_run.id = later_event.run_id
+                   WHERE later_run.connection_id = run.connection_id
+                     AND later_run.pull_request_id = run.pull_request_id
+                     AND later_run.revision_id = run.revision_id
+                     AND later_run.observation_id = run.observation_id
+                     AND later_event.event_kind = 'succeeded')
 ) , ranked AS (
  SELECT attention.*, ROW_NUMBER() OVER (
    PARTITION BY connection_id, pull_request_id
@@ -272,8 +289,12 @@ SELECT attention.kind, attention.id, attention.proposal_id, attention.connection
 FROM ranked AS attention
 JOIN pull_requests AS pull_request ON pull_request.id = attention.pull_request_id
 JOIN repositories AS repository ON repository.id = pull_request.repository_id
-JOIN pull_request_observations AS observation ON observation.id = attention.observation_id
-WHERE attention.position = 1 AND observation.github_state = 'open'
+JOIN pull_request_projection_state AS current_projection
+  ON current_projection.pull_request_id = attention.pull_request_id
+ AND current_projection.connection_id = attention.connection_id
+JOIN pull_request_observations AS current_observation
+  ON current_observation.id = current_projection.current_observation_id
+WHERE attention.position = 1 AND current_observation.github_state = 'open'
   AND (? = '' OR attention.connection_id = ?)
   AND (? = 0 OR attention.occurred_at_us < ? OR (attention.occurred_at_us = ? AND (attention.kind > ? OR (attention.kind = ? AND attention.id > ?))))
 ORDER BY attention.occurred_at_us DESC, attention.kind, attention.id
