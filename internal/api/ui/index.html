@@ -42,6 +42,10 @@
     .selected > div { min-width:0; }
     .selected h3 { max-inline-size:100%; margin:4px 0 0; font:clamp(22px,3.1vw,48px)/.95 var(--display); letter-spacing:-.04em; overflow-wrap:anywhere; word-break:break-word; }
     .selected-meta { color:var(--muted); font-size:11px; }
+    .selected-facts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1px; margin:16px 0 0; background:var(--line); border:1px solid var(--line); }
+    .selected-facts > div { min-width:0; padding:8px 9px; background:var(--panel); }
+    .selected-facts dt { color:var(--muted); font-size:9px; letter-spacing:.09em; text-transform:uppercase; }
+    .selected-facts dd { overflow:hidden; margin:4px 0 0; color:var(--ink); font-size:11px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
     .pill { padding:4px 7px; color:var(--blue); border:1px solid currentColor; font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
     .event { position:relative; display:grid; grid-template-columns:13px minmax(0,1fr); gap:13px; padding-bottom:18px; }
     .event:not(:last-child)::before { content:""; position:absolute; left:4px; top:12px; bottom:-1px; width:1px; background:var(--line); }
@@ -95,7 +99,7 @@
     .notification-status[data-state="error"] { color:var(--danger); }
     .notification-status[data-state="ready"] { color:var(--signal); }
     footer { display:flex; justify-content:space-between; gap:12px; padding:13px clamp(20px,4vw,64px); color:var(--muted); border-top:1px solid var(--line); font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
-    @media (max-width:760px) { main { grid-template-columns:1fr; } .inbox { border-right:0; border-bottom:1px solid var(--line); } header { align-items:start; flex-direction:column; } .status { align-self:flex-start; } .selected { grid-template-columns:1fr; } .action-row > * { flex:1 1 140px; } .telemetry { grid-template-columns:1fr; } .telemetry > section + section { border-top:1px solid var(--line); border-left:0; } .metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width:760px) { main { grid-template-columns:1fr; } .inbox { border-right:0; border-bottom:1px solid var(--line); } header { align-items:start; flex-direction:column; } .status { align-self:flex-start; } .selected { grid-template-columns:1fr; } .selected-facts { grid-template-columns:1fr; } .action-row > * { flex:1 1 140px; } .telemetry { grid-template-columns:1fr; } .telemetry > section + section { border-top:1px solid var(--line); border-left:0; } .metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }
     @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition:none!important; } }
   </style>
 </head>
@@ -113,7 +117,7 @@
       </section>
       <section class="detail" aria-labelledby="timeline-heading">
         <div class="section-head"><h2 id="timeline-heading">Evidence timeline</h2><span class="pill">Local session</span></div>
-        <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3></div><span class="pill" id="selected-state"></span></div>
+        <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3><dl class="selected-facts" id="selected-facts" hidden></dl></div><span class="pill" id="selected-state"></span></div>
         <p class="notice" id="timeline-message">Choose inbox item to inspect immutable evidence.</p>
         <ol class="timeline" id="timeline-items" aria-label="Selected pull request timeline"></ol>
         <section class="mutation" id="evidence-controls" aria-labelledby="evidence-controls-heading">
@@ -209,6 +213,7 @@
       const selectedConnection = document.querySelector('#selected-connection');
       const selectedTitle = document.querySelector('#selected-title');
       const selectedState = document.querySelector('#selected-state');
+      const selectedFacts = document.querySelector('#selected-facts');
       const timeline = document.querySelector('#timeline-items');
       const timelineMessage = document.querySelector('#timeline-message');
       const hydrateEvidence = document.querySelector('#hydrate-evidence');
@@ -253,6 +258,7 @@
       let publicationMode = 'unknown';
       let notificationPreferencesBusy = false;
       let evidenceBusy = false;
+      let evidenceReady = false;
       const formatTime = (value) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'unknown time' : new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(date); };
       const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value || '—'; if (className) node.className = className; return node; };
       const api = async (path) => { const response = await fetch(path, { credentials:'same-origin', headers:{Accept:'application/json'} }); if (!response.ok) throw new Error(`Read model returned ${response.status}`); return response.json(); };
@@ -271,6 +277,14 @@
         const values = new Map();
         events.filter((event) => event.kind === kind && event.current).forEach((event) => values.set(event.id, event));
         return Array.from(values.values());
+      };
+      const renderSelectedFacts = (detail) => {
+        selectedFacts.replaceChildren();
+        const evidence = detail.current_revision?.identity_kind === 'canonical_diff' ? 'canonical diff ready' : 'metadata only';
+        [['Evidence', evidence], ['Review runs', detail.current_counts?.review_runs ?? 0], ['Proposal revisions', detail.current_counts?.proposal_revisions ?? 0]].forEach(([label, value]) => {
+          const cell = document.createElement('div'); cell.append(text('dt', label), text('dd', String(value))); selectedFacts.append(cell);
+        });
+        selectedFacts.hidden = false;
       };
       const showReadFailure = (node, error) => { node.textContent = error.message; node.setAttribute('role', 'alert'); };
       const clearReadFailure = (node, value = '') => { node.removeAttribute('role'); node.textContent = value; };
@@ -367,8 +381,8 @@
 		dispatchPublication.disabled = activeMutation || !hasRevision || publicationMode !== 'enabled';
       }
       function syncEvidenceControls() {
-        hydrateEvidence.disabled = evidenceBusy || !selectedItem;
-        hydrateEvidence.textContent = evidenceBusy ? 'Queueing evidence…' : 'Build canonical evidence';
+        hydrateEvidence.disabled = evidenceBusy || !selectedItem || evidenceReady;
+        hydrateEvidence.textContent = evidenceBusy ? 'Queueing evidence…' : evidenceReady ? 'Canonical evidence ready' : 'Build canonical evidence';
       }
       function setMutationContext(item, events) {
         proposalControls.hidden = false;
@@ -429,12 +443,24 @@
       }
       function showTimeline(item) {
         selectedItem = item;
+        evidenceReady = false;
+        selectedFacts.hidden = true;
+        selectedFacts.replaceChildren();
         syncEvidenceControls();
         setEvidenceStatus('idle', 'Selected pull request can be hydrated with current GET-only GitHub evidence.');
         selected.hidden = false; selectedConnection.textContent = item.connection_id; selectedTitle.textContent = item.title || item.pull_request_id; selectedState.textContent = item.state;
         timeline.replaceChildren(); timelineMessage.textContent = 'Loading immutable events.'; timelineMessage.removeAttribute('role');
         clearMutationContext('Loading current proposal records.');
         document.querySelectorAll('.inbox-item').forEach((button) => button.setAttribute('aria-current', String(button.dataset.id === item.id)));
+        api(`/api/v1/pull-requests/${encodeURIComponent(item.pull_request_id)}?connection_id=${encodeURIComponent(item.connection_id)}`).then((detail) => {
+          if (!selectedItem || selectedItem.id !== item.id || selectedItem.connection_id !== item.connection_id) return;
+          selectedTitle.textContent = detail.title || item.title || item.pull_request_id;
+          selectedState.textContent = detail.state || item.state;
+          evidenceReady = detail.current_revision?.identity_kind === 'canonical_diff';
+          renderSelectedFacts(detail);
+          syncEvidenceControls();
+          setEvidenceStatus(evidenceReady ? 'ready' : 'idle', evidenceReady ? 'Canonical diff evidence is current. New hydration is blocked.' : 'Selected pull request can be hydrated with current GET-only GitHub evidence.');
+        }).catch(() => {});
         api(`/api/v1/pull-requests/${encodeURIComponent(item.pull_request_id)}/timeline?connection_id=${encodeURIComponent(item.connection_id)}`).then((page) => {
           timelineMessage.textContent = page.items.length ? '' : 'No immutable events recorded for this selection.';
           page.items.forEach((event) => {

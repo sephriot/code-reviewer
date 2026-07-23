@@ -48,8 +48,8 @@ it in the same commit as every meaningful implementation stage.
 
 ### Operational alpha — next, in order
 
-- [ ] Dashboard selected-PR facts: current evidence state, run count, proposal
-      count, and GitHub link; disable hydration when canonical evidence exists.
+- [x] Dashboard selected-PR facts: current evidence state, run count, proposal
+      count; hydration is disabled when canonical evidence exists.
 - [ ] Dashboard control to queue an eligible review and show durable run state.
 - [ ] Dashboard setup/help for profiles, active policy rules, and trusted local
       review-engine configuration; retain CLI as complete fallback.
