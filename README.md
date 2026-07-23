@@ -227,6 +227,10 @@ Create a new version instead of editing an existing one.
 
 Apply the matching safe policy. It may queue reviews automatically, but every pass produces a human-confirmed proposal; it cannot auto-publish GitHub approval.
 
+See [policy guide](docs/POLICIES.md) for `match`, `review`, priority, trigger,
+and publication fields. In short: `match` selects PRs; `review` is retained
+future execution metadata and is not interpreted yet, so use `{}`.
+
 ```bash
 go run ./cmd/reviewctl policy apply \
   --database data/control-plane.db \

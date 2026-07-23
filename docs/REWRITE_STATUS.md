@@ -104,6 +104,8 @@ it in the same commit as every meaningful implementation stage.
   **Using `reviewctl`** section; use `reviewctl --help` before command flags.
 - Tracked `examples/review-profiles/` files show profile description,
   instructions, settings, and a human-confirmed automatic policy.
+- `docs/POLICIES.md` documents policy fields and explicitly marks `review` as
+  retained-but-not-yet-interpreted runtime metadata.
 - Recent important fix: credentials stored as `env:VARIABLE_NAME` must be
   normalized to `VARIABLE_NAME` only when resolving process environment. Do not
   pass a token value where a token environment-variable name is expected.
