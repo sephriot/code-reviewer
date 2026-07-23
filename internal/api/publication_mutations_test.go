@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sephriot/code-reviewer/internal/application/publishworker"
 	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 )
 
@@ -22,6 +23,7 @@ type fakePublicationMutations struct {
 	resolutionErr   error
 	scheduled       string
 	job             sqlite.EnsureJobResult
+	jobInput        sqlite.JobInput
 	scheduleErr     error
 }
 
@@ -33,27 +35,34 @@ func (f *fakePublicationMutations) ResolvePublicationUncertainty(_ context.Conte
 	return f.resolution, nil
 }
 
-func (f *fakePublicationMutations) CreatePublicationEffect(_ context.Context, input sqlite.CreatePublicationEffectInput) (sqlite.CreatePublicationEffectResult, error) {
+func (f *fakePublicationMutations) CreatePublicationEffectAndEnsureJob(_ context.Context, input sqlite.CreatePublicationEffectInput, factory sqlite.PublicationEffectJobFactory) (sqlite.CreatePublicationEffectResult, error) {
 	f.effectInput = input
 	if f.effectErr != nil {
 		return sqlite.CreatePublicationEffectResult{}, f.effectErr
 	}
-	return f.effect, nil
-}
-
-func (f *fakePublicationMutations) Schedule(_ context.Context, effectID string) (sqlite.EnsureJobResult, error) {
-	f.scheduled = effectID
-	if f.scheduleErr != nil {
-		return sqlite.EnsureJobResult{}, f.scheduleErr
+	effect := f.effect
+	if effect.PublicationMode == sqlite.PublicationModeDisabled {
+		return effect, nil
 	}
-	return f.job, nil
+	jobInput, err := factory(effect.EffectID, effect.PublicationMode)
+	if err != nil {
+		return sqlite.CreatePublicationEffectResult{}, err
+	}
+	f.jobInput = jobInput
+	f.scheduled = effect.EffectID
+	if f.scheduleErr != nil {
+		return sqlite.CreatePublicationEffectResult{}, f.scheduleErr
+	}
+	job := f.job
+	effect.Job = &job
+	return effect, nil
 }
 
 func TestPublicationMutationCreatesDisabledEffectWithoutJob(t *testing.T) {
 	t.Parallel()
 	mutations := &fakePublicationMutations{effect: sqlite.CreatePublicationEffectResult{EffectID: "effect-1", PublicationMode: sqlite.PublicationModeDisabled, Created: true}}
 	now := time.Unix(200, 0).UTC()
-	handler := NewPublicationMutationHandler(PublicationMutationOptions{Effects: mutations, Scheduler: mutations, Now: func() time.Time { return now }})
+	handler := NewPublicationMutationHandler(PublicationMutationOptions{AtomicEffects: mutations, Now: func() time.Time { return now }})
 
 	response := servePublicationMutation(handler, `{"idempotency_key":"publish:one"}`)
 	if response.Code != http.StatusCreated {
@@ -77,7 +86,7 @@ func TestPublicationMutationSchedulesOnlySimulatedEffect(t *testing.T) {
 		effect: sqlite.CreatePublicationEffectResult{EffectID: "effect-1", PublicationMode: sqlite.PublicationModeSimulated},
 		job:    sqlite.EnsureJobResult{ID: "job-1", Created: true},
 	}
-	handler := NewPublicationMutationHandler(PublicationMutationOptions{Effects: mutations, Scheduler: mutations})
+	handler := NewPublicationMutationHandler(PublicationMutationOptions{AtomicEffects: mutations})
 	response := servePublicationMutation(handler, `{}`)
 	if response.Code != http.StatusOK || mutations.scheduled != "effect-1" {
 		t.Fatalf("status=%d scheduled=%q body=%s", response.Code, mutations.scheduled, response.Body.String())
@@ -89,6 +98,9 @@ func TestPublicationMutationSchedulesOnlySimulatedEffect(t *testing.T) {
 	if body.Job == nil || body.Job.ID != "job-1" || !body.Job.Created {
 		t.Fatalf("body = %+v", body)
 	}
+	if mutations.jobInput.Kind != publishworker.SimulateJobKind || mutations.jobInput.ResourceID != "effect-1" || mutations.jobInput.MaxAttempts != 3 {
+		t.Fatalf("job input = %+v", mutations.jobInput)
+	}
 }
 
 func TestPublicationDispatchSchedulesOnlyEnabledEffect(t *testing.T) {
@@ -97,7 +109,7 @@ func TestPublicationDispatchSchedulesOnlyEnabledEffect(t *testing.T) {
 		effect: sqlite.CreatePublicationEffectResult{EffectID: "effect-1", PublicationMode: sqlite.PublicationModeEnabled},
 		job:    sqlite.EnsureJobResult{ID: "job-1", Created: true},
 	}
-	handler := NewPublicationMutationHandler(PublicationMutationOptions{Effects: mutations, EnabledScheduler: mutations})
+	handler := NewPublicationMutationHandler(PublicationMutationOptions{AtomicEffects: mutations})
 	response := servePublicationDispatch(handler, `{}`)
 	if response.Code != http.StatusOK || mutations.scheduled != "effect-1" {
 		t.Fatalf("status=%d scheduled=%q body=%s", response.Code, mutations.scheduled, response.Body.String())
@@ -109,6 +121,9 @@ func TestPublicationDispatchSchedulesOnlyEnabledEffect(t *testing.T) {
 	if body.Job == nil || body.Job.ID != "job-1" || !body.Job.Created {
 		t.Fatalf("body = %+v", body)
 	}
+	if mutations.jobInput.Kind != publishworker.EnabledJobKind || mutations.jobInput.ResourceID != "effect-1" || mutations.jobInput.MaxAttempts != 1 {
+		t.Fatalf("job input = %+v", mutations.jobInput)
+	}
 }
 
 func TestPublicationDispatchFailsClosedOutsideEnabledMode(t *testing.T) {
@@ -116,30 +131,28 @@ func TestPublicationDispatchFailsClosedOutsideEnabledMode(t *testing.T) {
 	for _, mode := range []sqlite.PublicationMode{sqlite.PublicationModeDisabled, sqlite.PublicationModeSimulated} {
 		t.Run(string(mode), func(t *testing.T) {
 			mutations := &fakePublicationMutations{effectErr: sqlite.ErrPublicationModeNotAllowed}
-			response := servePublicationDispatch(NewPublicationMutationHandler(PublicationMutationOptions{Effects: mutations, EnabledScheduler: mutations}), `{}`)
+			response := servePublicationDispatch(NewPublicationMutationHandler(PublicationMutationOptions{AtomicEffects: mutations}), `{}`)
 			if response.Code != http.StatusConflict || mutations.scheduled != "" || !strings.Contains(response.Body.String(), "enabled_publication_required") || len(mutations.effectInput.AllowedModes) != 1 || mutations.effectInput.AllowedModes[0] != sqlite.PublicationModeEnabled {
 				t.Fatalf("mode=%q status=%d scheduled=%q body=%s", mode, response.Code, mutations.scheduled, response.Body.String())
 			}
 		})
 	}
-	missing := &fakePublicationMutations{effect: sqlite.CreatePublicationEffectResult{EffectID: "effect-1", PublicationMode: sqlite.PublicationModeEnabled}}
-	if response := servePublicationDispatch(NewPublicationMutationHandler(PublicationMutationOptions{Effects: missing}), `{}`); response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "publication_unavailable") {
-		t.Fatalf("missing scheduler status=%d body=%s", response.Code, response.Body.String())
+	if response := servePublicationDispatch(NewPublicationMutationHandler(PublicationMutationOptions{}), `{}`); response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "mutation_unavailable") {
+		t.Fatalf("missing atomic store status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
 func TestPublicationMutationFailsClosedForUnavailableSimulationOrStoreConflict(t *testing.T) {
 	t.Parallel()
-	base := &fakePublicationMutations{effect: sqlite.CreatePublicationEffectResult{EffectID: "effect-1", PublicationMode: sqlite.PublicationModeSimulated}}
-	noScheduler := NewPublicationMutationHandler(PublicationMutationOptions{Effects: base})
-	if response := servePublicationMutation(noScheduler, `{}`); response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("no scheduler status=%d body=%s", response.Code, response.Body.String())
+	missing := NewPublicationMutationHandler(PublicationMutationOptions{})
+	if response := servePublicationMutation(missing, `{}`); response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "mutation_unavailable") {
+		t.Fatalf("missing atomic store status=%d body=%s", response.Code, response.Body.String())
 	}
-	conflict := NewPublicationMutationHandler(PublicationMutationOptions{Effects: &fakePublicationMutations{effectErr: sqlite.ErrPublicationAuthorizationNotFound}})
+	conflict := NewPublicationMutationHandler(PublicationMutationOptions{AtomicEffects: &fakePublicationMutations{effectErr: sqlite.ErrPublicationAuthorizationNotFound}})
 	if response := servePublicationMutation(conflict, `{}`); response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "publication_not_authorized") {
 		t.Fatalf("authorization status=%d body=%s", response.Code, response.Body.String())
 	}
-	failure := NewPublicationMutationHandler(PublicationMutationOptions{Effects: &fakePublicationMutations{effectErr: errors.New("database unavailable")}})
+	failure := NewPublicationMutationHandler(PublicationMutationOptions{AtomicEffects: &fakePublicationMutations{effectErr: errors.New("database unavailable")}})
 	if response := servePublicationMutation(failure, `{}`); response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "mutation_failed") {
 		t.Fatalf("store failure status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -197,7 +210,7 @@ func TestPublicationUncertaintyResolutionFailsClosed(t *testing.T) {
 func TestPublicationMutationRejectsMalformedRequestsAndNeedsOuterGuard(t *testing.T) {
 	t.Parallel()
 	mutations := &fakePublicationMutations{effect: sqlite.CreatePublicationEffectResult{EffectID: "effect-1", PublicationMode: sqlite.PublicationModeDisabled}}
-	inner := NewPublicationMutationHandler(PublicationMutationOptions{Effects: mutations})
+	inner := NewPublicationMutationHandler(PublicationMutationOptions{AtomicEffects: mutations})
 	for _, testCase := range []struct{ path, contentType, body string }{
 		{"/api/v1/mutate/proposal-revisions/%20/publication/simulate", jsonContentType, `{}`},
 		{"/api/v1/mutate/proposal-revisions/revision-1/publication/simulate", "text/plain", `{}`},

@@ -132,7 +132,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	}, api.ControlOptions{
 		Reader:                  store,
 		ProposalMutations:       api.ProposalMutationOptions{Revisions: store, Decisions: store},
-		PublicationMutations:    publicationMutationOptions(cfg, store),
+		PublicationMutations:    publicationMutationOptions(store),
 		NotificationPreferences: api.NotificationPreferencesOptions{Store: store},
 		BrowserNotifications:    api.BrowserNotificationDeliveryOptions{Store: store},
 		GitHubWebhooks:          webhookOptions,
@@ -283,15 +283,8 @@ func (s webhookReconciliationScheduler) Schedule(ctx context.Context) error {
 	return nil
 }
 
-func publicationMutationOptions(cfg config.Config, store *storagesqlite.Store) api.PublicationMutationOptions {
-	options := api.PublicationMutationOptions{Effects: store, AtomicEffects: store, UncertaintyResolver: store}
-	if cfg.PublicationMode == config.PublicationSimulated {
-		options.Scheduler = publishworker.Scheduler{Store: store}
-	}
-	if cfg.PublicationMode == config.PublicationEnabled {
-		options.EnabledScheduler = publishworker.EnabledScheduler{Store: store}
-	}
-	return options
+func publicationMutationOptions(store *storagesqlite.Store) api.PublicationMutationOptions {
+	return api.PublicationMutationOptions{AtomicEffects: store, UncertaintyResolver: store}
 }
 
 func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (reviewworker.Handler, error) {

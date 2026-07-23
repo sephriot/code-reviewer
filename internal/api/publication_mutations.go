@@ -12,11 +12,8 @@ import (
 	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 )
 
-// PublicationEffectCreator is the only persistence capability needed to
-// authorize one durable effect from an already-approved proposal revision.
-type PublicationEffectCreator interface {
-	CreatePublicationEffect(context.Context, sqlite.CreatePublicationEffectInput) (sqlite.CreatePublicationEffectResult, error)
-}
+// AtomicPublicationEffectCreator creates or reloads one durable effect and
+// its matching worker job in the same transaction.
 type AtomicPublicationEffectCreator interface {
 	CreatePublicationEffectAndEnsureJob(context.Context, sqlite.CreatePublicationEffectInput, sqlite.PublicationEffectJobFactory) (sqlite.CreatePublicationEffectResult, error)
 }
@@ -27,26 +24,10 @@ type PublicationUncertaintyResolver interface {
 	ResolvePublicationUncertainty(context.Context, sqlite.ResolvePublicationUncertaintyInput) (sqlite.ResolvePublicationUncertaintyResult, error)
 }
 
-// SimulatedPublicationScheduler queues one local, effect-bound simulation
-// job. It has no GitHub publication capability.
-type SimulatedPublicationScheduler interface {
-	Schedule(context.Context, string) (sqlite.EnsureJobResult, error)
-}
-
-// EnabledPublicationScheduler queues one guarded GitHub publication job.
-// It is exposed separately from simulated scheduling so enabled mode cannot
-// be selected accidentally by a local simulation request.
-type EnabledPublicationScheduler interface {
-	Schedule(context.Context, string) (sqlite.EnsureJobResult, error)
-}
-
-// PublicationMutationOptions supplies narrow publication capabilities. Nil
-// schedulers fail closed if their matching runtime mode is unavailable.
+// PublicationMutationOptions supplies narrow, atomic publication
+// capabilities. A missing atomic creator fails closed.
 type PublicationMutationOptions struct {
-	Effects             PublicationEffectCreator
 	AtomicEffects       AtomicPublicationEffectCreator
-	Scheduler           SimulatedPublicationScheduler
-	EnabledScheduler    EnabledPublicationScheduler
 	UncertaintyResolver PublicationUncertaintyResolver
 	Now                 func() time.Time
 }
@@ -55,7 +36,7 @@ type PublicationMutationOptions struct {
 // must mount it under MutationAuth.Wrap.
 func NewPublicationMutationHandler(options PublicationMutationOptions) http.Handler {
 	mux := http.NewServeMux()
-	handler := publicationMutationHandler{effects: options.Effects, atomicEffects: options.AtomicEffects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, uncertaintyResolver: options.UncertaintyResolver, now: options.Now}
+	handler := publicationMutationHandler{atomicEffects: options.AtomicEffects, uncertaintyResolver: options.UncertaintyResolver, now: options.Now}
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate", handler.simulate)
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch", handler.dispatch)
 	mux.HandleFunc("POST /api/v1/mutate/publication-effects/{id}/uncertainty-resolution", handler.resolveUncertainty)
@@ -66,17 +47,14 @@ func registerPublicationMutationRoutes(mux *http.ServeMux, options PublicationMu
 	if mux == nil {
 		return
 	}
-	handler := publicationMutationHandler{effects: options.Effects, atomicEffects: options.AtomicEffects, scheduler: options.Scheduler, enabledScheduler: options.EnabledScheduler, uncertaintyResolver: options.UncertaintyResolver, now: options.Now}
+	handler := publicationMutationHandler{atomicEffects: options.AtomicEffects, uncertaintyResolver: options.UncertaintyResolver, now: options.Now}
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate", handler.simulate)
 	mux.HandleFunc("POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch", handler.dispatch)
 	mux.HandleFunc("POST /api/v1/mutate/publication-effects/{id}/uncertainty-resolution", handler.resolveUncertainty)
 }
 
 type publicationMutationHandler struct {
-	effects             PublicationEffectCreator
 	atomicEffects       AtomicPublicationEffectCreator
-	scheduler           SimulatedPublicationScheduler
-	enabledScheduler    EnabledPublicationScheduler
 	uncertaintyResolver PublicationUncertaintyResolver
 	now                 func() time.Time
 }
@@ -110,60 +88,13 @@ type publicationUncertaintyResolutionResponse struct {
 }
 
 func (h publicationMutationHandler) simulate(response http.ResponseWriter, request *http.Request) {
-	if h.atomicEffects != nil {
-		h.atomic(response, request, []sqlite.PublicationMode{sqlite.PublicationModeDisabled, sqlite.PublicationModeSimulated})
-		return
-	}
-	effect, ok := h.createEffect(response, request, []sqlite.PublicationMode{sqlite.PublicationModeDisabled, sqlite.PublicationModeSimulated})
-	if !ok {
-		return
-	}
-	result := publicationResponse{
-		EffectID:        effect.EffectID,
-		PublicationMode: string(effect.PublicationMode),
-		Created:         effect.Created,
-	}
-	if effect.PublicationMode == sqlite.PublicationModeSimulated {
-		if h.scheduler == nil {
-			writeControlError(response, http.StatusServiceUnavailable, "simulation_unavailable", "simulated publication worker is unavailable", true)
-			return
-		}
-		job, err := h.scheduler.Schedule(request.Context(), effect.EffectID)
-		if err != nil {
-			writeControlError(response, http.StatusServiceUnavailable, "simulation_schedule_failed", "could not schedule simulated publication", true)
-			return
-		}
-		result.Job = publicationJobResponse(job)
-	}
-	writePublicationResponse(response, effect.Created, result)
+	h.atomic(response, request, []sqlite.PublicationMode{sqlite.PublicationModeDisabled, sqlite.PublicationModeSimulated})
 }
 
 // dispatch is an explicit human request for one enabled external publication.
 // It never schedules disabled or simulated effects.
 func (h publicationMutationHandler) dispatch(response http.ResponseWriter, request *http.Request) {
-	if h.atomicEffects != nil {
-		h.atomic(response, request, []sqlite.PublicationMode{sqlite.PublicationModeEnabled})
-		return
-	}
-	effect, ok := h.createEffect(response, request, []sqlite.PublicationMode{sqlite.PublicationModeEnabled})
-	if !ok {
-		return
-	}
-	if h.enabledScheduler == nil {
-		writeControlError(response, http.StatusServiceUnavailable, "publication_unavailable", "enabled publication worker is unavailable", true)
-		return
-	}
-	job, err := h.enabledScheduler.Schedule(request.Context(), effect.EffectID)
-	if err != nil {
-		writeControlError(response, http.StatusServiceUnavailable, "publication_schedule_failed", "could not schedule enabled publication", true)
-		return
-	}
-	writePublicationResponse(response, effect.Created, publicationResponse{
-		EffectID:        effect.EffectID,
-		PublicationMode: string(effect.PublicationMode),
-		Created:         effect.Created,
-		Job:             publicationJobResponse(job),
-	})
+	h.atomic(response, request, []sqlite.PublicationMode{sqlite.PublicationModeEnabled})
 }
 
 func (h publicationMutationHandler) atomic(response http.ResponseWriter, request *http.Request, modes []sqlite.PublicationMode) {
@@ -181,6 +112,10 @@ func (h publicationMutationHandler) atomic(response http.ResponseWriter, request
 		writeControlError(response, http.StatusBadRequest, "invalid_request", "idempotency key is invalid", false)
 		return
 	}
+	if h.atomicEffects == nil {
+		writeControlError(response, http.StatusServiceUnavailable, "mutation_unavailable", "atomic publication mutation service is unavailable", true)
+		return
+	}
 	effect, err := h.atomicEffects.CreatePublicationEffectAndEnsureJob(request.Context(), sqlite.CreatePublicationEffectInput{ProposalRevisionID: proposalRevisionID, IdempotencyKey: body.IdempotencyKey, AllowedModes: modes, CreatedAt: h.currentTime()}, atomicPublicationJob)
 	if err != nil {
 		writePublicationMutationStoreError(response, err)
@@ -196,7 +131,10 @@ func publicationJobResponseValue(job *sqlite.EnsureJobResult) *struct {
 	if job == nil {
 		return nil
 	}
-	return publicationJobResponse(*job)
+	return &struct {
+		ID      string `json:"id"`
+		Created bool   `json:"created"`
+	}{ID: job.ID, Created: job.Created}
 }
 func atomicPublicationJob(effectID string, mode sqlite.PublicationMode) (sqlite.JobInput, error) {
 	payload, err := json.Marshal(struct {
@@ -249,48 +187,6 @@ func (h publicationMutationHandler) resolveUncertainty(response http.ResponseWri
 		status = http.StatusCreated
 	}
 	writeControlJSON(response, status, publicationUncertaintyResolutionResponse{ResolutionID: resolved.ResolutionID, Created: resolved.Created})
-}
-
-func (h publicationMutationHandler) createEffect(response http.ResponseWriter, request *http.Request, allowedModes []sqlite.PublicationMode) (sqlite.CreatePublicationEffectResult, bool) {
-	proposalRevisionID, ok := validProposalRevisionPathID(request)
-	if !ok {
-		writeControlError(response, http.StatusBadRequest, "invalid_request", "proposal revision ID is invalid", false)
-		return sqlite.CreatePublicationEffectResult{}, false
-	}
-	if h.effects == nil {
-		writeControlError(response, http.StatusServiceUnavailable, "mutation_unavailable", "publication mutation service is unavailable", true)
-		return sqlite.CreatePublicationEffectResult{}, false
-	}
-	var input simulatePublicationRequest
-	if err := decodeProposalMutationJSON(response, request, &input); err != nil {
-		writeMutationDecodeError(response, err)
-		return sqlite.CreatePublicationEffectResult{}, false
-	}
-	if !validPublicationIdempotencyKey(input.IdempotencyKey) {
-		writeControlError(response, http.StatusBadRequest, "invalid_request", "idempotency key is invalid", false)
-		return sqlite.CreatePublicationEffectResult{}, false
-	}
-	effect, err := h.effects.CreatePublicationEffect(request.Context(), sqlite.CreatePublicationEffectInput{
-		ProposalRevisionID: proposalRevisionID,
-		IdempotencyKey:     input.IdempotencyKey,
-		AllowedModes:       allowedModes,
-		CreatedAt:          h.currentTime(),
-	})
-	if err != nil {
-		writePublicationMutationStoreError(response, err)
-		return sqlite.CreatePublicationEffectResult{}, false
-	}
-	return effect, true
-}
-
-func publicationJobResponse(job sqlite.EnsureJobResult) *struct {
-	ID      string `json:"id"`
-	Created bool   `json:"created"`
-} {
-	return &struct {
-		ID      string `json:"id"`
-		Created bool   `json:"created"`
-	}{ID: job.ID, Created: job.Created}
 }
 
 func writePublicationResponse(response http.ResponseWriter, created bool, result publicationResponse) {

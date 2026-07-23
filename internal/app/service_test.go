@@ -445,23 +445,12 @@ func TestNewSetsEnabledPublicationModeAndRegistersGuardedWorker(t *testing.T) {
 	}
 }
 
-func TestPublicationMutationOptionsOnlyScheduleMatchingRuntime(t *testing.T) {
+func TestPublicationMutationOptionsAlwaysRequireAtomicStore(t *testing.T) {
 	t.Parallel()
 	store := &sqlite.Store{}
-	disabled := publicationMutationOptions(config.Default(), store)
-	if disabled.Effects != store || disabled.Scheduler != nil || disabled.EnabledScheduler != nil {
-		t.Fatalf("disabled publication options = %+v", disabled)
-	}
-	cfg := config.Default()
-	cfg.PublicationMode = config.PublicationSimulated
-	simulated := publicationMutationOptions(cfg, store)
-	if simulated.Effects != store || simulated.Scheduler == nil || simulated.EnabledScheduler != nil {
-		t.Fatalf("simulated publication options = %+v", simulated)
-	}
-	cfg.PublicationMode = config.PublicationEnabled
-	enabled := publicationMutationOptions(cfg, store)
-	if enabled.Effects != store || enabled.Scheduler != nil || enabled.EnabledScheduler == nil {
-		t.Fatalf("enabled publication options = %+v", enabled)
+	options := publicationMutationOptions(store)
+	if options.AtomicEffects != store || options.UncertaintyResolver != store {
+		t.Fatalf("publication options = %+v", options)
 	}
 }
 
