@@ -39,9 +39,6 @@ func (s *Store) AttachCanonicalRevision(ctx context.Context, input CanonicalRevi
 		return result, err
 	}
 	err = withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
-		if err := requirePublicationDisabled(ctx, conn); err != nil {
-			return err
-		}
 		var pullRequestID, repositoryID, observationHead, observationBase string
 		var embeddedRevisionID sql.NullString
 		err := conn.QueryRowContext(ctx, `

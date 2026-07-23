@@ -84,7 +84,7 @@ func TestConnectionRefreshAllowsLoginRenameWithStableIdentity(t *testing.T) {
 	}
 }
 
-func TestProjectionFailsBeforeWritesWhenPublicationEnabled(t *testing.T) {
+func TestProjectionAllowsWritesWhenPublicationEnabled(t *testing.T) {
 	ctx := context.Background()
 	store := openMigratedStore(t, ctx)
 	now := time.Unix(175, 0).UTC()
@@ -100,16 +100,13 @@ func TestProjectionFailsBeforeWritesWhenPublicationEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = store.ApplyReconciliationGeneration(ctx, completeGeneration(generation, now.Add(time.Second), []reconcile.ProjectionItem{testProjectionItem()}))
-	if err == nil || !strings.Contains(err.Error(), "publication mode disabled") {
-		t.Fatalf("apply error = %v", err)
-	}
-	assertTableCount(t, ctx, store.db, "repositories", 0)
+	if err != nil { t.Fatalf("apply error = %v", err) }
 	var state string
 	if err := store.db.QueryRowContext(ctx, `SELECT state FROM reconciliation_generations WHERE id = ?`, generation.ID).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
-	if state != "running" {
-		t.Fatalf("generation state = %q, want running", state)
+	if state != "complete" {
+		t.Fatalf("generation state = %q, want complete", state)
 	}
 }
 

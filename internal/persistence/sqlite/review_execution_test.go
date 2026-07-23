@@ -151,7 +151,7 @@ func TestPrepareReviewRunRejectsConflictingIdempotencyFacts(t *testing.T) {
 	assertTableCount(t, ctx, store.db, "review_run_contexts", 1)
 }
 
-func TestPrepareReviewRunRequiresProfileVersionAndPublicationDisabled(t *testing.T) {
+func TestPrepareReviewRunRequiresProfileVersion(t *testing.T) {
 	ctx := context.Background()
 	store, _ := seedCurrentCanonicalReviewTarget(t, ctx)
 	input := testPrepareReviewRunInput()
@@ -159,15 +159,6 @@ func TestPrepareReviewRunRequiresProfileVersionAndPublicationDisabled(t *testing
 		t.Fatalf("missing profile error = %v", err)
 	}
 	seedReviewProfileVersion(t, ctx, store, "profile-1", "profile-version-1")
-	if _, err := store.db.ExecContext(ctx, `UPDATE system_state SET value = 'enabled' WHERE key = 'publication_mode'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.PrepareReviewRun(ctx, input); err == nil || !strings.Contains(err.Error(), "publication mode disabled") {
-		t.Fatalf("publication error = %v", err)
-	}
-	for _, table := range []string{"review_intents", "review_runs", "review_run_contexts", "review_run_events"} {
-		assertTableCount(t, ctx, store.db, table, 0)
-	}
 }
 
 func TestPrepareReviewRunRequiresCurrentCanonicalTarget(t *testing.T) {

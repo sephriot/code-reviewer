@@ -210,9 +210,6 @@ func (s *Store) QueueReviewRun(ctx context.Context, input PrepareReviewRunInput)
 }
 
 func prepareReviewRunOnConnection(ctx context.Context, conn *sql.Conn, normalized normalizedPrepareReviewRunInput) (PrepareReviewRunResult, error) {
-	if err := requireReviewPreparationPublicationDisabled(ctx, conn); err != nil {
-		return PrepareReviewRunResult{}, err
-	}
 	target, err := loadCurrentCanonicalReviewTarget(ctx, conn, normalized.ConnectionID, normalized.PullRequestID)
 	if err != nil {
 		return PrepareReviewRunResult{}, err
@@ -389,17 +386,6 @@ func normalizePrepareReviewRunInput(input PrepareReviewRunInput) (normalizedPrep
 		return normalizedPrepareReviewRunInput{}, errors.New("review run requested time is invalid")
 	}
 	return normalizedPrepareReviewRunInput{PrepareReviewRunInput: input}, nil
-}
-
-func requireReviewPreparationPublicationDisabled(ctx context.Context, conn *sql.Conn) error {
-	var mode string
-	if err := conn.QueryRowContext(ctx, `SELECT value FROM system_state WHERE key = 'publication_mode'`).Scan(&mode); err != nil {
-		return fmt.Errorf("read publication mode: %w", err)
-	}
-	if mode != "disabled" {
-		return errors.New("review run preparation requires publication mode disabled")
-	}
-	return nil
 }
 
 func requireReviewProfileVersion(ctx context.Context, conn *sql.Conn, profileID, profileVersionID string) error {

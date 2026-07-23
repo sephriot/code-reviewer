@@ -23,9 +23,6 @@ func (s *Store) UpsertGitHubConnection(ctx context.Context, input reconcile.Conn
 		return err
 	}
 	return withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
-		if err := requirePublicationDisabled(ctx, conn); err != nil {
-			return err
-		}
 		var apiBaseURL, accountNodeID, credentialKind, credentialLocator string
 		var accountDatabaseID int64
 		err := conn.QueryRowContext(ctx, `
@@ -85,9 +82,6 @@ func (s *Store) NextReconciliationGeneration(ctx context.Context, scope reconcil
 		return result, errors.New("generation start time is required")
 	}
 	err = withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
-		if err := requirePublicationDisabled(ctx, conn); err != nil {
-			return err
-		}
 		var accountLogin, state string
 		if err := conn.QueryRowContext(ctx, `SELECT account_login, state FROM connections WHERE id = ?`, scope.ConnectionID).Scan(&accountLogin, &state); err != nil {
 			return fmt.Errorf("read reconciliation connection: %w", err)
@@ -166,9 +160,6 @@ func (s *Store) ApplyReconciliationGeneration(ctx context.Context, input reconci
 		return result, err
 	}
 	err = withImmediateConnection(ctx, s.db, func(conn *sql.Conn) error {
-		if err := requirePublicationDisabled(ctx, conn); err != nil {
-			return err
-		}
 		if err := verifyRunningGeneration(ctx, conn, input.Generation); err != nil {
 			return err
 		}
@@ -648,17 +639,6 @@ FROM reconciliation_generations WHERE id = ?`, generation.ID).Scan(&connectionID
 	}
 	if state != "running" {
 		return errors.New("reconciliation generation is already terminal")
-	}
-	return nil
-}
-
-func requirePublicationDisabled(ctx context.Context, conn *sql.Conn) error {
-	var mode string
-	if err := conn.QueryRowContext(ctx, `SELECT value FROM system_state WHERE key = 'publication_mode'`).Scan(&mode); err != nil {
-		return fmt.Errorf("read publication mode: %w", err)
-	}
-	if mode != "disabled" {
-		return errors.New("shadow reconciliation requires publication mode disabled")
 	}
 	return nil
 }
