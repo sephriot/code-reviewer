@@ -53,5 +53,9 @@ func (n *Native) Review(ctx context.Context, input json.RawMessage) (Result, err
 			output = raw
 		}
 	}
-	return Result{Stdout: output, Executable: invocation.Argv[0]}, nil
+	normalized, err := NormalizeNativeOutput(n.config.Provider, output)
+	if err != nil {
+		return Result{Stdout: output, Executable: invocation.Argv[0]}, err
+	}
+	return Result{Stdout: normalized, Executable: invocation.Argv[0]}, nil
 }
