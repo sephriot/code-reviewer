@@ -13,6 +13,9 @@ This is a ground-up replacement. Legacy Python runtime, legacy dashboard, and `d
 - All review, policy, proposal, and publication records are immutable and tied to currently verified canonical evidence.
 - `disabled` is default. `simulated` records a local simulated attempt only. `enabled` requires configured shadow reconciliation, a GitHub token, and explicit dispatch; it revalidates live diff anchors before a single non-retrying GitHub write.
 
+See [operations runbook](docs/OPERATIONS_RUNBOOK.md) for backup, upgrade,
+restore, and cutover rehearsal.
+
 ## Prerequisites
 
 - Go version declared in [`go.mod`](go.mod)
