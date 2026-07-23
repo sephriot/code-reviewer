@@ -53,6 +53,7 @@
     .event.current .dot { border-color:var(--signal); background:var(--signal); box-shadow:0 0 14px var(--signal); }
     .event-top { display:flex; justify-content:space-between; gap:12px; color:var(--ink); font-size:12px; }
     .event-detail { margin:3px 0 0; color:var(--muted); font-size:12px; word-break:break-word; }
+    .timeline-toggle { margin:0 0 14px; }
     .mutation { margin-top:26px; padding:18px; border:1px solid var(--line); background:rgba(34,35,31,.72); }
     .mutation-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px; }
     .mutation h3 { margin:0; font:22px/.95 var(--display); letter-spacing:-.03em; text-transform:uppercase; }
@@ -132,8 +133,8 @@
       <section class="detail" aria-labelledby="timeline-heading">
         <div class="section-head"><h2 id="timeline-heading">Evidence timeline</h2><span class="pill">Local session</span></div>
         <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3><dl class="selected-facts" id="selected-facts" hidden></dl></div><span class="pill" id="selected-state"></span></div>
-        <p class="notice" id="timeline-message">Choose inbox item to inspect immutable evidence.</p>
-        <ol class="timeline" id="timeline-items" aria-label="Selected pull request timeline"></ol>
+        <button class="action timeline-toggle" id="timeline-toggle" type="button" aria-expanded="false">Show timeline</button>
+        <div id="timeline-panel" hidden><p class="notice" id="timeline-message">Choose inbox item to inspect immutable evidence.</p><ol class="timeline" id="timeline-items" aria-label="Selected pull request timeline"></ol></div>
         <section class="mutation" id="evidence-controls" aria-labelledby="evidence-controls-heading">
           <div class="mutation-head"><h3 id="evidence-controls-heading">Evidence control</h3><span class="pill">GET only</span></div>
           <p class="mutation-copy">Fetch current diff evidence for selected pull request. This queues local work and never writes to GitHub.</p>
@@ -241,6 +242,7 @@
       const selectedFacts = document.querySelector('#selected-facts');
       const timeline = document.querySelector('#timeline-items');
       const timelineMessage = document.querySelector('#timeline-message');
+      const timelineToggle = document.querySelector('#timeline-toggle'); const timelinePanel = document.querySelector('#timeline-panel');
       const hydrateEvidence = document.querySelector('#hydrate-evidence');
       const evidenceStatus = document.querySelector('#evidence-status');
       const scheduleReview = document.querySelector('#schedule-review');
@@ -551,6 +553,7 @@
           setMutationContext(item, page.items || []);
         }).catch((error) => { timelineMessage.textContent = error.message; timelineMessage.setAttribute('role', 'alert'); });
       }
+      timelineToggle.addEventListener('click', () => { const expanded = timelinePanel.hidden; timelinePanel.hidden = !expanded; timelineToggle.setAttribute('aria-expanded', String(expanded)); timelineToggle.textContent = expanded ? 'Hide timeline' : 'Show timeline'; });
       function addInboxItem(item) { const button = document.createElement('button'); button.type = 'button'; button.className = 'inbox-item'; button.dataset.id = item.id; button.setAttribute('aria-current', 'false'); const mark = text('span', '', 'mark'); mark.setAttribute('aria-hidden', 'true'); const content = document.createElement('span'); const top = document.createElement('span'); top.className = 'item-top'; const identifier = item.repository && item.number ? `${item.repository} #${item.number}` : item.pull_request_id; top.append(text('span', identifier, 'item-pr'), text('time', formatTime(item.occurred_at), 'item-time')); const title = item.title || item.detail || item.pull_request_id; const context = `${item.author ? `by ${item.author} · ` : ''}${String(item.kind || 'attention').replaceAll('_', ' ')}`; content.append(top, text('strong', title, 'item-detail'), text('span', context, 'item-detail')); button.append(mark, content); button.addEventListener('click', () => showTimeline(item)); inbox.append(button); }
       proposalForm.addEventListener('submit', async (event) => {
         event.preventDefault();
