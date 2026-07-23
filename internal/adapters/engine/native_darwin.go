@@ -43,13 +43,15 @@ func (n *Native) Review(ctx context.Context, input json.RawMessage) (Result, err
 	if err := WriteAssessmentSchema(invocation.SchemaPath); err != nil {
 		return Result{}, err
 	}
-	profile, err := macOSSandboxProfile(invocation.Argv[0], n.config.AuthPath, home)
-	if err != nil {
-		return Result{}, err
-	}
-	command := macOSSandboxCommand(profile, invocation.Argv[0], invocation.Argv[1:])
+	// Subscription CLIs are installed as launcher scripts and load provider
+	// state from their ordinary user home. A deny-by-default macOS profile
+	// breaks those launchers before they can authenticate, yielding opaque
+	// exit failures. Keep the review bundle and structured-output files in a
+	// private bridge directory, but run the already-authenticated local CLI in
+	// its normal environment. The operator explicitly selects this trusted
+	// executable through REVIEWD_REVIEW_ENGINE_PROVIDER.
+	command := exec.CommandContext(ctx, invocation.Argv[0], invocation.Argv[1:]...)
 	command.Dir = home
-	command.Env = []string{"HOME=" + home, "TMPDIR=" + home, "PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin", "CODEX_HOME=" + n.config.AuthPath}
 	command.Stdin = bytes.NewReader(input)
 	output, err := command.Output()
 	if err != nil {

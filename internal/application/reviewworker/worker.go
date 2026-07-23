@@ -73,7 +73,7 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 		return worker.Permanent(fmt.Errorf("malformed review execution job payload: %w", err))
 	}
 	if h.Executor == nil || h.Events == nil {
-		return h.recordFailure(ctx, runID, failureTerminal, "configuration_invalid")
+		return h.recordFailure(ctx, runID, failureTerminal, "configuration_invalid", errors.New("review execution dependencies are unavailable"))
 	}
 
 	execution, err := h.Executor.Execute(ctx, runID)
@@ -87,7 +87,7 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 		return nil
 	}
 	result := classifyFailure(err)
-	return h.recordFailure(ctx, runID, result.kind, result.code)
+	return h.recordFailure(ctx, runID, result.kind, result.code, err)
 }
 
 func (h Handler) evaluateAutomaticPolicy(ctx context.Context, execution reviewexecute.Result) error {
@@ -147,7 +147,7 @@ type failure struct {
 	code string
 }
 
-func (h Handler) recordFailure(ctx context.Context, runID string, kind failureKind, code string) error {
+func (h Handler) recordFailure(ctx context.Context, runID string, kind failureKind, code string, cause error) error {
 	if h.Events == nil {
 		return worker.Permanent(errors.New("review run event store is required"))
 	}
@@ -168,9 +168,33 @@ func (h Handler) recordFailure(ctx context.Context, runID string, kind failureKi
 		return errors.New("review run lifecycle recording failed")
 	}
 	if kind == failureTerminal {
-		return worker.Permanent(fmt.Errorf("review execution failed: %s", code))
+		return worker.Permanent(fmt.Errorf("review execution failed: %s: %s", code, safeFailureSummary(cause)))
 	}
-	return fmt.Errorf("review execution failed: %s", code)
+	return fmt.Errorf("review execution failed: %s: %s", code, safeFailureSummary(cause))
+}
+
+// safeFailureSummary keeps provider stderr, request content, and environment
+// details out of durable job errors while giving operators enough direction to
+// repair a local CLI setup.
+func safeFailureSummary(cause error) string {
+	if cause == nil {
+		return "unknown review failure"
+	}
+	message := cause.Error()
+	switch {
+	case strings.Contains(message, "native engine execution"):
+		return "native provider process failed; run its status command and confirm its login"
+	case strings.Contains(message, "native engine output"):
+		return "native provider did not return a structured assessment"
+	case strings.Contains(message, "sandbox"):
+		return "native provider sandbox configuration blocked execution"
+	case strings.Contains(message, "validate review engine assessment"):
+		return "provider assessment failed validation"
+	case strings.Contains(message, "review execution dependencies"):
+		return "review execution dependencies are unavailable"
+	default:
+		return "review execution failed"
+	}
 }
 
 func classifyFailure(err error) failure {

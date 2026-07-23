@@ -78,6 +78,7 @@ func (r *Runner) ProcessOne(ctx context.Context) (bool, error) {
 	heartbeatErr := make(chan error, 1)
 	heartbeatDone := make(chan struct{})
 	go r.heartbeat(heartbeatCtx, cancelWork, job, heartbeatErr, heartbeatDone)
+	slog.Default().Info("job started", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt)
 
 	handlerErr := r.Handler.Handle(workCtx, job)
 	cancelWork()
