@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestNativeConfigValidation(t *testing.T) {
 	valid := NativeConfig{Provider: ProviderCodex, Executable: "codex", AuthPath: "/provider/auth", BridgeRoot: ".reviewd/engine-auth"}
@@ -10,6 +13,16 @@ func TestNativeConfigValidation(t *testing.T) {
 	valid.Provider = "unknown"
 	if err := valid.Validate(); err == nil {
 		t.Fatal("unknown provider accepted")
+	}
+}
+
+func TestAgentInvocationTrustsPrivateBridge(t *testing.T) {
+	invocation, err := (NativeConfig{Provider: ProviderAgent, Executable: "agent", AuthPath: "/auth", BridgeRoot: ".reviewd"}).Invocation("/tmp/bridge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(invocation.Argv, "--trust") {
+		t.Fatalf("agent argv missing --trust: %q", invocation.Argv)
 	}
 }
 

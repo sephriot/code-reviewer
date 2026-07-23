@@ -57,7 +57,10 @@ func (c NativeConfig) Invocation(bridgeHome string) (Invocation, error) {
 	case ProviderCodex:
 		return Invocation{Argv: []string{c.Executable, "exec", "--output-schema", schema, "--output-last-message", output, "-"}, SchemaPath: schema, OutputPath: output}, nil
 	case ProviderAgent:
-		return Invocation{Argv: []string{c.Executable, "--print", "--output-format", "json", "--mode", "ask"}, SchemaPath: schema, OutputPath: output}, nil
+		// Each review executes in a freshly-created private bridge directory.
+		// Cursor Agent otherwise waits for an interactive workspace-trust prompt
+		// that a background worker cannot answer.
+		return Invocation{Argv: []string{c.Executable, "--print", "--trust", "--output-format", "json", "--mode", "ask"}, SchemaPath: schema, OutputPath: output}, nil
 	default:
 		return Invocation{}, errors.New("native engine provider is invalid")
 	}
