@@ -33,3 +33,22 @@ func TestGuardExcludesSecondWriterAndAdvancesGeneration(t *testing.T) {
 		t.Fatalf("generation = %d, want 2", second.generation)
 	}
 }
+
+func TestGuardHeartbeatRequiresCurrentGeneration(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	guard, err := Acquire(ctx, t.TempDir(), "reviewd-a", "cutover-1", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer guard.Close()
+	if err := guard.Heartbeat(ctx, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := guard.db.ExecContext(ctx, `UPDATE writer_ownership SET generation = generation + 1 WHERE singleton = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if err := guard.Heartbeat(ctx, now.Add(2*time.Minute)); err == nil {
+		t.Fatal("stale owner heartbeat succeeded")
+	}
+}

@@ -117,6 +117,26 @@ func (g *Guard) Valid(ctx context.Context) error {
 	return nil
 }
 
+// Heartbeat records that this exact owner generation remains alive. A stale
+// owner fails closed instead of extending a successor's lease.
+func (g *Guard) Heartbeat(ctx context.Context, now time.Time) error {
+	if g == nil || g.file == nil || g.db == nil || now.IsZero() {
+		return errors.New("writer ownership guard or heartbeat time is invalid")
+	}
+	result, err := g.db.ExecContext(ctx, `UPDATE writer_ownership SET heartbeat_at_us = ? WHERE singleton = 1 AND owner = ? AND generation = ?`, now.UTC().UnixMicro(), g.owner, g.generation)
+	if err != nil {
+		return fmt.Errorf("record ownership heartbeat: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read ownership heartbeat result: %w", err)
+	}
+	if changed != 1 {
+		return errors.New("writer ownership generation is stale")
+	}
+	return nil
+}
+
 func (g *Guard) Close() error {
 	if g == nil {
 		return nil

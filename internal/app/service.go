@@ -467,6 +467,15 @@ func (s *Service) Run(ctx context.Context, logger *slog.Logger) error {
 }
 
 func (s *Service) startBackground(ctx context.Context, logger *slog.Logger, group *sync.WaitGroup, errorsCh chan<- error) {
+	if s.ownershipGuard != nil {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if err := runOwnershipHeartbeat(ctx, s.ownershipGuard); err != nil && ctx.Err() == nil {
+				errorsCh <- fmt.Errorf("writer ownership heartbeat: %w", err)
+			}
+		}()
+	}
 	if s.jobRunner != nil {
 		group.Add(1)
 		go func() {
@@ -504,6 +513,27 @@ func (s *Service) startBackground(ctx context.Context, logger *slog.Logger, grou
 				errorsCh <- err
 			}
 		}()
+	}
+}
+
+func runOwnershipHeartbeat(ctx context.Context, guard *ownership.Guard) error {
+	if guard == nil {
+		return nil
+	}
+	if err := guard.Heartbeat(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case moment := <-ticker.C:
+			if err := guard.Heartbeat(ctx, moment.UTC()); err != nil {
+				return err
+			}
+		}
 	}
 }
 
