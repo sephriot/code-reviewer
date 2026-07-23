@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"reflect"
-	"sort"
 	"testing"
 	"time"
 )
@@ -45,36 +44,16 @@ func TestListCurrentAttentionIsBoundedCurrentAndReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 2 || page.NextCursor == "" {
-		t.Fatalf("first page = %+v", page)
+	if len(page.Items) != 1 || page.NextCursor != "" {
+		t.Fatalf("page = %+v", page)
 	}
 	for _, item := range page.Items {
 		if !item.Current || item.State != TimelineStateCurrent || item.ConnectionID != "connection-1" || item.PullRequestID != "pr-1" {
 			t.Fatalf("attention item is not explicit current evidence: %+v", item)
 		}
 	}
-	page2, err := store.ListCurrentAttention(ctx, AttentionQuery{ConnectionID: "connection-1", Limit: 2, Cursor: page.NextCursor})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(page2.Items) != 1 || page2.NextCursor != "" {
-		t.Fatalf("second page = %+v", page2)
-	}
-	items := append(append([]AttentionItem{}, page.Items...), page2.Items...)
-	kinds := make([]string, 0, len(items))
-	for _, item := range items {
-		kinds = append(kinds, string(item.Kind))
-	}
-	sort.Strings(kinds)
-	want := []string{string(AttentionKindHumanReview), string(AttentionKindPendingProposal), string(AttentionKindFailedRun)}
-	sort.Strings(want)
-	if len(kinds) != len(want) {
-		t.Fatalf("attention kinds = %v, want %v", kinds, want)
-	}
-	for i := range want {
-		if kinds[i] != want[i] {
-			t.Fatalf("attention kinds = %v, want %v", kinds, want)
-		}
+	if page.Items[0].Kind != AttentionKindPendingProposal {
+		t.Fatalf("attention = %+v, want pending proposal", page.Items[0])
 	}
 	if after := ledgerCounts(t, ctx, store); !reflect.DeepEqual(after, before) {
 		t.Fatalf("read-only inbox changed ledger: before=%v after=%v", before, after)

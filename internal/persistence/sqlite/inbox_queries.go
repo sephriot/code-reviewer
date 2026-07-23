@@ -259,13 +259,19 @@ WITH latest_run_events AS (
  WHERE run.revision_id = projection.current_revision_id
    AND run.observation_id = projection.current_observation_id
    AND event.event_kind IN ('failed_retryable', 'failed_terminal', 'canceled', 'superseded')
+) , ranked AS (
+ SELECT attention.*, ROW_NUMBER() OVER (
+   PARTITION BY connection_id, pull_request_id
+   ORDER BY CASE kind WHEN 'pending_proposal' THEN 1 WHEN 'human_review' THEN 2 ELSE 3 END, occurred_at_us DESC, id
+ ) AS position
+ FROM attention
 )
 SELECT attention.kind, attention.id, attention.connection_id, attention.pull_request_id, attention.revision_id, attention.observation_id, attention.occurred_at_us, attention.detail,
        repository.full_name, pull_request.number, pull_request.title, pull_request.author_login
-FROM attention
+FROM ranked AS attention
 JOIN pull_requests AS pull_request ON pull_request.id = attention.pull_request_id
 JOIN repositories AS repository ON repository.id = pull_request.repository_id
-WHERE (? = '' OR attention.connection_id = ?)
+WHERE attention.position = 1 AND (? = '' OR attention.connection_id = ?)
   AND (? = 0 OR attention.occurred_at_us < ? OR (attention.occurred_at_us = ? AND (attention.kind > ? OR (attention.kind = ? AND attention.id > ?))))
 ORDER BY attention.occurred_at_us DESC, attention.kind, attention.id
 LIMIT ?`, connectionID, connectionID, hasCursor, cursor.OccurredAtUS, cursor.OccurredAtUS, cursor.Kind, cursor.Kind, cursor.ID, limit+1)
