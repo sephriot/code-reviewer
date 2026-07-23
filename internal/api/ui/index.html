@@ -38,7 +38,8 @@
     .item-detail { margin-top:5px; overflow:hidden; color:inherit; opacity:.76; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
     .detail { background:linear-gradient(135deg,rgba(109,156,255,.08),transparent 45%); }
     .selected { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; align-items:start; margin-bottom:30px; padding:18px 0; border-block:1px solid var(--line); }
-    .selected h3 { margin:4px 0 0; font:clamp(25px,4vw,48px)/.95 var(--display); letter-spacing:-.04em; word-break:break-word; }
+    .selected > div { min-width:0; }
+    .selected h3 { margin:4px 0 0; font:clamp(25px,4vw,48px)/.95 var(--display); letter-spacing:-.04em; overflow-wrap:anywhere; word-break:break-word; }
     .selected-meta { color:var(--muted); font-size:11px; }
     .pill { padding:4px 7px; color:var(--blue); border:1px solid currentColor; font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
     .event { position:relative; display:grid; grid-template-columns:13px minmax(0,1fr); gap:13px; padding-bottom:18px; }
@@ -388,7 +389,7 @@
       async function reloadInbox(preferredID) {
         const [page, inventory] = await Promise.all([api('/api/v1/inbox'), api('/api/v1/pull-requests?limit=50'), refreshTelemetry()]);
         const attention = page.items || [];
-        const items = attention.length ? attention : (inventory.items || []).map((item) => ({ id:item.pull_request_id, pull_request_id:item.pull_request_id, connection_id:item.connection_id, state:item.state, occurred_at:item.observed_at, detail:`${item.repository} #${item.number} · ${item.title}` }));
+        const items = attention.length ? attention : (inventory.items || []).map((item) => ({ id:item.pull_request_id, pull_request_id:item.pull_request_id, connection_id:item.connection_id, state:item.state, occurred_at:item.observed_at, title:item.title, detail:`${item.repository} #${item.number} · ${item.title}` }));
         inbox.replaceChildren();
         inboxCount.textContent = `${items.length} OPEN`;
         inboxMessage.removeAttribute('role');
@@ -399,7 +400,7 @@
       }
       function showTimeline(item) {
         selectedItem = item;
-        selected.hidden = false; selectedConnection.textContent = item.connection_id; selectedTitle.textContent = item.pull_request_id; selectedState.textContent = item.state;
+        selected.hidden = false; selectedConnection.textContent = item.connection_id; selectedTitle.textContent = item.title || item.pull_request_id; selectedState.textContent = item.state;
         timeline.replaceChildren(); timelineMessage.textContent = 'Loading immutable events.'; timelineMessage.removeAttribute('role');
         clearMutationContext('Loading current proposal records.');
         document.querySelectorAll('.inbox-item').forEach((button) => button.setAttribute('aria-current', String(button.dataset.id === item.id)));
