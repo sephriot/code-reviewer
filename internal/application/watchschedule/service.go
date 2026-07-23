@@ -33,6 +33,9 @@ type Request struct {
 	AccessMode       string
 	CorrelationID    string
 	RequestedAt      time.Time
+	// Force creates a fresh run only for an explicit operator retry. Background
+	// scheduling leaves this false and remains idempotent per evidence/rule.
+	Force bool
 }
 
 // Result distinguishes a selected rule from a queued automatic review.
@@ -87,6 +90,9 @@ func (s Service) Schedule(ctx context.Context, request Request) (Result, error) 
 		requestedAt = time.Now().UTC()
 	}
 	trigger := automaticTriggerSHA(target, rule)
+	if request.Force {
+		trigger = forcedTriggerSHA(trigger, requestedAt)
+	}
 	queued, err := s.Store.QueueReviewRun(ctx, sqlite.PrepareReviewRunInput{
 		ConnectionID: target.ConnectionID, PullRequestID: target.PullRequestID,
 		ProfileID: rule.ProfileID, ProfileVersionID: rule.ProfileVersionID,
@@ -100,6 +106,11 @@ func (s Service) Schedule(ctx context.Context, request Request) (Result, error) 
 	}
 	result.Queued = &queued
 	return result, nil
+}
+
+func forcedTriggerSHA(trigger string, requestedAt time.Time) string {
+	digest := sha256.Sum256([]byte("watch-rule-forced-trigger:v1:" + trigger + ":" + fmt.Sprintf("%d", requestedAt.UTC().UnixMicro())))
+	return hex.EncodeToString(digest[:])
 }
 
 func automaticTriggerSHA(target sqlite.AutomaticWatchRuleTarget, rule sqlite.AutomaticWatchRule) string {

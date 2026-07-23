@@ -340,7 +340,7 @@ func (s dashboardReviewScheduler) ScheduleEligibleReview(ctx context.Context, co
 	result, err := s.service.Schedule(ctx, watchschedule.Request{
 		ConnectionID: connectionID, PullRequestID: pullRequestID,
 		EngineKind: "cli", EngineConfigJSON: []byte(`{"engine_source":"reviewd_config"}`),
-		AccessMode: "diff_only", CorrelationID: "reviewd-dashboard", RequestedAt: time.Now().UTC(),
+		AccessMode: "diff_only", CorrelationID: "reviewd-dashboard", RequestedAt: time.Now().UTC(), Force: true,
 	})
 	if errors.Is(err, storagesqlite.ErrAutomaticWatchRuleTargetNotFound) || errors.Is(err, storagesqlite.ErrCanonicalReviewTargetNotFound) {
 		return api.EligibleReviewScheduleResult{}, api.ErrReviewEvidenceNotReady

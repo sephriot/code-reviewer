@@ -43,6 +43,23 @@ func TestScheduleDoesNotQueueManualOrNoMatch(t *testing.T) {
 	}
 }
 
+func TestScheduleForceCreatesDistinctOperatorRetry(t *testing.T) {
+	store := &fakeStore{target: fixtureTarget([]sqlite.AutomaticWatchRule{{RuleID: "rule", VersionID: "rule-v", Priority: 1, TriggerKind: "automatic", ProfileID: "p", ProfileVersionID: "pv", MatchJSON: []byte(`{}`)}})}
+	request := validRequest()
+	request.RequestedAt = time.Unix(20, 0)
+	if _, err := (Service{Store: store}).Schedule(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	normalTrigger := store.input.TriggerSHA256
+	request.Force = true
+	if _, err := (Service{Store: store}).Schedule(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if store.input.TriggerSHA256 == normalTrigger || store.input.IdempotencyKey != "watch-rule:v1:"+store.input.TriggerSHA256 {
+		t.Fatalf("forced input=%+v normal=%q", store.input, normalTrigger)
+	}
+}
+
 func TestScheduleFailsClosed(t *testing.T) {
 	store := &fakeStore{target: fixtureTarget([]sqlite.AutomaticWatchRule{{RuleID: "bad", VersionID: "bad-v", Priority: 1, TriggerKind: "automatic", ProfileID: "", MatchJSON: []byte(`{}`)}})}
 	if _, err := (Service{Store: store}).Schedule(context.Background(), validRequest()); err == nil || store.called {
