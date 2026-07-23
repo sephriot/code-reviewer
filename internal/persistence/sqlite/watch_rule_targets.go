@@ -48,7 +48,15 @@ func (s *Store) ListAutomaticWatchRuleTargetIDs(ctx context.Context, connectionI
 	if strings.TrimSpace(connectionID) == "" {
 		return nil, errors.New("automatic watch rule connection is required")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT projection.pull_request_id FROM pull_request_projection_state AS projection JOIN revisions AS revision ON revision.id = projection.current_revision_id WHERE projection.connection_id = ? AND revision.identity_kind = 'canonical_diff' ORDER BY projection.pull_request_id`, connectionID)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT projection.pull_request_id
+FROM pull_request_projection_state AS projection
+JOIN revisions AS revision ON revision.id = projection.current_revision_id
+JOIN pull_request_observations AS observation ON observation.id = projection.current_observation_id
+WHERE projection.connection_id = ?
+  AND observation.github_state = 'open'
+  AND revision.identity_kind = 'canonical_diff'
+ORDER BY projection.pull_request_id`, connectionID)
 	if err != nil {
 		return nil, fmt.Errorf("list automatic watch rule targets: %w", err)
 	}

@@ -247,6 +247,9 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 			scheduler := watchschedule.Service{Store: store}
 			for _, id := range ids {
 				if _, err := scheduler.Schedule(ctx, watchschedule.Request{ConnectionID: cfg.ShadowReconciliation.ConnectionID, PullRequestID: id, EngineKind: "cli", EngineConfigJSON: []byte(`{"engine_source":"reviewd_config"}`), AccessMode: "diff_only", CorrelationID: "reviewd-startup-backfill", RequestedAt: time.Now().UTC()}); err != nil {
+					if staleAutomaticReviewTarget(err) {
+						continue
+					}
 					return err
 				}
 			}
@@ -254,6 +257,11 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		}
 	}
 	return service, nil
+}
+
+func staleAutomaticReviewTarget(err error) bool {
+	return errors.Is(err, storagesqlite.ErrAutomaticWatchRuleTargetNotFound) ||
+		errors.Is(err, storagesqlite.ErrCanonicalReviewTargetNotFound)
 }
 
 type automaticPublication struct{ store *storagesqlite.Store }

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +27,20 @@ import (
 )
 
 type waitingRunner struct{ started chan<- struct{} }
+
+func TestStaleAutomaticReviewTargetRecognizesBothSchedulingRaces(t *testing.T) {
+	for _, err := range []error{
+		fmt.Errorf("load automatic watch rule target: %w", sqlite.ErrAutomaticWatchRuleTargetNotFound),
+		fmt.Errorf("queue automatic review: %w", sqlite.ErrCanonicalReviewTargetNotFound),
+	} {
+		if !staleAutomaticReviewTarget(err) {
+			t.Fatalf("stale target error not recognized: %v", err)
+		}
+	}
+	if staleAutomaticReviewTarget(fmt.Errorf("queue automatic review: %w", context.DeadlineExceeded)) {
+		t.Fatal("unrelated scheduling error accepted")
+	}
+}
 
 type reconciliationSchedulerFunc func(context.Context, reconcile.Config) (sqlite.EnsureJobResult, error)
 
