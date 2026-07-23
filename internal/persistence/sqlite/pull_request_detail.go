@@ -30,6 +30,7 @@ type PullRequestDetail struct {
 	Repository    string
 	Number        int
 	Title         string
+	Author        string
 	State         string
 	HTMLURL       string
 	Freshness     string
@@ -128,7 +129,7 @@ func (s *Store) PullRequestDetail(ctx context.Context, query PullRequestDetailQu
 	err := s.db.QueryRowContext(ctx, `
 SELECT projection.connection_id, repository.id, pull_request.id,
        repository.owner_login, repository.name, pull_request.number,
-       observation.title, observation.github_state, COALESCE(pull_request.html_url, ''),
+       observation.title, observation.author_login, observation.github_state, COALESCE(pull_request.html_url, ''),
        projection.freshness,
        COALESCE(revision.id, ''), COALESCE(revision.identity_kind, ''),
        COALESCE(revision.head_sha, ''), COALESCE(revision.base_sha, ''),
@@ -157,7 +158,7 @@ LEFT JOIN revisions AS revision
 WHERE projection.connection_id = ? AND projection.pull_request_id = ?`, connectionID, pullRequestID).Scan(
 		&detail.ConnectionID, &detail.RepositoryID, &detail.PullRequestID,
 		&detail.Owner, &detail.Repository, &detail.Number,
-		&detail.Title, &detail.State, &detail.HTMLURL, &detail.Freshness,
+		&detail.Title, &detail.Author, &detail.State, &detail.HTMLURL, &detail.Freshness,
 		&detail.CurrentRevisionID, &detail.CurrentRevisionIdentityKind,
 		&detail.CurrentHeadSHA, &detail.CurrentBaseSHA,
 		&detail.CurrentObservationID, &observedAtUS,

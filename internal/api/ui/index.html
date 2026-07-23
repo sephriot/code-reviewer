@@ -132,30 +132,23 @@
       </section>
       <section class="detail" aria-labelledby="timeline-heading">
         <div class="section-head"><h2 id="timeline-heading">Evidence timeline</h2><span class="pill">Local session</span></div>
-        <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3><dl class="selected-facts" id="selected-facts" hidden></dl></div><span class="pill" id="selected-state"></span></div>
+        <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3><dl class="selected-facts" id="selected-facts" hidden></dl></div><div class="action-row"><a class="action" id="open-github" href="#" target="_blank" rel="noreferrer" hidden>Open on GitHub</a><span class="pill" id="selected-state"></span></div></div>
         <button class="action timeline-toggle" id="timeline-toggle" type="button" aria-expanded="false">Show timeline</button>
         <div id="timeline-panel" hidden><p class="notice" id="timeline-message">Choose inbox item to inspect immutable evidence.</p><ol class="timeline" id="timeline-items" aria-label="Selected pull request timeline"></ol></div>
-        <section class="mutation" id="evidence-controls" aria-labelledby="evidence-controls-heading">
-          <div class="mutation-head"><h3 id="evidence-controls-heading">Evidence control</h3><span class="pill">GET only</span></div>
-          <p class="mutation-copy">Fetch current diff evidence for selected pull request. This queues local work and never writes to GitHub.</p>
-          <div class="action-row"><button class="action" id="hydrate-evidence" type="button">Build canonical evidence</button></div>
-          <p class="mutation-status" id="evidence-status" role="status" aria-live="polite">Select a pull request to queue evidence hydration.</p>
-        </section>
-        <section class="mutation" id="review-controls" aria-labelledby="review-controls-heading">
-          <div class="mutation-head"><h3 id="review-controls-heading">Eligible review</h3><span class="pill">Policy gated</span></div>
-          <p class="mutation-copy">Re-check active automatic policy against current canonical evidence. It queues a local review only when an automatic rule matches.</p>
-          <div class="action-row"><button class="action" id="schedule-review" type="button">Queue eligible review</button></div>
-          <p class="mutation-status" id="review-status" role="status" aria-live="polite">Canonical evidence and trusted review runtime are required.</p>
+        <section class="mutation" aria-labelledby="review-controls-heading">
+          <div class="mutation-head"><h3 id="review-controls-heading">Review</h3><span class="pill">Local</span></div>
+          <p class="mutation-copy">Request a fresh review. Control Desk prepares current evidence first when needed.</p>
+          <div class="action-row"><button class="action" id="request-review" type="button">Request review</button></div>
+          <p class="mutation-status" id="review-status" role="status" aria-live="polite">Select a pull request to request review.</p>
         </section>
         <section class="mutation" id="proposal-controls" aria-labelledby="proposal-controls-heading" hidden>
           <div class="mutation-head"><h3 id="proposal-controls-heading">Human decision</h3><span class="pill">Append only</span></div>
-          <p class="mutation-copy">Edit creates a new immutable proposal revision. Approval or rejection decides selected revision only. No GitHub publication happens here.</p>
+          <p class="mutation-copy">The newest feedback is selected automatically. Approval records your local decision; use Send to GitHub after approval to publish it.</p>
           <form id="proposal-form" novalidate>
             <fieldset id="proposal-fields" disabled>
-              <label class="field" for="proposal-id">Proposal record
-                <select id="proposal-id" required aria-describedby="proposal-help"><option value="">No current proposal record</option></select>
-              </label>
-              <p class="microcopy" id="proposal-help">Controls unlock only for current, evidence-bound proposal records.</p>
+              <select id="proposal-id" required hidden><option value="">No current proposal record</option></select>
+              <select id="proposal-revision-id" required hidden><option value="">No current revision</option></select>
+              <p class="microcopy" id="proposal-help">No current feedback proposal.</p>
               <label class="field" for="proposal-body">Revision body
                 <textarea id="proposal-body" maxlength="65536" placeholder="Write revised review content"></textarea>
               </label>
@@ -163,16 +156,10 @@
                 <textarea class="compact" id="inline-comments" maxlength="49152" placeholder='[{"path":"file.go","line":12,"body":"detail"}]'></textarea>
               </label>
               <div class="action-row"><button class="action" id="create-revision" type="submit">Save new revision</button></div>
-              <label class="field" for="proposal-revision-id">Revision to decide
-                <select id="proposal-revision-id" required><option value="">No current revision</option></select>
-              </label>
-              <label class="field" for="actor-id">Decision actor
-                <input id="actor-id" maxlength="512" value="local-dashboard" required autocomplete="off">
-              </label>
               <label class="field" for="decision-reason">Decision reason (optional)
                 <textarea class="compact" id="decision-reason" maxlength="4096" placeholder="Why this is ready, or why it needs change"></textarea>
               </label>
-              <div class="action-row"><button class="action" type="button" data-decision="approve">Approve revision</button><button class="action danger" type="button" data-decision="reject">Reject revision</button><button class="action" id="simulate-publication" type="button">Simulate approved revision</button><button class="action danger" id="dispatch-publication" type="button" hidden>Send approved review to GitHub</button></div>
+              <div class="action-row"><button class="action" type="button" data-decision="approve">Approve feedback</button><button class="action danger" type="button" data-decision="reject">Reject feedback</button><button class="action danger" id="dispatch-publication" type="button" hidden>Send approved feedback to GitHub</button></div>
             </fieldset>
           </form>
           <p class="mutation-status" id="mutation-status" role="status" aria-live="polite">Select a pending proposal to unlock local actions.</p>
@@ -251,14 +238,13 @@
       const selected = document.querySelector('#selected-pr');
       const selectedConnection = document.querySelector('#selected-connection');
       const selectedTitle = document.querySelector('#selected-title');
+      const openGitHub = document.querySelector('#open-github');
       const selectedState = document.querySelector('#selected-state');
       const selectedFacts = document.querySelector('#selected-facts');
       const timeline = document.querySelector('#timeline-items');
       const timelineMessage = document.querySelector('#timeline-message');
       const timelineToggle = document.querySelector('#timeline-toggle'); const timelinePanel = document.querySelector('#timeline-panel');
-      const hydrateEvidence = document.querySelector('#hydrate-evidence');
-      const evidenceStatus = document.querySelector('#evidence-status');
-      const scheduleReview = document.querySelector('#schedule-review');
+      const requestReview = document.querySelector('#request-review');
       const reviewStatus = document.querySelector('#review-status');
       const overviewMessage = document.querySelector('#overview-message');
       const overviewMetrics = document.querySelector('#overview-metrics');
@@ -288,15 +274,14 @@
       const proposalForm = document.querySelector('#proposal-form');
       const proposalFields = document.querySelector('#proposal-fields');
       const proposalID = document.querySelector('#proposal-id');
+      const proposalHelp = document.querySelector('#proposal-help');
       const proposalBody = document.querySelector('#proposal-body');
       const inlineComments = document.querySelector('#inline-comments');
       const proposalRevisionID = document.querySelector('#proposal-revision-id');
-      const actorID = document.querySelector('#actor-id');
       const decisionReason = document.querySelector('#decision-reason');
       const feedbackPreview = document.querySelector('#feedback-preview'); const feedbackBody = document.querySelector('#feedback-body'); const feedbackComments = document.querySelector('#feedback-comments'); const feedbackSource = document.querySelector('#feedback-source');
       const mutationStatus = document.querySelector('#mutation-status');
       const createRevision = document.querySelector('#create-revision');
-      const simulatePublication = document.querySelector('#simulate-publication');
       const dispatchPublication = document.querySelector('#dispatch-publication');
       const decisionButtons = Array.from(document.querySelectorAll('[data-decision]'));
       let selectedItem = null;
@@ -315,7 +300,6 @@
       const bootstrapSession = async () => { const response = await fetch('/api/v1/session', { credentials:'same-origin' }); if (!response.ok) throw new Error(`Local session returned ${response.status}`); };
       const setConnection = (state, value) => { connection.dataset.state = state; connection.textContent = value; };
       const setMutationStatus = (state, value) => { mutationStatus.dataset.state = state; mutationStatus.textContent = value; };
-      const setEvidenceStatus = (state, value) => { evidenceStatus.dataset.state = state; evidenceStatus.textContent = value; };
       const setReviewStatus = (state, value) => { reviewStatus.dataset.state = state; reviewStatus.textContent = value; };
       const setNotificationPreferencesStatus = (state, value) => { notificationPreferencesStatus.dataset.state = state; notificationPreferencesStatus.textContent = value; };
       const replaceOptions = (select, entries, selectedValue, emptyLabel) => {
@@ -451,7 +435,6 @@
         proposalFields.disabled = activeMutation || !mutationRecordsAvailable;
         createRevision.disabled = activeMutation || !hasProposal;
         decisionButtons.forEach((button) => { button.disabled = activeMutation || !hasProposal || !hasRevision; });
-        simulatePublication.disabled = activeMutation || !hasRevision;
 		dispatchPublication.hidden = publicationMode !== 'enabled';
 		dispatchPublication.disabled = activeMutation || !hasRevision || publicationMode !== 'enabled';
       }
@@ -469,31 +452,30 @@
           feedbackPreview.hidden = false;
         } catch (error) { setMutationStatus('error', error.message); }
       }
-      function syncEvidenceControls() {
-        hydrateEvidence.disabled = evidenceBusy || !selectedItem || evidenceReady;
-        hydrateEvidence.textContent = evidenceBusy ? 'Queueing evidence…' : evidenceReady ? 'Canonical evidence ready' : 'Build canonical evidence';
-      }
       function syncReviewControls() {
-        scheduleReview.disabled = reviewBusy || !selectedItem || !evidenceReady || !reviewExecutionEnabled;
-        scheduleReview.textContent = reviewBusy ? 'Checking policy…' : 'Queue eligible review';
+        requestReview.disabled = evidenceBusy || reviewBusy || !selectedItem || !reviewExecutionEnabled;
+        requestReview.textContent = evidenceBusy ? 'Preparing review…' : reviewBusy ? 'Requesting review…' : 'Request review';
         if (!reviewBusy && !reviewExecutionEnabled) setReviewStatus('idle', 'Review runtime is disabled. Configure trusted engine, then restart reviewd.');
       }
       function setMutationContext(item, events) {
         proposalControls.hidden = false;
         const proposals = uniqueCurrent(events, 'proposal');
         const revisions = uniqueCurrent(events, 'proposal_revision');
-        const preferredProposal = item.proposal_id || (proposals.length === 1 ? proposals[0].id : '');
-        const preferredRevision = item.kind === 'pending_proposal' ? item.id : (revisions.length === 1 ? revisions[0].id : '');
-        replaceOptions(proposalID, proposals.map((event) => ({ id:event.id, label:`${event.id} · ${event.detail || 'proposal'}` })), preferredProposal, 'Select current proposal record');
-        replaceOptions(proposalRevisionID, revisions.map((event) => ({ id:event.id, label:`${event.id} · ${event.detail || 'revision'}` })), preferredRevision, 'Select current revision');
+        const newest = (entries) => [...entries].sort((left, right) => new Date(right.occurred_at) - new Date(left.occurred_at))[0];
+        const currentProposal = proposals.find((event) => event.id === item.proposal_id) || newest(proposals);
+        const currentRevision = item.kind === 'pending_proposal' ? revisions.find((event) => event.id === item.id) : newest(revisions);
+        replaceOptions(proposalID, proposals.map((event) => ({ id:event.id, label:event.id })), currentProposal?.id || '', 'No current proposal record');
+        replaceOptions(proposalRevisionID, revisions.map((event) => ({ id:event.id, label:event.id })), currentRevision?.id || '', 'No current revision');
         mutationRecordsAvailable = proposals.length > 0 && revisions.length > 0;
         const ready = Boolean(proposalID.value && proposalRevisionID.value);
         syncMutationControls();
         if (!ready) {
-          setMutationStatus('idle', proposals.length > 1 ? 'More than one current proposal. Select exact proposal and revision from timeline records.' : 'No current proposal revision can receive a local decision.');
+          proposalHelp.textContent = 'No current feedback revision can receive a decision.';
+          setMutationStatus('idle', 'No current feedback revision can receive a local decision.');
           return;
         }
-        setMutationStatus('ready', 'Current proposal loaded. Save an edit, then decide its revision.');
+        proposalHelp.textContent = `Current feedback revision created ${formatTime(currentRevision.occurred_at)}.`;
+        setMutationStatus('ready', 'Newest feedback loaded. Edit it, approve it locally, then send it to GitHub when ready.');
         loadFeedbackPreview();
       }
       const responseError = async (response) => {
@@ -542,22 +524,20 @@
         evidenceReady = false;
         selectedFacts.hidden = true;
         selectedFacts.replaceChildren();
-        syncEvidenceControls();
 		syncReviewControls();
-        setEvidenceStatus('idle', 'Selected pull request can be hydrated with current GET-only GitHub evidence.');
-        selected.hidden = false; selectedConnection.textContent = item.connection_id; selectedTitle.textContent = item.title || item.pull_request_id; selectedState.textContent = item.state;
+        selected.hidden = false; selectedConnection.textContent = `${item.repository || 'repository'} #${item.number || '—'} · ${item.author ? `by ${item.author} · ` : ''}${formatTime(item.occurred_at)}`; selectedTitle.textContent = item.title || item.pull_request_id; selectedState.textContent = item.state;
         timeline.replaceChildren(); timelineMessage.textContent = 'Loading immutable events.'; timelineMessage.removeAttribute('role');
         clearMutationContext('Loading current proposal records.');
         document.querySelectorAll('.inbox-item').forEach((button) => button.setAttribute('aria-current', String(button.dataset.id === item.id)));
         api(`/api/v1/pull-requests/${encodeURIComponent(item.pull_request_id)}?connection_id=${encodeURIComponent(item.connection_id)}`).then((detail) => {
           if (!selectedItem || selectedItem.id !== item.id || selectedItem.connection_id !== item.connection_id) return;
+          selectedConnection.textContent = `${detail.repository || item.repository || 'repository'} #${detail.number || item.number || '—'} · ${detail.author ? `by ${detail.author} · ` : ''}${formatTime(detail.current_observation?.observed_at || item.occurred_at)}`;
           selectedTitle.textContent = detail.title || item.title || item.pull_request_id;
           selectedState.textContent = detail.state || item.state;
+          openGitHub.hidden = !detail.html_url; openGitHub.href = detail.html_url || '#';
           evidenceReady = detail.current_revision?.identity_kind === 'canonical_diff';
           renderSelectedFacts(detail);
-          syncEvidenceControls();
 		  syncReviewControls();
-          setEvidenceStatus(evidenceReady ? 'ready' : 'idle', evidenceReady ? 'Canonical diff evidence is current. New hydration is blocked.' : 'Selected pull request can be hydrated with current GET-only GitHub evidence.');
         }).catch(() => {});
         api(`/api/v1/pull-requests/${encodeURIComponent(item.pull_request_id)}/timeline?connection_id=${encodeURIComponent(item.connection_id)}`).then((page) => {
           timelineMessage.textContent = page.items.length ? '' : 'No immutable events recorded for this selection.';
@@ -596,29 +576,16 @@
         const decision = button.dataset.decision;
         const proposal = proposalID.value;
         const revision = proposalRevisionID.value;
-        const actor = actorID.value.trim();
-        if (!proposal || !revision || !actor) { setMutationStatus('error', 'Proposal, revision, and actor are required.'); return; }
+        if (!proposal || !revision) { setMutationStatus('error', 'Current feedback revision is unavailable.'); return; }
         setMutationBusy(true); setMutationStatus('idle', `${decision === 'approve' ? 'Approving' : 'Rejecting'} selected revision.`);
         try {
-          await postMutation(`/api/v1/mutate/proposals/${encodeURIComponent(proposal)}/decisions`, { proposal_revision_id:revision, decision, actor_id:actor, idempotency_key:newCommandID(), reason:decisionReason.value.trim() });
+          await postMutation(`/api/v1/mutate/proposals/${encodeURIComponent(proposal)}/decisions`, { proposal_revision_id:revision, decision, actor_id:'local-dashboard', idempotency_key:newCommandID(), reason:decisionReason.value.trim() });
           decisionReason.value = '';
           setMutationStatus('ready', `Revision ${decision === 'approve' ? 'approved' : 'rejected'} locally. Refreshing attention queue.`);
           await reloadInbox();
         } catch (error) { setMutationStatus('error', error.message); }
         finally { setMutationBusy(false); }
       }));
-      simulatePublication.addEventListener('click', async () => {
-        const revision = proposalRevisionID.value;
-        if (!revision) { setMutationStatus('error', 'Choose one proposal revision before simulation.'); return; }
-        setMutationBusy(true); setMutationStatus('idle', 'Scheduling local publication simulation.');
-        try {
-          const result = await postMutation(`/api/v1/mutate/proposal-revisions/${encodeURIComponent(revision)}/publication/simulate`, { idempotency_key:newCommandID() });
-          if (result.job) setMutationStatus('ready', 'Local simulation queued. No GitHub action will run.');
-          else setMutationStatus('ready', 'Effect recorded while publication is disabled. No GitHub action will run.');
-          await reloadInbox();
-        } catch (error) { setMutationStatus('error', error.message); }
-        finally { setMutationBusy(false); }
-      });
       dispatchPublication.addEventListener('click', async () => {
         const revision = proposalRevisionID.value;
         if (!revision) { setMutationStatus('error', 'Choose one approved proposal revision before publication.'); return; }
@@ -631,31 +598,25 @@
         } catch (error) { setMutationStatus('error', error.message); }
         finally { setMutationBusy(false); }
       });
-      hydrateEvidence.addEventListener('click', async () => {
+      requestReview.addEventListener('click', async () => {
         if (!selectedItem) return;
-        evidenceBusy = true;
-        syncEvidenceControls();
-        setEvidenceStatus('idle', 'Queueing canonical evidence hydration. No GitHub write will run.');
+        if (evidenceReady) {
+          reviewBusy = true; syncReviewControls(); setReviewStatus('idle', 'Requesting review.');
+          try {
+            const result = await postMutation(`/api/v1/mutate/pull-requests/${encodeURIComponent(selectedItem.pull_request_id)}/schedule-review`, { connection_id:selectedItem.connection_id });
+            setReviewStatus('ready', result.created ? 'Review queued. Runtime activity will show outcome.' : 'Matching review already queued. Runtime activity will show outcome.');
+            await refreshTelemetry();
+          } catch (error) { setReviewStatus('error', error.message); }
+          finally { reviewBusy = false; syncReviewControls(); }
+          return;
+        }
+        evidenceBusy = true; syncReviewControls(); setReviewStatus('idle', 'Preparing current evidence before review.');
         try {
           const result = await postMutation(`/api/v1/mutate/pull-requests/${encodeURIComponent(selectedItem.pull_request_id)}/hydrate`, { connection_id:selectedItem.connection_id });
-          setEvidenceStatus('ready', result.created ? 'Evidence hydration queued. Runtime activity will show outcome.' : 'Evidence job already queued. Runtime activity will show outcome.');
-          await refreshTelemetry();
-        } catch (error) { setEvidenceStatus('error', error.message); }
-        finally { evidenceBusy = false; syncEvidenceControls(); }
-      });
-      scheduleReview.addEventListener('click', async () => {
-        if (!selectedItem) return;
-        reviewBusy = true;
-        syncReviewControls();
-        setReviewStatus('idle', 'Checking active automatic policy against canonical evidence.');
-        try {
-          const result = await postMutation(`/api/v1/mutate/pull-requests/${encodeURIComponent(selectedItem.pull_request_id)}/schedule-review`, { connection_id:selectedItem.connection_id });
-          if (!result.matched) setReviewStatus('idle', 'No active automatic policy matches this pull request.');
-          else if (result.trigger_kind !== 'automatic') setReviewStatus('idle', `Matched ${result.trigger_kind} policy. It does not queue automatic review.`);
-          else setReviewStatus('ready', result.created ? 'Review queued. Runtime activity will show outcome.' : 'Matching review already queued. Runtime activity will show outcome.');
+          setReviewStatus('ready', result.created ? 'Preparing evidence. Request review again once it finishes.' : 'Evidence is already being prepared. Request review once it finishes.');
           await refreshTelemetry();
         } catch (error) { setReviewStatus('error', error.message); }
-        finally { reviewBusy = false; syncReviewControls(); }
+        finally { evidenceBusy = false; syncReviewControls(); }
       });
       notificationPreferencesForm.addEventListener('submit', async (event) => {
         event.preventDefault();
