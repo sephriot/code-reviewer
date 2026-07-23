@@ -45,6 +45,76 @@ type PullRequestDetail struct {
 	CurrentProposalRevisionCount int
 }
 
+// PullRequestListQuery bounds current observed pull-request inventory.
+type PullRequestListQuery struct {
+	ConnectionID string
+	Limit        int
+	Cursor       string
+}
+
+// PullRequestListItem is one current observed pull request.
+type PullRequestListItem struct {
+	ConnectionID  string
+	PullRequestID string
+	Owner         string
+	Repository    string
+	Number        int
+	Title         string
+	State         string
+	Freshness     string
+	ObservedAt    time.Time
+}
+
+// PullRequestListPage is one bounded inventory page.
+type PullRequestListPage struct {
+	Items      []PullRequestListItem
+	NextCursor string
+}
+
+// ListPullRequests lists current observed pull requests, including items with
+// no active attention.
+func (s *Store) ListPullRequests(ctx context.Context, query PullRequestListQuery) (PullRequestListPage, error) {
+	connectionID := strings.TrimSpace(query.ConnectionID)
+	if len(connectionID) > 256 {
+		return PullRequestListPage{}, errors.New("pull request list connection ID is invalid")
+	}
+	limit, cursor, err := normalizeReadPage(query.Limit, query.Cursor)
+	if err != nil {
+		return PullRequestListPage{}, err
+	}
+	hasCursor := 0
+	if query.Cursor != "" {
+		hasCursor = 1
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT projection.connection_id, projection.pull_request_id, repository.owner_login, repository.name, pull_request.number, observation.title, observation.github_state, projection.freshness, observation.observed_at_us FROM pull_request_projection_state AS projection JOIN pull_requests AS pull_request ON pull_request.id = projection.pull_request_id JOIN repositories AS repository ON repository.id = projection.repository_id JOIN pull_request_observations AS observation ON observation.id = projection.current_observation_id WHERE (? = '' OR projection.connection_id = ?) AND (? = 0 OR observation.observed_at_us < ? OR (observation.observed_at_us = ? AND projection.pull_request_id > ?)) ORDER BY observation.observed_at_us DESC, projection.pull_request_id LIMIT ?", connectionID, connectionID, hasCursor, cursor.OccurredAtUS, cursor.OccurredAtUS, cursor.ID, limit+1)
+	if err != nil {
+		return PullRequestListPage{}, fmt.Errorf("list pull requests: %w", err)
+	}
+	defer rows.Close()
+	page := PullRequestListPage{Items: make([]PullRequestListItem, 0, limit)}
+	for rows.Next() {
+		var item PullRequestListItem
+		var observedAtUS int64
+		if err := rows.Scan(&item.ConnectionID, &item.PullRequestID, &item.Owner, &item.Repository, &item.Number, &item.Title, &item.State, &item.Freshness, &observedAtUS); err != nil {
+			return PullRequestListPage{}, fmt.Errorf("scan pull request list: %w", err)
+		}
+		item.ObservedAt = time.UnixMicro(observedAtUS).UTC()
+		page.Items = append(page.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return PullRequestListPage{}, fmt.Errorf("iterate pull request list: %w", err)
+	}
+	if len(page.Items) > limit {
+		last := page.Items[limit-1]
+		next, err := encodeReadCursor(readCursor{OccurredAtUS: last.ObservedAt.UnixMicro(), ID: last.PullRequestID})
+		if err != nil {
+			return PullRequestListPage{}, err
+		}
+		page.Items, page.NextCursor = page.Items[:limit], next
+	}
+	return page, nil
+}
+
 // PullRequestDetail loads one current local pull-request projection. It is a
 // SELECT-only read model and retains no remote publication capability.
 func (s *Store) PullRequestDetail(ctx context.Context, query PullRequestDetailQuery) (PullRequestDetail, error) {

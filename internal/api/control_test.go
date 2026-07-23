@@ -15,6 +15,7 @@ import (
 
 type fakeInboxReader struct {
 	attention      sqlite.AttentionPage
+	pullRequests   sqlite.PullRequestListPage
 	timeline       sqlite.PullRequestTimelinePage
 	detail         sqlite.PullRequestDetail
 	history        sqlite.HistoryPage
@@ -30,6 +31,10 @@ type fakeInboxReader struct {
 	statusEffectID string
 	statusErr      error
 	err            error
+}
+
+func (f *fakeInboxReader) ListPullRequests(_ context.Context, _ sqlite.PullRequestListQuery) (sqlite.PullRequestListPage, error) {
+	return f.pullRequests, f.err
 }
 
 func (f *fakeInboxReader) ListCurrentAttention(_ context.Context, query sqlite.AttentionQuery) (sqlite.AttentionPage, error) {
