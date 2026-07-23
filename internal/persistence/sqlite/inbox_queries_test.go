@@ -110,7 +110,7 @@ func TestPullRequestTimelinePagesFactsAndLedgerHistoryWithoutWrites(t *testing.T
 	wantedKinds := map[TimelineKind]bool{
 		TimelineKindObservation: false, TimelineKindRevision: false, TimelineKindRun: false,
 		TimelineKindAssessment: false, TimelineKindPolicyEvaluation: false, TimelineKindProposal: false,
-		TimelineKindDecision: false, TimelineKindPublicationEffect: false,
+		TimelineKindDecision: false, TimelineKindPublicationEffect: false, TimelineKindPublicationAttempt: false,
 	}
 	for _, item := range all {
 		if item.ConnectionID != "connection-1" || item.PullRequestID != "pr-1" || item.State != TimelineStateCurrent || !item.Current {

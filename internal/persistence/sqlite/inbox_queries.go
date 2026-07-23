@@ -77,6 +77,7 @@ const (
 	TimelineKindProposalRevision      TimelineKind = "proposal_revision"
 	TimelineKindDecision              TimelineKind = "decision"
 	TimelineKindPublicationEffect     TimelineKind = "publication_effect"
+	TimelineKindPublicationAttempt    TimelineKind = "publication_attempt"
 	TimelineKindPublicationResolution TimelineKind = "publication_resolution"
 )
 
@@ -466,6 +467,13 @@ WITH timeline AS (
  FROM publication_effects AS effect JOIN pull_request_projection_state AS projection ON projection.pull_request_id = effect.pull_request_id AND projection.connection_id = effect.connection_id
  WHERE effect.connection_id = ? AND effect.pull_request_id = ?
  UNION ALL
+ SELECT 'publication_attempt', attempt.id, effect.connection_id, effect.pull_request_id, effect.revision_id, effect.observation_id,
+       attempt.completed_at_us, effect.effect_type || ':' || attempt.publication_mode || ':' || attempt.outcome,
+       CASE WHEN effect.revision_id = projection.current_revision_id AND effect.observation_id = projection.current_observation_id THEN 1 ELSE 0 END
+FROM publication_attempts AS attempt JOIN publication_effects AS effect ON effect.id = attempt.effect_id
+JOIN pull_request_projection_state AS projection ON projection.pull_request_id = effect.pull_request_id AND projection.connection_id = effect.connection_id
+WHERE effect.connection_id = ? AND effect.pull_request_id = ?
+ UNION ALL
  SELECT 'publication_resolution', resolution.id, effect.connection_id, effect.pull_request_id, effect.revision_id, effect.observation_id,
         resolution.resolved_at_us, effect.effect_type || ':resolution:' || resolution.resolution,
         CASE WHEN effect.revision_id = projection.current_revision_id AND effect.observation_id = projection.current_observation_id THEN 1 ELSE 0 END
@@ -482,6 +490,7 @@ LIMIT ?`,
 		connectionID, pullRequestID, connectionID, pullRequestID, connectionID, pullRequestID,
 		connectionID, pullRequestID, connectionID, pullRequestID, connectionID, pullRequestID,
 		connectionID, pullRequestID, connectionID, pullRequestID, connectionID, pullRequestID,
+		connectionID, pullRequestID,
 		connectionID, pullRequestID,
 		hasCursor, cursor.OccurredAtUS, cursor.OccurredAtUS, cursor.Kind, cursor.Kind, cursor.ID, limit+1)
 	if err != nil {
