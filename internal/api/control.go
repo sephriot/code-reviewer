@@ -150,18 +150,19 @@ type timelineResponse struct {
 }
 
 type pullRequestDetailResponse struct {
-	ConnectionID  string `json:"connection_id"`
-	RepositoryID  string `json:"repository_id"`
-	PullRequestID string `json:"pull_request_id"`
-	Owner         string `json:"owner"`
-	Repository    string `json:"repository"`
-	Number        int    `json:"number"`
-	Title         string `json:"title"`
-	Author        string `json:"author"`
-	State         string `json:"state"`
-	HTMLURL       string `json:"html_url"`
-	Freshness     string `json:"freshness"`
-	LatestFailure string `json:"latest_failure"`
+	ConnectionID   string                        `json:"connection_id"`
+	RepositoryID   string                        `json:"repository_id"`
+	PullRequestID  string                        `json:"pull_request_id"`
+	Owner          string                        `json:"owner"`
+	Repository     string                        `json:"repository"`
+	Number         int                           `json:"number"`
+	Title          string                        `json:"title"`
+	Author         string                        `json:"author"`
+	State          string                        `json:"state"`
+	HTMLURL        string                        `json:"html_url"`
+	Freshness      string                        `json:"freshness"`
+	LatestFailure  string                        `json:"latest_failure"`
+	RunDiagnostics []reviewRunDiagnosticResponse `json:"run_diagnostics"`
 
 	CurrentRevision struct {
 		ID           string `json:"id"`
@@ -177,6 +178,13 @@ type pullRequestDetailResponse struct {
 		ReviewRuns        int `json:"review_runs"`
 		ProposalRevisions int `json:"proposal_revisions"`
 	} `json:"current_counts"`
+}
+
+type reviewRunDiagnosticResponse struct {
+	RunID      string    `json:"run_id"`
+	EventKind  string    `json:"event_kind"`
+	Code       string    `json:"code"`
+	OccurredAt time.Time `json:"occurred_at"`
 }
 
 type historyResponse struct {
@@ -423,6 +431,12 @@ func newPullRequestDetailResponse(detail sqlite.PullRequestDetail) pullRequestDe
 		ConnectionID: detail.ConnectionID, RepositoryID: detail.RepositoryID, PullRequestID: detail.PullRequestID,
 		Owner: detail.Owner, Repository: detail.Repository, Number: detail.Number, Title: detail.Title, Author: detail.Author,
 		State: detail.State, HTMLURL: detail.HTMLURL, Freshness: detail.Freshness, LatestFailure: detail.LatestFailure,
+	}
+	response.RunDiagnostics = make([]reviewRunDiagnosticResponse, len(detail.RunDiagnostics))
+	for index, diagnostic := range detail.RunDiagnostics {
+		response.RunDiagnostics[index] = reviewRunDiagnosticResponse{
+			RunID: diagnostic.RunID, EventKind: diagnostic.EventKind, Code: diagnostic.Code, OccurredAt: diagnostic.OccurredAt,
+		}
 	}
 	response.CurrentRevision.ID, response.CurrentRevision.IdentityKind = detail.CurrentRevisionID, detail.CurrentRevisionIdentityKind
 	response.CurrentRevision.HeadSHA, response.CurrentRevision.BaseSHA = detail.CurrentHeadSHA, detail.CurrentBaseSHA

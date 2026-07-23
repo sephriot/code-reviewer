@@ -72,7 +72,7 @@
     input:disabled, textarea:disabled, select:disabled, button:disabled { cursor:not-allowed; opacity:.52; }
     .action-row { display:flex; flex-wrap:wrap; gap:8px; }
     .action { display:inline-flex; align-items:center; justify-content:center; min-height:36px; padding:8px 11px; color:var(--ink); background:transparent; border:1px solid var(--line); cursor:pointer; font-weight:700; font-size:11px; letter-spacing:.08em; text-transform:uppercase; text-decoration:none; }
-    .icon-action { width:30px; min-height:30px; padding:5px; border:0; color:var(--muted); } .icon-action:hover:not(:disabled) { color:var(--signal); background:transparent; } .icon-action svg { width:18px; height:18px; fill:currentColor; }
+    .icon-action { flex:none; inline-size:32px; block-size:32px; min-block-size:0; padding:0; border:0; color:var(--muted); } .icon-action:hover:not(:disabled) { color:var(--signal); background:transparent; } .icon-action svg { width:18px; height:18px; fill:currentColor; }
     .inbox-filters { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:14px 0; }
     .queue-tabs { display:flex; gap:6px; margin:14px 0 0; } .queue-tabs button[aria-pressed="true"] { color:#161713; background:var(--signal); border-color:var(--signal); }
     .action:hover:not(:disabled) { color:#161713; background:var(--signal); border-color:var(--signal); }
@@ -85,6 +85,11 @@
     .feedback-preview h4 { margin:0; color:var(--muted); font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
     .feedback-body { margin:0; padding:10px; overflow:auto; white-space:pre-wrap; color:var(--ink); background:#151612; border:1px solid var(--line); font-size:12px; }
     .comment-preview { padding:10px; border-left:3px solid var(--blue); background:rgba(109,156,255,.08); }
+	.run-diagnostics { display:grid; gap:8px; margin-top:14px; padding:12px; border:1px solid color-mix(in srgb,var(--danger) 45%,var(--line)); background:rgba(255,107,82,.06); }
+	.run-diagnostics summary { cursor:pointer; color:var(--danger); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+	.run-diagnostics-list { display:grid; gap:6px; margin:8px 0 0; padding:0; list-style:none; }
+	.run-diagnostics-list li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding-top:6px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+	.run-diagnostics-list strong { color:var(--ink); font-size:11px; }
     .comment-preview strong { display:block; font-size:11px; } .comment-preview p { margin:5px 0 0; color:var(--muted); font-size:12px; white-space:pre-wrap; }
     .microcopy { margin:0; color:var(--muted); font-size:10px; letter-spacing:normal; text-transform:none; }
     .telemetry { grid-column:1 / -1; display:grid; grid-template-columns:minmax(0,1.2fr) minmax(260px,.8fr); gap:0; padding:0; border-top:1px solid var(--line); }
@@ -143,7 +148,7 @@
       </section>
       <section class="detail" aria-labelledby="timeline-heading">
         <div class="section-head"><h2 id="timeline-heading">Selected pull request</h2></div>
-        <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3><dl class="selected-facts" id="selected-facts" hidden></dl><p class="notice" id="failure-detail" hidden></p></div><div class="action-row"><button class="action timeline-toggle" id="timeline-toggle" type="button" aria-expanded="false">Show timeline</button><a class="action icon-action" id="open-github" href="#" target="_blank" rel="noreferrer" hidden aria-label="Open pull request on GitHub" title="Open on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38l-.01-1.49c-2.01.44-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg></a></div></div>
+        <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3><dl class="selected-facts" id="selected-facts" hidden></dl><section class="run-diagnostics" id="run-diagnostics-panel" hidden><p class="notice" id="failure-detail"></p><details><summary>Review run diagnostics</summary><ol class="run-diagnostics-list" id="run-diagnostics"></ol><p class="microcopy">Safe lifecycle codes only. Full engine output stays in reviewd process logs.</p></details></section></div><div class="action-row"><button class="action timeline-toggle" id="timeline-toggle" type="button" aria-expanded="false">Show timeline</button><a class="action icon-action" id="open-github" href="#" target="_blank" rel="noreferrer" hidden aria-label="Open pull request on GitHub" title="Open on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38l-.01-1.49c-2.01.44-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg></a></div></div>
         <div id="timeline-panel" hidden><p class="notice" id="timeline-message">Choose inbox item to inspect immutable evidence.</p><ol class="timeline" id="timeline-items" aria-label="Selected pull request timeline"></ol></div>
         <section class="mutation" aria-labelledby="review-controls-heading">
           <div class="mutation-head"><h3 id="review-controls-heading">Review</h3><span class="pill">Local</span></div>
@@ -251,6 +256,7 @@
       const selectedTitle = document.querySelector('#selected-title');
       const openGitHub = document.querySelector('#open-github');
       const failureDetail = document.querySelector('#failure-detail');
+	  const runDiagnosticsPanel = document.querySelector('#run-diagnostics-panel'); const runDiagnostics = document.querySelector('#run-diagnostics');
       const selectedFacts = document.querySelector('#selected-facts');
       const timeline = document.querySelector('#timeline-items');
       const timelineMessage = document.querySelector('#timeline-message');
@@ -308,6 +314,8 @@
       let queueKind = 'pending_proposal';
       const formatTime = (value) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'unknown time' : new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(date); };
       const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value || '—'; if (className) node.className = className; return node; };
+	  const diagnosticCopy = (code) => ({ configuration_invalid:'Review configuration is invalid.', input_invalid:'Review input is invalid.', engine_protocol_invalid:'Review engine returned unusable output.', validation_failed:'Review output failed validation.', stale_evidence:'PR changed before review completed.', transport_unavailable:'Review engine is unavailable.', rate_limited:'Review engine rate limit reached.', timeout:'Review engine timed out.', engine_exit:'Review engine exited with an error.', internal_error:'Reviewd internal error.', canceled_by_request:'Review was canceled.', canceled_by_shutdown:'Reviewd stopped during review.' }[code] || 'Review failed.');
+	  function renderRunDiagnostics(detail) { const diagnostics = Array.isArray(detail.run_diagnostics) ? detail.run_diagnostics : []; runDiagnostics.replaceChildren(); if (!diagnostics.length) { runDiagnosticsPanel.hidden = true; return; } runDiagnosticsPanel.hidden = false; const latest = diagnostics[0]; failureDetail.textContent = diagnosticCopy(latest.code); failureDetail.setAttribute('role', 'alert'); diagnostics.forEach((diagnostic) => { const row = document.createElement('li'); const copy = document.createElement('span'); copy.append(text('strong', diagnosticCopy(diagnostic.code)), text('span', ` ${diagnostic.event_kind.replaceAll('_', ' ')} · ${diagnostic.run_id}`)); row.append(copy, text('time', formatTime(diagnostic.occurred_at))); runDiagnostics.append(row); }); }
       const api = async (path) => { const response = await fetch(path, { credentials:'same-origin', headers:{Accept:'application/json'} }); if (!response.ok) throw new Error(`Read model returned ${response.status}`); return response.json(); };
       const bootstrapSession = async () => { const response = await fetch('/api/v1/session', { credentials:'same-origin' }); if (!response.ok) throw new Error(`Local session returned ${response.status}`); };
       const setConnection = (state, value) => { connection.dataset.state = state; connection.textContent = value; };
@@ -543,7 +551,7 @@
         selectedFacts.hidden = true;
         selectedFacts.replaceChildren();
 		syncReviewControls();
-        failureDetail.hidden = true; failureDetail.textContent = '';
+		runDiagnosticsPanel.hidden = true; runDiagnostics.replaceChildren(); failureDetail.textContent = ''; failureDetail.removeAttribute('role');
         selected.hidden = false; selectedConnection.textContent = `${item.repository || 'repository'} #${item.number || '—'} · ${item.author ? `by ${item.author} · ` : ''}${formatTime(item.occurred_at)}`; selectedTitle.textContent = item.title || item.pull_request_id;
         timeline.replaceChildren(); timelineMessage.textContent = 'Loading immutable events.'; timelineMessage.removeAttribute('role');
         clearMutationContext('Loading current proposal records.');
@@ -553,7 +561,7 @@
           selectedConnection.textContent = `${detail.repository || item.repository || 'repository'} #${detail.number || item.number || '—'} · ${detail.author ? `by ${detail.author} · ` : ''}${formatTime(detail.current_observation?.observed_at || item.occurred_at)}`;
           selectedTitle.textContent = detail.title || item.title || item.pull_request_id;
           openGitHub.hidden = !detail.html_url; openGitHub.href = detail.html_url || '#';
-          if (item.kind === 'failed_run' && detail.latest_failure) { failureDetail.hidden = false; failureDetail.textContent = `Latest review failure: ${detail.latest_failure}. See Runtime activity for the job log.`; failureDetail.setAttribute('role', 'alert'); }
+		  if (item.kind === 'failed_run') renderRunDiagnostics(detail);
           evidenceReady = detail.current_revision?.identity_kind === 'canonical_diff';
           renderSelectedFacts(detail);
 		  syncReviewControls();

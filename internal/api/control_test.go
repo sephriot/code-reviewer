@@ -88,6 +88,7 @@ func TestControlReadEndpointsAndAliases(t *testing.T) {
 		detail: sqlite.PullRequestDetail{
 			ConnectionID: "connection-1", RepositoryID: "repo-1", PullRequestID: "pr-1", Owner: "owner", Repository: "repository", Number: 1,
 			Title: "Detail", State: "open", Freshness: "fresh", CurrentRevisionID: "revision-1", CurrentObservationID: "observation-1", CurrentObservedAt: time.Unix(2, 0).UTC(),
+			RunDiagnostics: []sqlite.ReviewRunDiagnostic{{RunID: "run-1", EventKind: sqlite.ReviewRunEventFailedTerminal, Code: "engine_protocol_invalid", OccurredAt: time.Unix(4, 0).UTC()}},
 		},
 		history: sqlite.HistoryPage{Items: []sqlite.HistoryItem{{
 			Kind: sqlite.HistoryKindCompletedRun, ID: "run-1", ConnectionID: "connection-1", PullRequestID: "pr-1", RevisionID: "revision-1", ObservationID: "observation-1", OccurredAt: time.Unix(3, 0).UTC(), State: sqlite.TimelineStateCurrent, Current: true, Detail: "cli:succeeded",
@@ -137,6 +138,15 @@ func TestControlReadEndpointsAndAliases(t *testing.T) {
 		}
 		if reader.detailQuery.ConnectionID != "connection-1" || reader.detailQuery.PullRequestID != "pr-1" {
 			t.Fatalf("detail query = %+v", reader.detailQuery)
+		}
+		var detail struct {
+			RunDiagnostics []reviewRunDiagnosticResponse `json:"run_diagnostics"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+			t.Fatal(err)
+		}
+		if len(detail.RunDiagnostics) != 1 || detail.RunDiagnostics[0].RunID != "run-1" || detail.RunDiagnostics[0].EventKind != sqlite.ReviewRunEventFailedTerminal || detail.RunDiagnostics[0].Code != "engine_protocol_invalid" || !detail.RunDiagnostics[0].OccurredAt.Equal(time.Unix(4, 0).UTC()) {
+			t.Fatalf("detail diagnostics = %+v", detail.RunDiagnostics)
 		}
 	}
 }

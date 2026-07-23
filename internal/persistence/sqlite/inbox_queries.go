@@ -259,7 +259,7 @@ WITH latest_run_events AS (
   AND projection.connection_id = run.connection_id
  WHERE run.revision_id = projection.current_revision_id
    AND run.observation_id = projection.current_observation_id
-   AND event.event_kind IN ('failed_retryable', 'failed_terminal', 'canceled', 'superseded')
+  AND event.event_kind IN ('failed_retryable', 'failed_terminal', 'canceled')
 ) , ranked AS (
  SELECT attention.*, ROW_NUMBER() OVER (
    PARTITION BY connection_id, pull_request_id

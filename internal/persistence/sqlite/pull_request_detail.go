@@ -23,18 +23,19 @@ type PullRequestDetailQuery struct {
 // PullRequestDetail is a compact, current evidence view for one pull request.
 // Counts include only immutable records bound to the selected current evidence.
 type PullRequestDetail struct {
-	ConnectionID  string
-	RepositoryID  string
-	PullRequestID string
-	Owner         string
-	Repository    string
-	Number        int
-	Title         string
-	Author        string
-	State         string
-	HTMLURL       string
-	Freshness     string
-	LatestFailure string
+	ConnectionID   string
+	RepositoryID   string
+	PullRequestID  string
+	Owner          string
+	Repository     string
+	Number         int
+	Title          string
+	Author         string
+	State          string
+	HTMLURL        string
+	Freshness      string
+	LatestFailure  string
+	RunDiagnostics []ReviewRunDiagnostic
 
 	CurrentRevisionID           string
 	CurrentRevisionIdentityKind string
@@ -45,6 +46,16 @@ type PullRequestDetail struct {
 
 	CurrentReviewRunCount        int
 	CurrentProposalRevisionCount int
+}
+
+// ReviewRunDiagnostic is one bounded, safe-to-retain review-run failure.
+// Engine stdout and stderr intentionally remain in the service log because
+// they may contain source code or credentials obtained by an external CLI.
+type ReviewRunDiagnostic struct {
+	RunID      string
+	EventKind  string
+	Code       string
+	OccurredAt time.Time
 }
 
 // PullRequestListQuery bounds current observed pull-request inventory.
@@ -185,5 +196,47 @@ WHERE projection.connection_id = ? AND projection.pull_request_id = ?`, connecti
 		return PullRequestDetail{}, errors.New("stored pull request detail is invalid")
 	}
 	detail.CurrentObservedAt = time.UnixMicro(observedAtUS).UTC()
+	diagnostics, err := s.currentReviewRunDiagnostics(ctx, connectionID, pullRequestID, detail.CurrentRevisionID, detail.CurrentObservationID)
+	if err != nil {
+		return PullRequestDetail{}, err
+	}
+	detail.RunDiagnostics = diagnostics
 	return detail, nil
+}
+
+func (s *Store) currentReviewRunDiagnostics(ctx context.Context, connectionID, pullRequestID, revisionID, observationID string) ([]ReviewRunDiagnostic, error) {
+	if revisionID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT run.id, event.event_kind, COALESCE(json_extract(event.payload_json, '$.code'), ''), event.occurred_at_us
+FROM review_runs AS run
+JOIN review_run_events AS event ON event.run_id = run.id
+WHERE run.connection_id = ? AND run.pull_request_id = ?
+  AND run.revision_id = ? AND run.observation_id = ?
+  AND event.event_kind IN ('failed_retryable', 'failed_terminal', 'canceled')
+ORDER BY event.occurred_at_us DESC, event.sequence DESC
+LIMIT 8`, connectionID, pullRequestID, revisionID, observationID)
+	if err != nil {
+		return nil, fmt.Errorf("list current review run diagnostics: %w", err)
+	}
+	defer rows.Close()
+	items := make([]ReviewRunDiagnostic, 0, 2)
+	for rows.Next() {
+		var item ReviewRunDiagnostic
+		var occurredAtUS int64
+		if err := rows.Scan(&item.RunID, &item.EventKind, &item.Code, &occurredAtUS); err != nil {
+			return nil, fmt.Errorf("scan current review run diagnostic: %w", err)
+		}
+		if item.RunID == "" || !validReviewRunFailureEvent(item.EventKind) ||
+			!validReviewRunDiagnostic(item.EventKind, item.Code) || occurredAtUS < 0 {
+			return nil, errors.New("stored review run diagnostic is invalid")
+		}
+		item.OccurredAt = time.UnixMicro(occurredAtUS).UTC()
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate current review run diagnostics: %w", err)
+	}
+	return items, nil
 }
