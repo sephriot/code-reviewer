@@ -499,7 +499,10 @@
           let state = 'delivered';
           if (!('Notification' in window) || Notification.permission === 'denied') state = 'suppressed';
           else if (Notification.permission === 'default') continue;
-          else new Notification('reviewd', { body:item.event_type, tag:item.id });
+          else {
+            const notification = new Notification('reviewd', { body:item.event_type, tag:item.id });
+            notification.onclick = () => { window.focus(); window.location.hash = 'review'; notification.close(); };
+          }
           try { await postMutation(`/api/v1/mutate/notification-deliveries/browser/${encodeURIComponent(item.id)}/outcome`, { state }); }
           catch (_) { /* Keep durable delivery queued for next dashboard poll. */ }
         }
