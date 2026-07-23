@@ -127,6 +127,7 @@ JOIN revision_manifests AS manifest
  AND manifest.pull_request_id = projection.pull_request_id
 WHERE projection.connection_id = ?
   AND projection.pull_request_id = ?
+  AND observation.github_state = 'open'
   AND revision.identity_kind = 'canonical_diff'
   AND revision.is_publishable = 1`, connectionID, pullRequestID).
 		Scan(&target.ConnectionID, &target.PullRequestID, &target.RepositoryID,

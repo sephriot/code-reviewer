@@ -27,6 +27,56 @@ func TestLoadCurrentCanonicalReviewTargetReturnsVerifiedSelectedEvidence(t *test
 	}
 }
 
+func TestLoadCurrentCanonicalReviewTargetExcludesTerminalPullRequest(t *testing.T) {
+	ctx := context.Background()
+	store, attached := seedCurrentCanonicalReviewTarget(t, ctx)
+	seedReviewProfileVersion(t, ctx, store, "profile-1", "profile-version-1")
+	var nextObservationAt, nextProjectionAt int64
+	if err := store.db.QueryRowContext(ctx, `
+SELECT observation.github_updated_at_us + 1, projection.updated_at_us + 1
+FROM pull_request_projection_state AS projection
+JOIN pull_request_observations AS observation ON observation.id = projection.current_observation_id
+WHERE projection.pull_request_id = 'pr-1'`).Scan(&nextObservationAt, &nextProjectionAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO pull_request_observations(
+ id, connection_id, repository_id, pull_request_id, revision_id, head_sha, base_sha,
+ source_kind, source_priority, facts_format_version, facts_sha256, title,
+ author_login, author_database_id, body_sha256, labels_json, is_draft, base_ref,
+ requested_reviewers_json, relationship_set_json, github_state,
+ github_updated_at_us, observed_at_us, created_at_us)
+VALUES ('terminal-observation', 'connection-1', 'repo-1', 'pr-1', ?, ?, ?,
+ 'direct_refresh', 30, 1, ?, 'Merged pull request', 'author', 8001, ?, '[]', 0, 'main', '[]', '[]', 'merged',
+ ?, ?, ?)`, attached.RevisionID, projectionHeadSHA, projectionBaseSHA, strings.Repeat("f", 64), projectionDigest, nextObservationAt, nextObservationAt, nextObservationAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+UPDATE pull_request_projection_state
+SET current_observation_id = 'terminal-observation', updated_at_us = ?
+WHERE pull_request_id = 'pr-1'`, nextProjectionAt); err != nil {
+		t.Fatal(err)
+	}
+	revision := testCanonicalRevision(t)
+	if _, err := store.AttachCanonicalRevision(ctx, CanonicalRevisionInput{
+		ConnectionID: "connection-1", ObservationID: "terminal-observation",
+		HeadSHA: projectionHeadSHA, BaseSHA: projectionBaseSHA, IdentityKey: revision.IdentityKey,
+		ManifestSHA256: revision.ManifestSHA256, ManifestJSON: revision.Manifest, EntryCount: 1,
+		AttachedAt: time.Unix(100, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadCurrentCanonicalReviewTarget(ctx, "connection-1", "pr-1"); !errors.Is(err, ErrCanonicalReviewTargetNotFound) {
+		t.Fatalf("terminal canonical target error = %v", err)
+	}
+	if _, err := store.PrepareReviewRun(ctx, testPrepareReviewRunInput()); !errors.Is(err, ErrCanonicalReviewTargetNotFound) {
+		t.Fatalf("terminal review preparation error = %v", err)
+	}
+	for _, table := range []string{"review_intents", "review_runs", "review_run_contexts", "jobs"} {
+		assertTableCount(t, ctx, store.db, table, 0)
+	}
+}
+
 func seedCurrentCanonicalReviewTarget(t *testing.T, ctx context.Context) (*Store, CanonicalRevisionResult) {
 	t.Helper()
 	store := openMigratedStore(t, ctx)

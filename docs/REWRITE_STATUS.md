@@ -1,7 +1,7 @@
 # Go Rewrite Status
 
-Last implementation checkpoint: repeat-policy proposal suppression stage (this commit).
-Last full Go suite checkpoint: repeat-policy proposal suppression stage (`go test ./...`, `go vet
+Last implementation checkpoint: terminal-review scheduling guard stage (this commit).
+Last full Go suite checkpoint: terminal-review scheduling guard stage (`go test ./...`, `go vet
 ./...`).
 Last browser fixture checkpoint: current queue-filter stage (`pnpm test:e2e`).
 
@@ -27,6 +27,8 @@ it in the same commit as every meaningful implementation stage.
   clear-filter recovery.
 - Attention queue excludes current `closed` and `merged` GitHub observations;
   their immutable review records remain available in History and Timeline.
+- Closed and merged PR observations cannot become a new review execution
+  target, so review intent/run records are never queued after terminal state.
 - Repeat automatic reviews of unchanged evidence retain their policy-evaluation
   audit facts but never create another proposal, revision, or automatic
   approval for the same current rule version.
