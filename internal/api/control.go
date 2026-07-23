@@ -20,6 +20,7 @@ const maxControlPageLimit = 100
 type ControlReader interface {
 	ListCurrentAttention(context.Context, sqlite.AttentionQuery) (sqlite.AttentionPage, error)
 	ListPullRequests(context.Context, sqlite.PullRequestListQuery) (sqlite.PullRequestListPage, error)
+	ListActivity(context.Context, int) ([]sqlite.ActivityItem, error)
 	ListHistory(context.Context, sqlite.HistoryQuery) (sqlite.HistoryPage, error)
 	PullRequestTimeline(context.Context, sqlite.PullRequestTimelineQuery) (sqlite.PullRequestTimelinePage, error)
 	PullRequestDetail(context.Context, sqlite.PullRequestDetailQuery) (sqlite.PullRequestDetail, error)
@@ -53,6 +54,7 @@ func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler
 		mux.HandleFunc("GET "+path, handler.inbox)
 	}
 	mux.HandleFunc("GET /api/v1/pull-requests", handler.pullRequests)
+	mux.HandleFunc("GET /api/v1/activity", handler.activity)
 	for _, path := range []string{
 		"/api/v1/history",
 		"/api/history",
@@ -300,6 +302,27 @@ func (h controlHandler) pullRequests(response http.ResponseWriter, request *http
 		items = append(items, map[string]any{"connection_id": item.ConnectionID, "pull_request_id": item.PullRequestID, "repository": item.Owner + "/" + item.Repository, "number": item.Number, "title": item.Title, "state": item.State, "freshness": item.Freshness, "observed_at": item.ObservedAt})
 	}
 	writeControlJSON(response, http.StatusOK, map[string]any{"items": items, "next_cursor": page.NextCursor})
+}
+
+func (h controlHandler) activity(response http.ResponseWriter, request *http.Request) {
+	if !isLoopbackRemoteAddress(request.RemoteAddr) {
+		writeControlError(response, http.StatusForbidden, "loopback_required", "activity is available only on loopback", false)
+		return
+	}
+	if request.URL.RawQuery != "" {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "activity does not accept query parameters", false)
+		return
+	}
+	if h.reader == nil {
+		writeControlError(response, http.StatusServiceUnavailable, "read_model_unavailable", "control read model is unavailable", true)
+		return
+	}
+	items, err := h.reader.ListActivity(request.Context(), 50)
+	if err != nil {
+		handleReadError(response, err)
+		return
+	}
+	writeControlJSON(response, http.StatusOK, map[string]any{"items": items})
 }
 
 func (h controlHandler) timeline(response http.ResponseWriter, request *http.Request) {

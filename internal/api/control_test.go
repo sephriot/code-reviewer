@@ -37,6 +37,10 @@ func (f *fakeInboxReader) ListPullRequests(_ context.Context, _ sqlite.PullReque
 	return f.pullRequests, f.err
 }
 
+func (f *fakeInboxReader) ListActivity(_ context.Context, _ int) ([]sqlite.ActivityItem, error) {
+	return nil, f.err
+}
+
 func (f *fakeInboxReader) ListCurrentAttention(_ context.Context, query sqlite.AttentionQuery) (sqlite.AttentionPage, error) {
 	f.attentionQuery = query
 	return f.attention, f.err
