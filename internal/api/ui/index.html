@@ -40,6 +40,8 @@
     .item-pr { overflow:hidden; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
     .item-time { color:inherit; opacity:.72; white-space:nowrap; }
     .item-detail { display:block; min-width:0; margin-top:5px; overflow:hidden; color:inherit; opacity:.76; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+    .queue-state { display:inline-block; margin-top:5px; padding:2px 5px; border:1px solid currentColor; color:var(--muted); font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+    .queue-state[data-kind="pending_proposal"] { color:var(--signal); } .queue-state[data-kind="failed_run"] { color:var(--danger); } .queue-state[data-kind="human_review"] { color:var(--blue); }
     .detail { min-width:0; overflow:hidden; background:linear-gradient(135deg,rgba(109,156,255,.08),transparent 45%); }
     .selected { min-width:0; overflow:hidden; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; align-items:start; margin-bottom:30px; padding:18px 0; border-block:1px solid var(--line); }
     .selected > div { min-width:0; }
@@ -70,13 +72,15 @@
     input:disabled, textarea:disabled, select:disabled, button:disabled { cursor:not-allowed; opacity:.52; }
     .action-row { display:flex; flex-wrap:wrap; gap:8px; }
     .action { display:inline-flex; align-items:center; justify-content:center; min-height:36px; padding:8px 11px; color:var(--ink); background:transparent; border:1px solid var(--line); cursor:pointer; font-weight:700; font-size:11px; letter-spacing:.08em; text-transform:uppercase; text-decoration:none; }
-    .icon-action { width:36px; padding:7px; } .icon-action svg { width:18px; height:18px; fill:currentColor; }
+    .icon-action { width:30px; min-height:30px; padding:5px; border:0; color:var(--muted); } .icon-action:hover:not(:disabled) { color:var(--signal); background:transparent; } .icon-action svg { width:18px; height:18px; fill:currentColor; }
+    .inbox-filters { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:14px 0; }
     .action:hover:not(:disabled) { color:#161713; background:var(--signal); border-color:var(--signal); }
     .action.danger:hover:not(:disabled) { background:var(--danger); border-color:var(--danger); }
     .mutation-status { min-height:1.45em; margin:0; color:var(--muted); font-size:12px; }
     .mutation-status[data-state="error"] { color:var(--danger); }
     .mutation-status[data-state="ready"] { color:var(--signal); }
     .feedback-preview { display:grid; gap:10px; margin-top:16px; padding-top:16px; border-top:1px solid var(--line); }
+    #proposal-controls { display:flex; flex-direction:column; } #proposal-controls .mutation-head { order:0; } #feedback-preview { order:1; } #proposal-controls form { order:2; } #mutation-status { order:3; }
     .feedback-preview h4 { margin:0; color:var(--muted); font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
     .feedback-body { margin:0; padding:10px; overflow:auto; white-space:pre-wrap; color:var(--ink); background:#151612; border:1px solid var(--line); font-size:12px; }
     .comment-preview { padding:10px; border-left:3px solid var(--blue); background:rgba(109,156,255,.08); }
@@ -132,6 +136,7 @@
       <section class="inbox" aria-labelledby="inbox-heading">
         <div class="section-head"><h2 id="inbox-heading">Needs your attention</h2><span class="count" id="inbox-count">—</span></div>
         <p class="notice" id="inbox-message">Loading PRs that need a decision or intervention.</p>
+        <div class="inbox-filters"><input id="filter-repository" placeholder="Filter repository"><input id="filter-author" placeholder="Filter author"></div>
         <ul class="items" id="inbox-items" aria-label="Items needing attention"></ul>
       </section>
       <section class="detail" aria-labelledby="timeline-heading">
@@ -237,6 +242,7 @@
       const inbox = document.querySelector('#inbox-items');
       const inboxMessage = document.querySelector('#inbox-message');
       const inboxCount = document.querySelector('#inbox-count');
+      const filterRepository = document.querySelector('#filter-repository'); const filterAuthor = document.querySelector('#filter-author');
       const connection = document.querySelector('#connection-status');
       const selected = document.querySelector('#selected-pr');
       const selectedConnection = document.querySelector('#selected-connection');
@@ -521,6 +527,7 @@
         inboxMessage.removeAttribute('role');
         inboxMessage.textContent = items.length ? 'PRs with pending feedback, a failed review, or a human-review request.' : 'Nothing needs your attention right now.';
         items.forEach(addInboxItem);
+        applyInboxFilters();
         const next = items.find((item) => item.id === preferredID) || items.find((item) => selectedItem && item.id === selectedItem.id) || items[0];
         const selectionUnchanged = next && selectedItem && next.id === selectedItem.id && next.connection_id === selectedItem.connection_id;
         if (next && !selectionUnchanged) showTimeline(next); else if (next) document.querySelectorAll('.inbox-item').forEach((button) => button.setAttribute('aria-current', String(button.dataset.id === next.id))); else { selected.hidden = true; timeline.replaceChildren(); timelineMessage.textContent = 'Queue clear. No current review attention.'; clearMutationContext('No pending proposal selected.'); }
@@ -541,7 +548,7 @@
           selectedConnection.textContent = `${detail.repository || item.repository || 'repository'} #${detail.number || item.number || '—'} · ${detail.author ? `by ${detail.author} · ` : ''}${formatTime(detail.current_observation?.observed_at || item.occurred_at)}`;
           selectedTitle.textContent = detail.title || item.title || item.pull_request_id;
           openGitHub.hidden = !detail.html_url; openGitHub.href = detail.html_url || '#';
-          if (detail.latest_failure) { failureDetail.hidden = false; failureDetail.textContent = `Latest review failure: ${detail.latest_failure}. See Runtime activity for the job log.`; failureDetail.setAttribute('role', 'alert'); }
+          if (item.kind === 'failed_run' && detail.latest_failure) { failureDetail.hidden = false; failureDetail.textContent = `Latest review failure: ${detail.latest_failure}. See Runtime activity for the job log.`; failureDetail.setAttribute('role', 'alert'); }
           evidenceReady = detail.current_revision?.identity_kind === 'canonical_diff';
           renderSelectedFacts(detail);
 		  syncReviewControls();
@@ -563,7 +570,9 @@
         }).catch((error) => { timelineMessage.textContent = error.message; timelineMessage.setAttribute('role', 'alert'); });
       }
       timelineToggle.addEventListener('click', () => { const expanded = timelinePanel.hidden; timelinePanel.hidden = !expanded; timelineToggle.setAttribute('aria-expanded', String(expanded)); timelineToggle.textContent = expanded ? 'Hide timeline' : 'Show timeline'; });
-      function addInboxItem(item) { const button = document.createElement('button'); button.type = 'button'; button.className = 'inbox-item'; button.dataset.id = item.id; button.dataset.kind = item.kind || 'attention'; button.setAttribute('aria-current', 'false'); const mark = text('span', '', 'mark'); mark.setAttribute('aria-hidden', 'true'); const content = document.createElement('span'); const top = document.createElement('span'); top.className = 'item-top'; const identifier = item.repository && item.number ? `${item.repository} #${item.number}` : item.pull_request_id; top.append(text('span', identifier, 'item-pr'), text('time', formatTime(item.occurred_at), 'item-time')); const title = item.title || item.detail || item.pull_request_id; const context = `${item.author ? `by ${item.author} · ` : ''}${String(item.kind || 'attention').replaceAll('_', ' ')}`; content.append(top, text('strong', title, 'item-detail'), text('span', context, 'item-detail')); button.append(mark, content); button.addEventListener('click', () => showTimeline(item)); inbox.append(button); }
+      function applyInboxFilters() { const repo=filterRepository.value.trim().toLowerCase(), author=filterAuthor.value.trim().toLowerCase(); document.querySelectorAll('.inbox-item').forEach((node) => { node.hidden=(repo&&!node.dataset.repo.includes(repo))||(author&&!node.dataset.author.includes(author)); }); }
+      function addInboxItem(item) { const button = document.createElement('button'); button.type = 'button'; button.className = 'inbox-item'; button.dataset.id = item.id; button.dataset.kind = item.kind || 'attention'; button.dataset.repo=String(item.repository||'').toLowerCase(); button.dataset.author=String(item.author||'').toLowerCase(); button.setAttribute('aria-current', 'false'); const mark = text('span', '', 'mark'); mark.setAttribute('aria-hidden', 'true'); const content = document.createElement('span'); const top = document.createElement('span'); top.className = 'item-top'; const identifier = item.repository && item.number ? `${item.repository} #${item.number}` : item.pull_request_id; top.append(text('span', identifier, 'item-pr'), text('time', formatTime(item.occurred_at), 'item-time')); const title = item.title || item.detail || item.pull_request_id; const context = `${item.author ? `by ${item.author} · ` : ''}${String(item.kind || 'attention').replaceAll('_', ' ')}`; const labels={pending_proposal:'Decision needed',failed_run:'Review failed',human_review:'Human review'}; const state=text('span',labels[item.kind]||'Attention','queue-state'); state.dataset.kind=item.kind||'attention'; content.append(top, text('strong', title, 'item-detail'), text('span', context, 'item-detail'), state); button.append(mark, content); button.addEventListener('click', () => showTimeline(item)); inbox.append(button); }
+      filterRepository.addEventListener('input', applyInboxFilters); filterAuthor.addEventListener('input', applyInboxFilters);
       proposalForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         const body = proposalBody.value.trim();
