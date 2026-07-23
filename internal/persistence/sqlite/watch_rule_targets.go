@@ -42,6 +42,28 @@ type AutomaticWatchRule struct {
 	PublicationJSON      []byte
 }
 
+// ListAutomaticWatchRuleTargetIDs returns current canonical PR identities for
+// one connection. It is read-only and safe for runtime backfill scheduling.
+func (s *Store) ListAutomaticWatchRuleTargetIDs(ctx context.Context, connectionID string) ([]string, error) {
+	if strings.TrimSpace(connectionID) == "" {
+		return nil, errors.New("automatic watch rule connection is required")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT projection.pull_request_id FROM pull_request_projection_state AS projection JOIN revisions AS revision ON revision.id = projection.current_revision_id WHERE projection.connection_id = ? AND revision.identity_kind = 'canonical_diff' ORDER BY projection.pull_request_id`, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("list automatic watch rule targets: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // LoadAutomaticWatchRuleTarget reads selected canonical evidence, current PR
 // facts, and all enabled current rule versions in one read-only snapshot.
 func (s *Store) LoadAutomaticWatchRuleTarget(ctx context.Context, connectionID, pullRequestID string) (AutomaticWatchRuleTarget, error) {

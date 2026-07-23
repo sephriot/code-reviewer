@@ -47,6 +47,7 @@ type Service struct {
 	outboxRunner     runtimeRunner
 	schedule         scheduleFunc
 	scheduleInterval time.Duration
+	backfill         scheduleFunc
 	publicationMode  config.PublicationMode
 	ownershipGuard   *ownership.Guard
 }
@@ -234,6 +235,21 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 			return scheduleShadow(ctx, reconciliationScheduler, hydrationScheduler, reconciliationConfig)
 		}
 		service.scheduleInterval = cfg.ShadowReconciliation.Interval
+	}
+	if cfg.ReviewExecution.Enabled {
+		service.backfill = func(ctx context.Context) error {
+			ids, err := store.ListAutomaticWatchRuleTargetIDs(ctx, cfg.ShadowReconciliation.ConnectionID)
+			if err != nil {
+				return err
+			}
+			scheduler := watchschedule.Service{Store: store}
+			for _, id := range ids {
+				if _, err := scheduler.Schedule(ctx, watchschedule.Request{ConnectionID: cfg.ShadowReconciliation.ConnectionID, PullRequestID: id, EngineKind: "cli", EngineConfigJSON: []byte(`{"engine_source":"reviewd_config"}`), AccessMode: "diff_only", CorrelationID: "reviewd-startup-backfill", RequestedAt: time.Now().UTC()}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 	}
 	return service, nil
 }
@@ -487,6 +503,15 @@ func (s *Service) Run(ctx context.Context, logger *slog.Logger) error {
 }
 
 func (s *Service) startBackground(ctx context.Context, logger *slog.Logger, group *sync.WaitGroup, errorsCh chan<- error) {
+	if s.backfill != nil {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if err := s.backfill(ctx); err != nil && ctx.Err() == nil {
+				errorsCh <- fmt.Errorf("backfill eligible reviews: %w", err)
+			}
+		}()
+	}
 	if s.ownershipGuard != nil {
 		group.Add(1)
 		go func() {
