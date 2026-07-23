@@ -714,17 +714,21 @@ migrations/
 web/
 ```
 
-### 10.3 Frontend: React and TypeScript
+### 10.3 Frontend: lightweight server-rendered control desk
 
-- React with TypeScript and Vite.
-- Generated API types/client from OpenAPI.
-- TanStack Query for server-state caching and mutation invalidation.
-- Lightweight route library or browser routing; no server-side rendering.
-- Component primitives must meet accessibility requirements.
-- Charting library isolated behind an analytics adapter.
-- No global client store for server-owned domain entities.
+- Semantic HTML, CSS, and small browser JavaScript embedded in the Go binary.
+- Versioned JSON API remains the boundary between dashboard and domain code.
+- Browser JavaScript owns only local view state, request lifecycle, and explicit
+  local mutation controls; SQLite remains source of truth.
+- No frontend framework, build pipeline, global client store, or server-side
+  rendering layer is required for this single-user loopback control desk.
+- Component behavior must meet accessibility requirements without depending on
+  framework primitives.
+- Charting stays optional and isolated behind an analytics view adapter.
 
-Backend embeds production assets into the Go binary. Development uses the Vite server proxied to backend API.
+This choice keeps startup, deployment, and diagnosis simple. Reconsider a
+framework only if multi-page navigation, independently shipped UI teams, or
+substantially richer client-side interaction becomes real product pressure.
 
 ### 10.4 Storage
 

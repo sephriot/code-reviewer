@@ -57,16 +57,18 @@ it in the same commit as every meaningful implementation stage.
       review. Runtime Activity shows durable job outcome.
 - [x] Dashboard readiness guide for profiles, active policy rules, and trusted
       local review-engine configuration; `reviewctl` remains complete fallback.
-- [ ] End-to-end browser test: reconcile, hydrate, queue, run, policy proposal,
-      human decision, and simulated publication.
+- [x] Isolated Playwright dashboard smoke test starts a temporary v2 database
+      and verifies local control-desk bootstrap.
+- [ ] End-to-end browser workflow: reconcile, hydrate, queue, run, policy
+      proposal, human decision, and simulated publication.
 - [x] Runtime Activity exposes bounded durable job failure class and reason for
       reconciliation, hydration, and review diagnosis.
 
 ### Complete design acceptance — larger follow-on
 
-- [ ] Full React/TypeScript client specified in greenfield design. Current UI is
-      production-oriented static HTML/JavaScript served by Go; it is functional
-      but does not meet that technology decision.
+- [x] Product decision: retain embedded lightweight HTML/CSS/JavaScript control
+      desk. React/TypeScript rewrite is explicitly removed from scope unless
+      future product pressure justifies it.
 - [ ] Writer-ownership guard shared with legacy, cutover checkpointing,
       reverse export, rollback suppression, and lock integration probes.
 - [ ] Backup/restore/upgrade commandbook and cutover rehearsal against fixtures.

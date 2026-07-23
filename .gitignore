@@ -144,4 +144,10 @@ logs/
 data/
 prompts/review_prompt.txt
 codex_review_output.json
+
+# Node / Playwright test artifacts
+node_modules/
+.pnpm-store/
+test-results/
+playwright-report/
 reviews.db
