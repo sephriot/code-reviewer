@@ -80,9 +80,8 @@ it in the same commit as every meaningful implementation stage.
 - [x] One native provider completes a real local Agent review from canonical
       evidence through persisted assessment and policy proposal. Agent uses its
       normal authenticated environment and an isolated trusted bridge workspace.
-- [ ] Claude native adapter real-review parity. Its authenticated structured
-      output invocation has been smoke-checked; run one dashboard review before
-      declaring parity.
+- [x] Claude native adapter real-review parity: dashboard retry completed a
+      persisted assessment and policy evaluation using authenticated Claude.
 - [x] Clear terminal provider/auth/output diagnostics in Runtime Activity and
       `data/reviewd.log`; no retry storm for local configuration failures.
 - [x] Review lifecycle notifications: `review.started`, `review.completed`,
