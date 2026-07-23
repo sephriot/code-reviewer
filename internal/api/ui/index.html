@@ -74,6 +74,7 @@
     .action { display:inline-flex; align-items:center; justify-content:center; min-height:36px; padding:8px 11px; color:var(--ink); background:transparent; border:1px solid var(--line); cursor:pointer; font-weight:700; font-size:11px; letter-spacing:.08em; text-transform:uppercase; text-decoration:none; }
     .icon-action { width:30px; min-height:30px; padding:5px; border:0; color:var(--muted); } .icon-action:hover:not(:disabled) { color:var(--signal); background:transparent; } .icon-action svg { width:18px; height:18px; fill:currentColor; }
     .inbox-filters { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:14px 0; }
+    .queue-tabs { display:flex; gap:6px; margin:14px 0 0; } .queue-tabs button[aria-pressed="true"] { color:#161713; background:var(--signal); border-color:var(--signal); }
     .action:hover:not(:disabled) { color:#161713; background:var(--signal); border-color:var(--signal); }
     .action.danger:hover:not(:disabled) { background:var(--danger); border-color:var(--danger); }
     .mutation-status { min-height:1.45em; margin:0; color:var(--muted); font-size:12px; }
@@ -136,6 +137,7 @@
       <section class="inbox" aria-labelledby="inbox-heading">
         <div class="section-head"><h2 id="inbox-heading">Needs your attention</h2><span class="count" id="inbox-count">—</span></div>
         <p class="notice" id="inbox-message">Loading PRs that need a decision or intervention.</p>
+        <div class="queue-tabs" role="group" aria-label="Attention type"><button class="action" type="button" data-queue-kind="pending_proposal" aria-pressed="true">Decisions</button><button class="action" type="button" data-queue-kind="failed_run" aria-pressed="false">Failed</button><button class="action" type="button" data-queue-kind="human_review" aria-pressed="false">Human review</button></div>
         <div class="inbox-filters"><input id="filter-repository" placeholder="Filter repository"><input id="filter-author" placeholder="Filter author"></div>
         <ul class="items" id="inbox-items" aria-label="Items needing attention"></ul>
       </section>
@@ -303,6 +305,7 @@
       let evidenceReady = false;
       let reviewBusy = false;
       let reviewExecutionEnabled = false;
+      let queueKind = 'pending_proposal';
       const formatTime = (value) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'unknown time' : new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(date); };
       const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value || '—'; if (className) node.className = className; return node; };
       const api = async (path) => { const response = await fetch(path, { credentials:'same-origin', headers:{Accept:'application/json'} }); if (!response.ok) throw new Error(`Read model returned ${response.status}`); return response.json(); };
@@ -522,13 +525,15 @@
         const [page] = await Promise.all([api('/api/v1/inbox'), refreshTelemetry()]);
         const attention = page.items || [];
         const items = attention;
+        const repositoryFilter = filterRepository.value.trim().toLowerCase(), authorFilter = filterAuthor.value.trim().toLowerCase();
+        const visibleItems = items.filter((item) => item.kind === queueKind && (!repositoryFilter || String(item.repository || '').toLowerCase().includes(repositoryFilter)) && (!authorFilter || String(item.author || '').toLowerCase().includes(authorFilter)));
         inbox.replaceChildren();
-        inboxCount.textContent = `${items.length} OPEN`;
+        inboxCount.textContent = `${visibleItems.length} ${queueKind === 'pending_proposal' ? 'DECISIONS' : queueKind === 'failed_run' ? 'FAILED' : 'HUMAN'}`;
         inboxMessage.removeAttribute('role');
-        inboxMessage.textContent = items.length ? 'PRs with pending feedback, a failed review, or a human-review request.' : 'Nothing needs your attention right now.';
+        inboxMessage.textContent = visibleItems.length ? 'PRs requiring this kind of attention.' : 'No matching pull requests.';
         items.forEach(addInboxItem);
         applyInboxFilters();
-        const next = items.find((item) => item.id === preferredID) || items.find((item) => selectedItem && item.id === selectedItem.id) || items[0];
+        const next = visibleItems.find((item) => item.id === preferredID) || visibleItems.find((item) => selectedItem && item.id === selectedItem.id) || visibleItems[0];
         const selectionUnchanged = next && selectedItem && next.id === selectedItem.id && next.connection_id === selectedItem.connection_id;
         if (next && !selectionUnchanged) showTimeline(next); else if (next) document.querySelectorAll('.inbox-item').forEach((button) => button.setAttribute('aria-current', String(button.dataset.id === next.id))); else { selected.hidden = true; timeline.replaceChildren(); timelineMessage.textContent = 'Queue clear. No current review attention.'; clearMutationContext('No pending proposal selected.'); }
       }
@@ -570,9 +575,10 @@
         }).catch((error) => { timelineMessage.textContent = error.message; timelineMessage.setAttribute('role', 'alert'); });
       }
       timelineToggle.addEventListener('click', () => { const expanded = timelinePanel.hidden; timelinePanel.hidden = !expanded; timelineToggle.setAttribute('aria-expanded', String(expanded)); timelineToggle.textContent = expanded ? 'Hide timeline' : 'Show timeline'; });
-      function applyInboxFilters() { const repo=filterRepository.value.trim().toLowerCase(), author=filterAuthor.value.trim().toLowerCase(); document.querySelectorAll('.inbox-item').forEach((node) => { node.hidden=(repo&&!node.dataset.repo.includes(repo))||(author&&!node.dataset.author.includes(author)); }); }
+      function applyInboxFilters() { const repo=filterRepository.value.trim().toLowerCase(), author=filterAuthor.value.trim().toLowerCase(); document.querySelectorAll('.inbox-item').forEach((node) => { node.hidden=node.dataset.kind!==queueKind||(repo&&!node.dataset.repo.includes(repo))||(author&&!node.dataset.author.includes(author)); }); }
       function addInboxItem(item) { const button = document.createElement('button'); button.type = 'button'; button.className = 'inbox-item'; button.dataset.id = item.id; button.dataset.kind = item.kind || 'attention'; button.dataset.repo=String(item.repository||'').toLowerCase(); button.dataset.author=String(item.author||'').toLowerCase(); button.setAttribute('aria-current', 'false'); const mark = text('span', '', 'mark'); mark.setAttribute('aria-hidden', 'true'); const content = document.createElement('span'); const top = document.createElement('span'); top.className = 'item-top'; const identifier = item.repository && item.number ? `${item.repository} #${item.number}` : item.pull_request_id; top.append(text('span', identifier, 'item-pr'), text('time', formatTime(item.occurred_at), 'item-time')); const title = item.title || item.detail || item.pull_request_id; const context = `${item.author ? `by ${item.author} · ` : ''}${String(item.kind || 'attention').replaceAll('_', ' ')}`; const labels={pending_proposal:'Decision needed',failed_run:'Review failed',human_review:'Human review'}; const state=text('span',labels[item.kind]||'Attention','queue-state'); state.dataset.kind=item.kind||'attention'; content.append(top, text('strong', title, 'item-detail'), text('span', context, 'item-detail'), state); button.append(mark, content); button.addEventListener('click', () => showTimeline(item)); inbox.append(button); }
       filterRepository.addEventListener('input', applyInboxFilters); filterAuthor.addEventListener('input', applyInboxFilters);
+      document.querySelectorAll('[data-queue-kind]').forEach((button) => button.addEventListener('click', () => { queueKind=button.dataset.queueKind; document.querySelectorAll('[data-queue-kind]').forEach((tab) => tab.setAttribute('aria-pressed', String(tab===button))); applyInboxFilters(); }));
       proposalForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         const body = proposalBody.value.trim();
