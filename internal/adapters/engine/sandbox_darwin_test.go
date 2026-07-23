@@ -25,3 +25,9 @@ func TestMacOSSandboxCommandUsesProfile(t *testing.T) {
 		t.Fatalf("command = %#v", command.Args)
 	}
 }
+
+func TestNewNativeFailsBeforeRunWhenAuthStateMissing(t *testing.T) {
+	if _, err := NewNative(NativeConfig{Provider: ProviderCodex, Executable: "codex", AuthPath: "/missing-auth", BridgeRoot: t.TempDir()}); err == nil {
+		t.Fatal("missing auth state accepted")
+	}
+}

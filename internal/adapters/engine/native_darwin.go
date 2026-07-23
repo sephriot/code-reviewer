@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 )
 
 // Native executes one supported subscription CLI in a macOS sandbox.
@@ -16,6 +17,12 @@ type Native struct{ config NativeConfig }
 func NewNative(config NativeConfig) (*Native, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
+	}
+	if _, err := exec.LookPath(config.Executable); err != nil {
+		return nil, fmt.Errorf("resolve native engine executable: %w", err)
+	}
+	if _, err := os.Stat(config.AuthPath); err != nil {
+		return nil, fmt.Errorf("read native engine auth state: %w", err)
 	}
 	return &Native{config: config}, nil
 }
