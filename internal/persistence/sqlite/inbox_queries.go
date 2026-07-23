@@ -48,6 +48,7 @@ type AttentionQuery struct {
 type AttentionItem struct {
 	Kind          AttentionKind
 	ID            string
+	ProposalID    string
 	ConnectionID  string
 	PullRequestID string
 	RevisionID    string
@@ -223,7 +224,7 @@ WITH latest_run_events AS (
  FROM review_run_events AS event
  WHERE event.sequence = (SELECT MAX(candidate.sequence) FROM review_run_events AS candidate WHERE candidate.run_id = event.run_id)
 ), attention AS (
- SELECT 'pending_proposal' AS kind, proposal_revision.id, evaluation.connection_id,
+ SELECT 'pending_proposal' AS kind, proposal_revision.id, proposal_revision.proposal_id, evaluation.connection_id,
         proposal_revision.pull_request_id, proposal_revision.revision_id, proposal_revision.observation_id,
         proposal_revision.created_at_us AS occurred_at_us, proposal.proposal_kind AS detail
  FROM proposal_revisions AS proposal_revision
@@ -239,7 +240,7 @@ WITH latest_run_events AS (
                      AND newer.revision_number > proposal_revision.revision_number)
    AND NOT EXISTS (SELECT 1 FROM decisions AS decision WHERE decision.proposal_revision_id = proposal_revision.id)
  UNION ALL
- SELECT 'human_review', evaluation.id, evaluation.connection_id, evaluation.pull_request_id,
+ SELECT 'human_review', evaluation.id, '', evaluation.connection_id, evaluation.pull_request_id,
         evaluation.revision_id, evaluation.observation_id, evaluation.created_at_us, evaluation.disposition
  FROM policy_evaluations AS evaluation
  JOIN pull_request_projection_state AS projection
@@ -249,7 +250,7 @@ WITH latest_run_events AS (
    AND evaluation.observation_id = projection.current_observation_id
    AND evaluation.disposition = 'require_human_review'
  UNION ALL
- SELECT 'failed_run', run.id, run.connection_id, run.pull_request_id, run.revision_id,
+ SELECT 'failed_run', run.id, '', run.connection_id, run.pull_request_id, run.revision_id,
         run.observation_id, event.occurred_at_us, event.event_kind
  FROM review_runs AS run
  JOIN latest_run_events AS event ON event.run_id = run.id
@@ -266,7 +267,7 @@ WITH latest_run_events AS (
  ) AS position
  FROM attention
 )
-SELECT attention.kind, attention.id, attention.connection_id, attention.pull_request_id, attention.revision_id, attention.observation_id, attention.occurred_at_us, attention.detail,
+SELECT attention.kind, attention.id, attention.proposal_id, attention.connection_id, attention.pull_request_id, attention.revision_id, attention.observation_id, attention.occurred_at_us, attention.detail,
        repository.full_name, pull_request.number, pull_request.title, pull_request.author_login
 FROM ranked AS attention
 JOIN pull_requests AS pull_request ON pull_request.id = attention.pull_request_id
@@ -284,7 +285,7 @@ LIMIT ?`, connectionID, connectionID, hasCursor, cursor.OccurredAtUS, cursor.Occ
 	for rows.Next() {
 		var item AttentionItem
 		var occurredAtUS int64
-		if err := rows.Scan(&item.Kind, &item.ID, &item.ConnectionID, &item.PullRequestID, &item.RevisionID, &item.ObservationID, &occurredAtUS, &item.Detail, &item.Repository, &item.Number, &item.Title, &item.Author); err != nil {
+		if err := rows.Scan(&item.Kind, &item.ID, &item.ProposalID, &item.ConnectionID, &item.PullRequestID, &item.RevisionID, &item.ObservationID, &occurredAtUS, &item.Detail, &item.Repository, &item.Number, &item.Title, &item.Author); err != nil {
 			return AttentionPage{}, fmt.Errorf("scan current attention: %w", err)
 		}
 		item.OccurredAt, item.State, item.Current = time.UnixMicro(occurredAtUS).UTC(), TimelineStateCurrent, true
