@@ -8,6 +8,7 @@
   <style>
     :root { --ink:#e8e4d9; --muted:#9f9a8e; --paper:#181917; --panel:#22231f; --line:#45473d; --signal:#e8ff58; --danger:#ff6b4a; --blue:#6d9cff; --mono:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; --display:Georgia, 'Times New Roman', serif; }
     * { box-sizing:border-box; }
+    [hidden] { display:none !important; }
     body { margin:0; min-width:320px; color:var(--ink); background:var(--paper); font-family:var(--mono); font-size:14px; line-height:1.45; }
     body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.17; background-image:linear-gradient(rgba(255,255,255,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px); background-size:36px 36px; mask-image:linear-gradient(to bottom,black,transparent 78%); }
     button, input, textarea, select { font:inherit; }
@@ -143,7 +144,7 @@
         <div class="section-head"><h2 id="inbox-heading">Needs your attention</h2><span class="count" id="inbox-count">—</span></div>
         <p class="notice" id="inbox-message">Loading PRs that need a decision or intervention.</p>
         <div class="queue-tabs" role="group" aria-label="Attention type"><button class="action" type="button" data-queue-kind="pending_proposal" aria-pressed="true">Decisions</button><button class="action" type="button" data-queue-kind="failed_run" aria-pressed="false">Failed</button><button class="action" type="button" data-queue-kind="human_review" aria-pressed="false">Human review</button></div>
-        <div class="inbox-filters"><input id="filter-repository" placeholder="Filter repository"><input id="filter-author" placeholder="Filter author"></div>
+        <div class="inbox-filters"><input id="filter-repository" aria-label="Filter by repository" placeholder="Filter repository"><input id="filter-author" aria-label="Filter by author" placeholder="Filter author"><button class="action" id="clear-inbox-filters" type="button">Clear filters</button></div>
         <ul class="items" id="inbox-items" aria-label="Items needing attention"></ul>
       </section>
       <section class="detail" aria-labelledby="timeline-heading">
@@ -249,7 +250,7 @@
       const inbox = document.querySelector('#inbox-items');
       const inboxMessage = document.querySelector('#inbox-message');
       const inboxCount = document.querySelector('#inbox-count');
-      const filterRepository = document.querySelector('#filter-repository'); const filterAuthor = document.querySelector('#filter-author');
+      const filterRepository = document.querySelector('#filter-repository'); const filterAuthor = document.querySelector('#filter-author'); const clearInboxFilters = document.querySelector('#clear-inbox-filters');
       const connection = document.querySelector('#connection-status');
       const selected = document.querySelector('#selected-pr');
       const selectedConnection = document.querySelector('#selected-connection');
@@ -312,6 +313,10 @@
       let reviewBusy = false;
       let reviewExecutionEnabled = false;
       let queueKind = 'pending_proposal';
+	  let inboxItems = [];
+	  const inboxStateStorageKey = 'reviewd.inbox-state.v1';
+	  let feedbackDraftBaseline = { body:'', inline:'', reason:'' };
+	  let loadedFeedbackRevision = '';
       const formatTime = (value) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'unknown time' : new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(date); };
       const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value || '—'; if (className) node.className = className; return node; };
 	  const diagnosticCopy = (code) => ({ configuration_invalid:'Review configuration is invalid.', input_invalid:'Review input is invalid.', engine_protocol_invalid:'Review engine returned unusable output.', validation_failed:'Review output failed validation.', stale_evidence:'PR changed before review completed.', transport_unavailable:'Review engine is unavailable.', rate_limited:'Review engine rate limit reached.', timeout:'Review engine timed out.', engine_exit:'Review engine exited with an error.', internal_error:'Reviewd internal error.', canceled_by_request:'Review was canceled.', canceled_by_shutdown:'Reviewd stopped during review.' }[code] || 'Review failed.');
@@ -462,11 +467,12 @@
         const revision = proposalRevisionID.value;
         feedbackPreview.hidden = true; feedbackComments.replaceChildren(); feedbackBody.textContent = '';
         if (!revision) return;
+		if (loadedFeedbackRevision !== revision) { proposalBody.value = ''; decisionReason.value = ''; inlineComments.value = ''; feedbackDraftBaseline = { body:'', inline:'', reason:'' }; loadedFeedbackRevision = revision; }
         try {
           const value = await api(`/api/v1/proposal-revisions/${encodeURIComponent(revision)}`);
           if (proposalRevisionID.value !== revision) return;
           feedbackBody.textContent = value.body || '(No general comment)';
-          inlineComments.value = JSON.stringify(value.inline_comments || [], null, 2);
+		  if (!hasFeedbackDraft()) { inlineComments.value = JSON.stringify(value.inline_comments || [], null, 2); feedbackDraftBaseline = { body:'', inline:inlineComments.value, reason:'' }; }
           (value.inline_comments || []).forEach((comment) => { const card = document.createElement('article'); card.className='comment-preview'; card.append(text('strong', `${comment.path || 'file'}:${comment.line || comment.start_line || '?'}${comment.side ? ` · ${comment.side}` : ''}`), text('p', comment.body || '')); feedbackComments.append(card); });
           feedbackSource.textContent = (value.inline_comments || []).length ? 'Inline anchors shown. Source snippets are not retained locally; GitHub receives these evidence-bound coordinates.' : 'No inline comments in this revision.';
           feedbackPreview.hidden = false;
@@ -529,24 +535,19 @@
         syncMutationControls();
         createRevision.textContent = busy ? 'Saving revision…' : 'Save new revision';
       }
-      async function reloadInbox(preferredID) {
-        const [page] = await Promise.all([api('/api/v1/inbox'), refreshTelemetry()]);
-        const attention = page.items || [];
-        const items = attention;
-        const repositoryFilter = filterRepository.value.trim().toLowerCase(), authorFilter = filterAuthor.value.trim().toLowerCase();
-        const visibleItems = items.filter((item) => item.kind === queueKind && (!repositoryFilter || String(item.repository || '').toLowerCase().includes(repositoryFilter)) && (!authorFilter || String(item.author || '').toLowerCase().includes(authorFilter)));
-        inbox.replaceChildren();
-        inboxCount.textContent = `${visibleItems.length} ${queueKind === 'pending_proposal' ? 'DECISIONS' : queueKind === 'failed_run' ? 'FAILED' : 'HUMAN'}`;
-        inboxMessage.removeAttribute('role');
-        inboxMessage.textContent = visibleItems.length ? 'PRs requiring this kind of attention.' : 'No matching pull requests.';
-        items.forEach(addInboxItem);
-        applyInboxFilters();
-        const next = visibleItems.find((item) => item.id === preferredID) || visibleItems.find((item) => selectedItem && item.id === selectedItem.id) || visibleItems[0];
-        const selectionUnchanged = next && selectedItem && next.id === selectedItem.id && next.connection_id === selectedItem.connection_id;
-        if (next && !selectionUnchanged) showTimeline(next); else if (next) document.querySelectorAll('.inbox-item').forEach((button) => button.setAttribute('aria-current', String(button.dataset.id === next.id))); else { selected.hidden = true; timeline.replaceChildren(); timelineMessage.textContent = 'Queue clear. No current review attention.'; clearMutationContext('No pending proposal selected.'); }
-      }
+	  const activeQueueLabel = () => queueKind === 'pending_proposal' ? 'DECISIONS' : queueKind === 'failed_run' ? 'FAILED' : 'HUMAN';
+	  const visibleInboxItems = () => { const repositoryFilter = filterRepository.value.trim().toLowerCase(), authorFilter = filterAuthor.value.trim().toLowerCase(); return inboxItems.filter((item) => item.kind === queueKind && (!repositoryFilter || String(item.repository || '').toLowerCase().includes(repositoryFilter)) && (!authorFilter || String(item.author || '').toLowerCase().includes(authorFilter))); };
+	  const hasFeedbackDraft = () => proposalBody.value !== feedbackDraftBaseline.body || inlineComments.value !== feedbackDraftBaseline.inline || decisionReason.value !== feedbackDraftBaseline.reason;
+	  const clearFeedbackDraft = () => { proposalBody.value = ''; inlineComments.value = ''; decisionReason.value = ''; feedbackDraftBaseline = { body:'', inline:'', reason:'' }; loadedFeedbackRevision = ''; };
+	  function clearSelectedAttention(message) { selectedItem = null; evidenceReady = false; selected.hidden = true; selectedFacts.hidden = true; selectedFacts.replaceChildren(); timeline.replaceChildren(); timelineMessage.textContent = message; runDiagnosticsPanel.hidden = true; runDiagnostics.replaceChildren(); failureDetail.textContent = ''; failureDetail.removeAttribute('role'); clearMutationContext('No pending proposal selected.'); saveInboxState(); syncReviewControls(); }
+	  function applyInboxFilters(preferredID) { const visibleItems = visibleInboxItems(); const visibleIDs = new Set(visibleItems.map((item) => `${item.connection_id}:${item.id}`)); document.querySelectorAll('.inbox-item').forEach((node) => { node.hidden = !visibleIDs.has(`${node.dataset.connectionId}:${node.dataset.id}`); }); inboxCount.textContent = `${visibleItems.length} ${activeQueueLabel()}`; inboxMessage.removeAttribute('role'); inboxMessage.textContent = visibleItems.length ? 'PRs requiring this kind of attention.' : 'No matching pull requests.'; const selectionVisible = selectedItem && visibleIDs.has(`${selectedItem.connection_id}:${selectedItem.id}`); const next = visibleItems.find((item) => item.id === preferredID) || visibleItems.find((item) => selectedItem && item.id === selectedItem.id && item.connection_id === selectedItem.connection_id) || visibleItems[0]; const selectionUnchanged = next && selectedItem && next.id === selectedItem.id && next.connection_id === selectedItem.connection_id && !selected.hidden; if (selectedItem && !selectionVisible && hasFeedbackDraft()) { inboxMessage.textContent = 'No matching PRs. Current feedback draft remains attached to the selected PR.'; return; } if (next && !selectionUnchanged) showTimeline(next); else if (next) document.querySelectorAll('.inbox-item').forEach((button) => button.setAttribute('aria-current', String(button.dataset.id === next.id && button.dataset.connectionId === next.connection_id))); else clearSelectedAttention('No pull requests match these filters.'); }
+	  function saveInboxState() { try { sessionStorage.setItem(inboxStateStorageKey, JSON.stringify({ repository:filterRepository.value, author:filterAuthor.value, queueKind, selectedID:selectedItem?.id || '', selectedConnectionID:selectedItem?.connection_id || '' })); } catch (_) { /* Private browser mode may reject session storage. */ } }
+	  function restoreInboxState() { try { const value = JSON.parse(sessionStorage.getItem(inboxStateStorageKey) || '{}'); filterRepository.value = typeof value.repository === 'string' ? value.repository : ''; filterAuthor.value = typeof value.author === 'string' ? value.author : ''; queueKind = ['pending_proposal', 'failed_run', 'human_review'].includes(value.queueKind) ? value.queueKind : queueKind; document.querySelectorAll('[data-queue-kind]').forEach((tab) => tab.setAttribute('aria-pressed', String(tab.dataset.queueKind === queueKind))); if (typeof value.selectedID === 'string' && typeof value.selectedConnectionID === 'string') selectedItem = { id:value.selectedID, connection_id:value.selectedConnectionID }; } catch (_) { /* Ignore malformed or unavailable browser state. */ } }
+	  async function reloadInbox(preferredID) { const [page] = await Promise.all([api('/api/v1/inbox'), refreshTelemetry()]); inboxItems = Array.isArray(page.items) ? page.items : []; inbox.replaceChildren(); inboxItems.forEach(addInboxItem); applyInboxFilters(preferredID); }
       function showTimeline(item) {
+		if (selectedItem && (selectedItem.id !== item.id || selectedItem.connection_id !== item.connection_id) && hasFeedbackDraft()) { if (!window.confirm('Discard unsaved feedback draft before changing pull requests?')) return; clearFeedbackDraft(); }
         selectedItem = item;
+		saveInboxState();
         evidenceReady = false;
         selectedFacts.hidden = true;
         selectedFacts.replaceChildren();
@@ -583,10 +584,10 @@
         }).catch((error) => { timelineMessage.textContent = error.message; timelineMessage.setAttribute('role', 'alert'); });
       }
       timelineToggle.addEventListener('click', () => { const expanded = timelinePanel.hidden; timelinePanel.hidden = !expanded; timelineToggle.setAttribute('aria-expanded', String(expanded)); timelineToggle.textContent = expanded ? 'Hide timeline' : 'Show timeline'; });
-      function applyInboxFilters() { const repo=filterRepository.value.trim().toLowerCase(), author=filterAuthor.value.trim().toLowerCase(); document.querySelectorAll('.inbox-item').forEach((node) => { node.hidden=node.dataset.kind!==queueKind||(repo&&!node.dataset.repo.includes(repo))||(author&&!node.dataset.author.includes(author)); }); }
-      function addInboxItem(item) { const button = document.createElement('button'); button.type = 'button'; button.className = 'inbox-item'; button.dataset.id = item.id; button.dataset.kind = item.kind || 'attention'; button.dataset.repo=String(item.repository||'').toLowerCase(); button.dataset.author=String(item.author||'').toLowerCase(); button.setAttribute('aria-current', 'false'); const mark = text('span', '', 'mark'); mark.setAttribute('aria-hidden', 'true'); const content = document.createElement('span'); const top = document.createElement('span'); top.className = 'item-top'; const identifier = item.repository && item.number ? `${item.repository} #${item.number}` : item.pull_request_id; top.append(text('span', identifier, 'item-pr'), text('time', formatTime(item.occurred_at), 'item-time')); const title = item.title || item.detail || item.pull_request_id; const context = `${item.author ? `by ${item.author} · ` : ''}${String(item.kind || 'attention').replaceAll('_', ' ')}`; const labels={pending_proposal:'Decision needed',failed_run:'Review failed',human_review:'Human review'}; const state=text('span',labels[item.kind]||'Attention','queue-state'); state.dataset.kind=item.kind||'attention'; content.append(top, text('strong', title, 'item-detail'), text('span', context, 'item-detail'), state); button.append(mark, content); button.addEventListener('click', () => showTimeline(item)); inbox.append(button); }
-      filterRepository.addEventListener('input', applyInboxFilters); filterAuthor.addEventListener('input', applyInboxFilters);
-      document.querySelectorAll('[data-queue-kind]').forEach((button) => button.addEventListener('click', () => { queueKind=button.dataset.queueKind; document.querySelectorAll('[data-queue-kind]').forEach((tab) => tab.setAttribute('aria-pressed', String(tab===button))); applyInboxFilters(); }));
+	  function addInboxItem(item) { const button = document.createElement('button'); button.type = 'button'; button.className = 'inbox-item'; button.dataset.id = item.id; button.dataset.connectionId = item.connection_id; button.dataset.kind = item.kind || 'attention'; button.setAttribute('aria-current', 'false'); const mark = text('span', '', 'mark'); mark.setAttribute('aria-hidden', 'true'); const content = document.createElement('span'); const top = document.createElement('span'); top.className = 'item-top'; const identifier = item.repository && item.number ? `${item.repository} #${item.number}` : item.pull_request_id; top.append(text('span', identifier, 'item-pr'), text('time', formatTime(item.occurred_at), 'item-time')); const title = item.title || item.detail || item.pull_request_id; const context = `${item.author ? `by ${item.author} · ` : ''}${String(item.kind || 'attention').replaceAll('_', ' ')}`; const labels={pending_proposal:'Decision needed',failed_run:'Review failed',human_review:'Human review'}; const state=text('span',labels[item.kind]||'Attention','queue-state'); state.dataset.kind=item.kind||'attention'; content.append(top, text('strong', title, 'item-detail'), text('span', context, 'item-detail'), state); button.append(mark, content); button.addEventListener('click', () => showTimeline(item)); inbox.append(button); }
+	  filterRepository.addEventListener('input', () => { saveInboxState(); applyInboxFilters(); }); filterAuthor.addEventListener('input', () => { saveInboxState(); applyInboxFilters(); }); clearInboxFilters.addEventListener('click', () => { filterRepository.value = ''; filterAuthor.value = ''; saveInboxState(); applyInboxFilters(); filterRepository.focus(); });
+	  document.querySelectorAll('[data-queue-kind]').forEach((button) => button.addEventListener('click', () => { queueKind=button.dataset.queueKind; document.querySelectorAll('[data-queue-kind]').forEach((tab) => tab.setAttribute('aria-pressed', String(tab===button))); saveInboxState(); applyInboxFilters(); }));
+	  restoreInboxState();
       proposalForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         const body = proposalBody.value.trim();

@@ -1,9 +1,9 @@
 # Go Rewrite Status
 
-Last implementation checkpoint: `6a92c06` (`fix(engine): expose safe provider output shape`).
-Last full Go suite checkpoint: `1005372` (`go test ./...`, `go vet
-./...`, and `go test -race ./...`).
-Last browser fixture checkpoint: current stage (`pnpm test:e2e`).
+Last implementation checkpoint: current queue-filter stage (this commit).
+Last full Go suite checkpoint: current queue-filter stage (`go test ./...`, `go vet
+./...`).
+Last browser fixture checkpoint: current queue-filter stage (`pnpm test:e2e`).
 
 This file is the handoff checklist for work after the Go rewrite begins. Update
 it in the same commit as every meaningful implementation stage.
@@ -21,6 +21,10 @@ it in the same commit as every meaningful implementation stage.
   immutable timeline, durable activity, history, analytics, settings, and
   notification preferences. Inbox, Runtime Activity, history, analytics, and
   settings refresh every 10 seconds without page reload.
+- Dashboard queue filters repository and author live, persists them for the
+  browser session, updates the visible count, and clears stale PR detail when
+  nothing matches. Browser fixture covers filtering, reload persistence, and
+  clear-filter recovery.
 - Selected PR can queue canonical evidence hydration from dashboard. It creates
   or reuses one durable `github.hydrate.v1` job and cannot write to GitHub.
 - Review profiles, review runs, assessment validation, policy, proposals,
