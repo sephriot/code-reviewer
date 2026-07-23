@@ -81,7 +81,11 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	var ownershipGuard *ownership.Guard
 	closeOnError := func(err error) (*Service, error) {
+		if ownershipGuard != nil {
+			_ = ownershipGuard.Close()
+		}
 		_ = store.Close()
 		return nil, err
 	}
@@ -107,7 +111,6 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		return closeOnError(fmt.Errorf("set publication mode: %w", err))
 	}
 
-	var ownershipGuard *ownership.Guard
 	if cfg.PublicationMode == config.PublicationEnabled {
 		ownershipGuard, err = ownership.Acquire(ctx, filepath.Join(filepath.Dir(cfg.DatabasePath), "writer-ownership"), workerOwner(), "reviewd-enabled-publication", time.Now().UTC())
 		if err != nil {
