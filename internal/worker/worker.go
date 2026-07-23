@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
@@ -96,6 +97,7 @@ func (r *Runner) ProcessOne(ctx context.Context) (bool, error) {
 		if err := r.Store.CompleteJob(ctx, job.ID, r.Owner, job.LeaseGeneration, r.now()); err != nil {
 			return true, fmt.Errorf("complete job %s: %w", job.ID, err)
 		}
+		slog.Default().Info("job completed", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt)
 		return true, nil
 	}
 
@@ -119,6 +121,7 @@ func (r *Runner) ProcessOne(ctx context.Context) (bool, error) {
 	); err != nil {
 		return true, fmt.Errorf("fail job %s: %w", job.ID, err)
 	}
+	slog.Default().Warn("job failed", "job_id", job.ID, "kind", job.Kind, "attempt", job.Attempt, "retry", retry, "error_class", errorClass, "error", handlerErr)
 	return true, nil
 }
 
