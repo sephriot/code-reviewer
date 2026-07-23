@@ -70,6 +70,40 @@ func TestRecordPolicyEvaluationIdempotenceAndConflict(t *testing.T) {
 	}
 }
 
+func TestRecordPolicyEvaluationDoesNotDuplicateProposalForSameEvidenceAndRule(t *testing.T) {
+	ctx := context.Background()
+	store, fixture := seedPolicyRecordFixture(t, ctx)
+	first, err := store.RecordPolicyEvaluation(ctx, policyRecordInput(fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Created || first.ProposalID == "" || first.ProposalRevisionID == "" {
+		t.Fatalf("first evaluation = %+v", first)
+	}
+
+	secondRun := prepareInboxRun(t, ctx, store, "repeat-policy-evidence")
+	secondAssessment, err := store.RecordAssessment(ctx, RecordAssessmentInput{
+		RunID: secondRun.RunID, Result: testValidatedAssessmentResult(t), RecordedAt: time.Unix(61, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInput := policyRecordInput(policyRecordFixture{assessmentID: secondAssessment.AssessmentID})
+	secondInput.Disposition = PolicyDispositionProposeComment
+	secondInput.RenderedBody = "A later model result selected a comment."
+	secondInput.InlineCommentsJSON = []byte(`[]`)
+	second, err := store.RecordPolicyEvaluation(ctx, secondInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Created || second.ProposalID != "" || second.ProposalRevisionID != "" {
+		t.Fatalf("repeat evaluation = %+v", second)
+	}
+	assertTableCount(t, ctx, store.db, "policy_evaluations", 2)
+	assertTableCount(t, ctx, store.db, "proposals", 1)
+	assertTableCount(t, ctx, store.db, "proposal_revisions", 1)
+}
+
 func TestRecordPolicyEvaluationRequiresCurrentEvidenceAndResolvedRuleProfile(t *testing.T) {
 	ctx := context.Background()
 	store, fixture := seedPolicyRecordFixture(t, ctx)
@@ -144,6 +178,24 @@ WHERE proposal.id = ?`, result.ProposalID).Scan(&kind, &body); err != nil {
 	if decision != "approve" || actorKind != "policy" || actorID != "policy:rule-version-1" || reason != "automatic approval authorized by immutable policy" {
 		t.Fatalf("auto approval decision = %q,%q,%q,%q", decision, actorKind, actorID, reason)
 	}
+
+	repeatRun := prepareInboxRun(t, ctx, store, "repeat-auto-policy-evidence")
+	repeatAssessment, err := store.RecordAssessment(ctx, RecordAssessmentInput{
+		RunID: repeatRun.RunID, Result: testValidatedAssessmentResult(t), RecordedAt: time.Unix(61, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.AssessmentID = repeatAssessment.AssessmentID
+	repeat, err := store.RecordPolicyEvaluation(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repeat.Created || repeat.ProposalID != "" || repeat.ProposalRevisionID != "" {
+		t.Fatalf("repeat auto evaluation = %+v", repeat)
+	}
+	assertTableCount(t, ctx, store.db, "proposals", 1)
+	assertTableCount(t, ctx, store.db, "decisions", 1)
 }
 
 type policyRecordFixture struct {

@@ -1,7 +1,7 @@
 # Go Rewrite Status
 
-Last implementation checkpoint: terminal-PR inbox exclusion stage (this commit).
-Last full Go suite checkpoint: terminal-PR inbox exclusion stage (`go test ./...`, `go vet
+Last implementation checkpoint: repeat-policy proposal suppression stage (this commit).
+Last full Go suite checkpoint: repeat-policy proposal suppression stage (`go test ./...`, `go vet
 ./...`).
 Last browser fixture checkpoint: current queue-filter stage (`pnpm test:e2e`).
 
@@ -27,6 +27,9 @@ it in the same commit as every meaningful implementation stage.
   clear-filter recovery.
 - Attention queue excludes current `closed` and `merged` GitHub observations;
   their immutable review records remain available in History and Timeline.
+- Repeat automatic reviews of unchanged evidence retain their policy-evaluation
+  audit facts but never create another proposal, revision, or automatic
+  approval for the same current rule version.
 - Selected PR can queue canonical evidence hydration from dashboard. It creates
   or reuses one durable `github.hydrate.v1` job and cannot write to GitHub.
 - Review profiles, review runs, assessment validation, policy, proposals,

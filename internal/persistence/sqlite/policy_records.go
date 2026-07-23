@@ -139,6 +139,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		if !normalized.requiresProposal() {
 			return nil
 		}
+		alreadyProposed, err := hasProposalForEvidenceAndRule(ctx, conn, assessment, normalized)
+		if err != nil {
+			return err
+		}
+		if alreadyProposed {
+			return nil
+		}
 		proposalID := stableID("proposal", evaluationID)
 		proposalKind := normalized.proposalKind()
 		if _, err := conn.ExecContext(ctx, `
@@ -277,6 +284,30 @@ func (input normalizedRecordPolicyEvaluationInput) proposalKind() string {
 	default:
 		return ""
 	}
+}
+
+// hasProposalForEvidenceAndRule prevents a repeat review of unchanged evidence
+// from replacing a pending or already decided human proposal. The new policy
+// evaluation remains in the immutable audit trail without another proposal.
+func hasProposalForEvidenceAndRule(ctx context.Context, conn *sql.Conn, assessment completedPolicyAssessment, input normalizedRecordPolicyEvaluationInput) (bool, error) {
+	var exists int
+	err := conn.QueryRowContext(ctx, `
+SELECT EXISTS (
+ SELECT 1
+ FROM proposals AS proposal
+ JOIN proposal_revisions AS proposal_revision ON proposal_revision.proposal_id = proposal.id
+ JOIN policy_evaluations AS evaluation ON evaluation.id = proposal.policy_evaluation_id
+ WHERE evaluation.connection_id = ?
+   AND proposal.pull_request_id = ?
+   AND proposal.revision_id = ?
+   AND proposal.observation_id = ?
+   AND evaluation.matched_rule_version_id = ?
+)`, assessment.ConnectionID, assessment.PullRequestID, assessment.RevisionID,
+		assessment.ObservationID, input.MatchedRuleVersionID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check prior proposal for current evidence: %w", err)
+	}
+	return exists == 1, nil
 }
 
 func normalizeBoundedJSONObject(raw []byte, maximum int) ([]byte, error) {
