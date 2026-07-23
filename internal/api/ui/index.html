@@ -510,7 +510,8 @@
         inboxMessage.textContent = items.length ? (attention.length ? '' : 'Showing observed pull requests. No current review attention.') : 'No observed pull requests yet.';
         items.forEach(addInboxItem);
         const next = items.find((item) => item.id === preferredID) || items.find((item) => selectedItem && item.id === selectedItem.id) || items[0];
-        if (next) showTimeline(next); else { selected.hidden = true; timeline.replaceChildren(); timelineMessage.textContent = 'Queue clear. No current review attention.'; clearMutationContext('No pending proposal selected.'); }
+        const selectionUnchanged = next && selectedItem && next.id === selectedItem.id && next.connection_id === selectedItem.connection_id;
+        if (next && !selectionUnchanged) showTimeline(next); else if (next) document.querySelectorAll('.inbox-item').forEach((button) => button.setAttribute('aria-current', String(button.dataset.id === next.id))); else { selected.hidden = true; timeline.replaceChildren(); timelineMessage.textContent = 'Queue clear. No current review attention.'; clearMutationContext('No pending proposal selected.'); }
       }
       function showTimeline(item) {
         selectedItem = item;
