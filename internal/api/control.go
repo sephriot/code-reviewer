@@ -39,6 +39,8 @@ type ControlOptions struct {
 	NotificationPreferences NotificationPreferencesOptions
 	BrowserNotifications    BrowserNotificationDeliveryOptions
 	HydrationMutations      HydrationMutationOptions
+	ReviewScheduling        ReviewSchedulingOptions
+	ReviewExecutionEnabled  bool
 	GitHubWebhooks          GitHubWebhookOptions
 }
 
@@ -47,7 +49,7 @@ type ControlOptions struct {
 func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler {
 	mux := http.NewServeMux()
 	registerHealthRoutes(mux, readiness)
-	handler := controlHandler{reader: options.Reader, schemaStatus: readiness.SchemaStatus}
+	handler := controlHandler{reader: options.Reader, schemaStatus: readiness.SchemaStatus, reviewExecutionEnabled: options.ReviewExecutionEnabled}
 	for _, path := range []string{
 		"/api/v1/inbox",
 		"/api/inbox",
@@ -83,13 +85,15 @@ func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler
 	registerNotificationPreferenceRoutes(mux, options.NotificationPreferences)
 	registerBrowserNotificationDeliveryRoutes(mux, options.BrowserNotifications)
 	registerHydrationMutationRoutes(mux, options.HydrationMutations)
+	registerReviewSchedulingRoutes(mux, options.ReviewScheduling)
 	registerGitHubWebhookRoute(mux, options.GitHubWebhooks)
 	return mux
 }
 
 type controlHandler struct {
-	reader       ControlReader
-	schemaStatus func(context.Context) (SchemaStatus, error)
+	reader                 ControlReader
+	schemaStatus           func(context.Context) (SchemaStatus, error)
+	reviewExecutionEnabled bool
 }
 
 type pageParams struct {
@@ -218,6 +222,9 @@ type settingsResponse struct {
 		Latest  int  `json:"latest"`
 		Pending int  `json:"pending"`
 	} `json:"schema"`
+	Runtime struct {
+		ReviewExecutionEnabled bool `json:"review_execution_enabled"`
+	} `json:"runtime"`
 }
 
 func (h controlHandler) inbox(response http.ResponseWriter, request *http.Request) {
@@ -467,6 +474,7 @@ func (h controlHandler) settings(response http.ResponseWriter, request *http.Req
 	result.Configured.ActiveRules, result.Configured.Profiles = summary.ActiveWatchRules, summary.ConfiguredProfiles
 	result.Schema.Current = status.Pending == 0 && status.Current == status.Latest
 	result.Schema.Version, result.Schema.Latest, result.Schema.Pending = status.Current, status.Latest, status.Pending
+	result.Runtime.ReviewExecutionEnabled = h.reviewExecutionEnabled
 	writeControlJSON(response, http.StatusOK, result)
 }
 

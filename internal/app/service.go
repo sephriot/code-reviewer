@@ -137,6 +137,8 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		NotificationPreferences: api.NotificationPreferencesOptions{Store: store},
 		BrowserNotifications:    api.BrowserNotificationDeliveryOptions{Store: store},
 		HydrationMutations:      dashboardHydrationMutationOptions(store),
+		ReviewScheduling:        dashboardReviewSchedulingOptions(store, cfg.ReviewExecution.Enabled),
+		ReviewExecutionEnabled:  cfg.ReviewExecution.Enabled,
 		GitHubWebhooks:          webhookOptions,
 	})
 	server := &http.Server{
@@ -291,6 +293,36 @@ func publicationMutationOptions(store *storagesqlite.Store) api.PublicationMutat
 
 func dashboardHydrationMutationOptions(store *storagesqlite.Store) api.HydrationMutationOptions {
 	return api.HydrationMutationOptions{Scheduler: dashboardHydrationScheduler{scheduler: hydrateworker.TargetScheduler{Store: store}}}
+}
+
+func dashboardReviewSchedulingOptions(store *storagesqlite.Store, enabled bool) api.ReviewSchedulingOptions {
+	if !enabled {
+		return api.ReviewSchedulingOptions{}
+	}
+	return api.ReviewSchedulingOptions{Scheduler: dashboardReviewScheduler{service: watchschedule.Service{Store: store}}}
+}
+
+type dashboardReviewScheduler struct {
+	service watchschedule.Service
+}
+
+func (s dashboardReviewScheduler) ScheduleEligibleReview(ctx context.Context, connectionID, pullRequestID string) (api.EligibleReviewScheduleResult, error) {
+	result, err := s.service.Schedule(ctx, watchschedule.Request{
+		ConnectionID: connectionID, PullRequestID: pullRequestID,
+		EngineKind: "cli", EngineConfigJSON: []byte(`{"engine_source":"reviewd_config"}`),
+		AccessMode: "diff_only", CorrelationID: "reviewd-dashboard", RequestedAt: time.Now().UTC(),
+	})
+	if errors.Is(err, storagesqlite.ErrAutomaticWatchRuleTargetNotFound) || errors.Is(err, storagesqlite.ErrCanonicalReviewTargetNotFound) {
+		return api.EligibleReviewScheduleResult{}, api.ErrReviewEvidenceNotReady
+	}
+	if err != nil {
+		return api.EligibleReviewScheduleResult{}, err
+	}
+	response := api.EligibleReviewScheduleResult{Matched: result.Matched, RuleID: result.RuleID, RuleVersionID: result.RuleVersionID, TriggerKind: result.TriggerKind}
+	if result.Queued != nil {
+		response.RunID, response.JobID, response.Created = result.Queued.RunID, result.Queued.JobID, result.Queued.Created
+	}
+	return response, nil
 }
 
 type dashboardHydrationScheduler struct {

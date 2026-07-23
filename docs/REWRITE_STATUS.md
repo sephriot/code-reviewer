@@ -50,7 +50,8 @@ it in the same commit as every meaningful implementation stage.
 
 - [x] Dashboard selected-PR facts: current evidence state, run count, proposal
       count; hydration is disabled when canonical evidence exists.
-- [ ] Dashboard control to queue an eligible review and show durable run state.
+- [x] Dashboard control to re-check automatic policy and queue an eligible
+      review. Runtime Activity shows durable job outcome.
 - [ ] Dashboard setup/help for profiles, active policy rules, and trusted local
       review-engine configuration; retain CLI as complete fallback.
 - [ ] End-to-end browser test: reconcile, hydrate, queue, run, policy proposal,

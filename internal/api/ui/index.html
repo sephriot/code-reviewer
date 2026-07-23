@@ -126,6 +126,12 @@
           <div class="action-row"><button class="action" id="hydrate-evidence" type="button">Build canonical evidence</button></div>
           <p class="mutation-status" id="evidence-status" role="status" aria-live="polite">Select a pull request to queue evidence hydration.</p>
         </section>
+        <section class="mutation" id="review-controls" aria-labelledby="review-controls-heading">
+          <div class="mutation-head"><h3 id="review-controls-heading">Eligible review</h3><span class="pill">Policy gated</span></div>
+          <p class="mutation-copy">Re-check active automatic policy against current canonical evidence. It queues a local review only when an automatic rule matches.</p>
+          <div class="action-row"><button class="action" id="schedule-review" type="button">Queue eligible review</button></div>
+          <p class="mutation-status" id="review-status" role="status" aria-live="polite">Canonical evidence and trusted review runtime are required.</p>
+        </section>
         <section class="mutation" id="proposal-controls" aria-labelledby="proposal-controls-heading" hidden>
           <div class="mutation-head"><h3 id="proposal-controls-heading">Human decision</h3><span class="pill">Append only</span></div>
           <p class="mutation-copy">Edit creates a new immutable proposal revision. Approval or rejection decides selected revision only. No GitHub publication happens here.</p>
@@ -218,6 +224,8 @@
       const timelineMessage = document.querySelector('#timeline-message');
       const hydrateEvidence = document.querySelector('#hydrate-evidence');
       const evidenceStatus = document.querySelector('#evidence-status');
+      const scheduleReview = document.querySelector('#schedule-review');
+      const reviewStatus = document.querySelector('#review-status');
       const overviewMessage = document.querySelector('#overview-message');
       const overviewMetrics = document.querySelector('#overview-metrics');
       const historyMessage = document.querySelector('#history-message');
@@ -259,6 +267,8 @@
       let notificationPreferencesBusy = false;
       let evidenceBusy = false;
       let evidenceReady = false;
+      let reviewBusy = false;
+      let reviewExecutionEnabled = false;
       const formatTime = (value) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'unknown time' : new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(date); };
       const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value || '—'; if (className) node.className = className; return node; };
       const api = async (path) => { const response = await fetch(path, { credentials:'same-origin', headers:{Accept:'application/json'} }); if (!response.ok) throw new Error(`Read model returned ${response.status}`); return response.json(); };
@@ -266,6 +276,7 @@
       const setConnection = (state, value) => { connection.dataset.state = state; connection.textContent = value; };
       const setMutationStatus = (state, value) => { mutationStatus.dataset.state = state; mutationStatus.textContent = value; };
       const setEvidenceStatus = (state, value) => { evidenceStatus.dataset.state = state; evidenceStatus.textContent = value; };
+      const setReviewStatus = (state, value) => { reviewStatus.dataset.state = state; reviewStatus.textContent = value; };
       const setNotificationPreferencesStatus = (state, value) => { notificationPreferencesStatus.dataset.state = state; notificationPreferencesStatus.textContent = value; };
       const replaceOptions = (select, entries, selectedValue, emptyLabel) => {
         select.replaceChildren();
@@ -316,15 +327,18 @@
       }
       function renderSettings(value) {
 		publicationMode = value.publication_mode || 'unknown';
+		reviewExecutionEnabled = Boolean(value.runtime?.review_execution_enabled);
         settingsItems.replaceChildren();
         const rows = [
           ['Publication mode', publicationMode, ['disabled', 'simulated', 'enabled'].includes(publicationMode)],
           ['Active watch rules', value.configured?.active_rules ?? 0], ['Review profiles', value.configured?.profiles ?? 0],
-          ['Schema version', `${value.schema?.version ?? '—'} / ${value.schema?.latest ?? '—'}`, Boolean(value.schema?.current)], ['Pending migrations', value.schema?.pending ?? '—', (value.schema?.pending ?? 1) === 0]
+          ['Schema version', `${value.schema?.version ?? '—'} / ${value.schema?.latest ?? '—'}`, Boolean(value.schema?.current)], ['Pending migrations', value.schema?.pending ?? '—', (value.schema?.pending ?? 1) === 0],
+          ['Review runtime', reviewExecutionEnabled ? 'enabled' : 'disabled', reviewExecutionEnabled]
         ];
         rows.forEach(([label, valueText, good]) => { const labelNode = text('dt', label); const valueNode = text('dd', String(valueText)); if (good !== undefined) valueNode.dataset.good = String(good); settingsItems.append(labelNode, valueNode); });
         clearReadFailure(settingsMessage, 'Safe local summary only. Credentials and token references stay out of the dashboard.');
 		syncMutationControls();
+		syncReviewControls();
       }
       const localDateTimeInput = (value) => {
         if (!value) return '';
@@ -383,6 +397,11 @@
       function syncEvidenceControls() {
         hydrateEvidence.disabled = evidenceBusy || !selectedItem || evidenceReady;
         hydrateEvidence.textContent = evidenceBusy ? 'Queueing evidence…' : evidenceReady ? 'Canonical evidence ready' : 'Build canonical evidence';
+      }
+      function syncReviewControls() {
+        scheduleReview.disabled = reviewBusy || !selectedItem || !evidenceReady || !reviewExecutionEnabled;
+        scheduleReview.textContent = reviewBusy ? 'Checking policy…' : 'Queue eligible review';
+        if (!reviewBusy && !reviewExecutionEnabled) setReviewStatus('idle', 'Review runtime is disabled. Configure trusted engine, then restart reviewd.');
       }
       function setMutationContext(item, events) {
         proposalControls.hidden = false;
@@ -447,6 +466,7 @@
         selectedFacts.hidden = true;
         selectedFacts.replaceChildren();
         syncEvidenceControls();
+		syncReviewControls();
         setEvidenceStatus('idle', 'Selected pull request can be hydrated with current GET-only GitHub evidence.');
         selected.hidden = false; selectedConnection.textContent = item.connection_id; selectedTitle.textContent = item.title || item.pull_request_id; selectedState.textContent = item.state;
         timeline.replaceChildren(); timelineMessage.textContent = 'Loading immutable events.'; timelineMessage.removeAttribute('role');
@@ -459,6 +479,7 @@
           evidenceReady = detail.current_revision?.identity_kind === 'canonical_diff';
           renderSelectedFacts(detail);
           syncEvidenceControls();
+		  syncReviewControls();
           setEvidenceStatus(evidenceReady ? 'ready' : 'idle', evidenceReady ? 'Canonical diff evidence is current. New hydration is blocked.' : 'Selected pull request can be hydrated with current GET-only GitHub evidence.');
         }).catch(() => {});
         api(`/api/v1/pull-requests/${encodeURIComponent(item.pull_request_id)}/timeline?connection_id=${encodeURIComponent(item.connection_id)}`).then((page) => {
@@ -543,6 +564,20 @@
           await refreshTelemetry();
         } catch (error) { setEvidenceStatus('error', error.message); }
         finally { evidenceBusy = false; syncEvidenceControls(); }
+      });
+      scheduleReview.addEventListener('click', async () => {
+        if (!selectedItem) return;
+        reviewBusy = true;
+        syncReviewControls();
+        setReviewStatus('idle', 'Checking active automatic policy against canonical evidence.');
+        try {
+          const result = await postMutation(`/api/v1/mutate/pull-requests/${encodeURIComponent(selectedItem.pull_request_id)}/schedule-review`, { connection_id:selectedItem.connection_id });
+          if (!result.matched) setReviewStatus('idle', 'No active automatic policy matches this pull request.');
+          else if (result.trigger_kind !== 'automatic') setReviewStatus('idle', `Matched ${result.trigger_kind} policy. It does not queue automatic review.`);
+          else setReviewStatus('ready', result.created ? 'Review queued. Runtime activity will show outcome.' : 'Matching review already queued. Runtime activity will show outcome.');
+          await refreshTelemetry();
+        } catch (error) { setReviewStatus('error', error.message); }
+        finally { reviewBusy = false; syncReviewControls(); }
       });
       notificationPreferencesForm.addEventListener('submit', async (event) => {
         event.preventDefault();

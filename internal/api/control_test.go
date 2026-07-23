@@ -389,7 +389,7 @@ func TestControlServesReadOnlyDashboard(t *testing.T) {
 		t.Fatalf("dashboard content type = %q", response.Header().Get("Content-Type"))
 	}
 	body := response.Body.String()
-	for _, text := range []string{"Control Desk", "/api/v1/inbox", "timeline", "selected-facts", "/api/v1/mutate/pull-requests", "Build canonical evidence", "/api/v1/notification-preferences", "Save local preferences"} {
+	for _, text := range []string{"Control Desk", "/api/v1/inbox", "timeline", "selected-facts", "/api/v1/mutate/pull-requests", "Build canonical evidence", "Queue eligible review", "/api/v1/notification-preferences", "Save local preferences"} {
 		if !strings.Contains(body, text) {
 			t.Errorf("dashboard missing %q", text)
 		}

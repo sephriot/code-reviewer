@@ -28,6 +28,9 @@ Open <http://127.0.0.1:8080/>. Default listener is loopback-only. `REVIEWD_LISTE
 - Local proposal-revision edits plus approval/rejection of exact current revisions.
 - Selected-PR canonical evidence hydration. It queues bounded GET-only GitHub
   reads for current metadata evidence and never performs a GitHub write.
+- Selected-PR automatic-policy re-check. It queues a review only when canonical
+  evidence is current, a matching active rule is `automatic`, and trusted local
+  review execution is enabled.
 - No GitHub token display or publication action.
 
 Attention is evidence-bound. When GitHub facts or canonical diff change, stale entries cannot be treated as current work.
@@ -51,6 +54,7 @@ All responses have `Cache-Control: no-store`.
 | `POST /api/v1/mutate/proposals/{id}/revisions` | Append a local human proposal revision |
 | `POST /api/v1/mutate/proposals/{id}/decisions` | Record one local decision for an owned revision |
 | `POST /api/v1/mutate/pull-requests/{id}/hydrate` | Queue canonical evidence hydration for one current selected PR |
+| `POST /api/v1/mutate/pull-requests/{id}/schedule-review` | Re-check active automatic policy and queue one eligible review |
 | `POST /api/v1/mutate/proposal-revisions/{id}/publication/simulate` | Record and, in simulated mode, queue one local-only publication attempt |
 | `POST /api/v1/mutate/proposal-revisions/{id}/publication/dispatch` | Explicitly queue one guarded enabled GitHub publication |
 | `POST /api/v1/mutate/publication-effects/{id}/uncertainty-resolution` | Human-only immutable `externally_completed` or `abandoned` resolution; never reposts |
