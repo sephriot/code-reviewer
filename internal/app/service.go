@@ -124,9 +124,9 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	}
 	webhookReconciliation := cfg.ShadowReconciliation
 	if cfg.PublicationMode == config.PublicationEnabled {
-		// Existing reconciliation writes projections only while the durable
-		// publication gate is disabled. Enabled dispatch validates live diff
-		// directly, so suppress webhook-triggered projection writes here.
+		// Keep webhook ingress inert while publication is enabled. Periodic
+		// reconciliation remains GET-only and continues to refresh projections;
+		// publication still requires its separate guarded worker path.
 		webhookReconciliation.Enabled = false
 	}
 	webhookOptions, err := githubWebhookOptions(cfg.GitHubWebhook, webhookReconciliation, store, os.LookupEnv)
@@ -224,7 +224,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		Owner: workerOwner() + ":outbox",
 	}
 	service := &Service{store: store, server: server, jobRunner: runner, outboxRunner: outboxRunner, publicationMode: cfg.PublicationMode, ownershipGuard: ownershipGuard}
-	if cfg.ShadowReconciliation.Enabled && cfg.PublicationMode != config.PublicationEnabled {
+	if cfg.ShadowReconciliation.Enabled {
 		reconciliationConfig := reconcile.Config{
 			ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
 			APIBaseURL:        cfg.ShadowReconciliation.APIBaseURL,

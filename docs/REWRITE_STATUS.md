@@ -1,7 +1,7 @@
 # Go Rewrite Status
 
-Last implementation checkpoint: startup backfill terminal-candidate fix (this commit).
-Last full Go suite checkpoint: startup backfill terminal-candidate fix (`go test ./...`, `go vet
+Last implementation checkpoint: enabled-mode reconciliation scheduling fix (this commit).
+Last full Go suite checkpoint: enabled-mode reconciliation scheduling fix (`go test ./...`, `go vet
 ./...`).
 Last browser fixture checkpoint: current queue-filter stage (`pnpm test:e2e`).
 
@@ -31,6 +31,9 @@ it in the same commit as every meaningful implementation stage.
   target, so review intent/run records are never queued after terminal state.
 - Startup automatic-review backfill excludes terminal candidates and tolerates a
   candidate becoming terminal during scheduling; it cannot stop `reviewd`.
+- GET-only periodic reconciliation and canonical hydration remain scheduled when
+  publication is enabled. Webhook-triggered reconciliation stays inert there;
+  GitHub writes still require the separate guarded publication worker.
 - Repeat automatic reviews of unchanged evidence retain their policy-evaluation
   audit facts but never create another proposal, revision, or automatic
   approval for the same current rule version.
@@ -65,6 +68,33 @@ it in the same commit as every meaningful implementation stage.
    `REVIEWD_REVIEW_ENGINE_ARGV`. This is intentionally off by default.
 
 ## Remaining work
+
+### Handoff checkpoint — July 23
+
+The Go rewrite MVP is implemented. The immediate follow-up is operational
+verification and small usability refinement, not another platform redesign.
+
+- [ ] Restart `reviewd` from the latest commit and verify Runtime Activity logs
+      **scheduling shadow reconciliation and hydration** while
+      `REVIEWD_PUBLICATION_MODE_ENABLED=true`. Confirm the dashboard stays
+      reachable after that startup work.
+- [ ] Use the live dashboard to retry or dismiss old `failed_run` records for
+      still-open PRs. Terminal PR failures are now hidden from Attention and
+      remain in immutable History/Timeline; do not delete ledger data.
+- [ ] Optional operator UX: add visual analytics charts only if metrics prove
+      insufficient. Keep embedded HTML/CSS/JavaScript; React remains out of
+      scope.
+- [ ] Add browser coverage for terminal inbox filtering and enabled-mode
+      startup reconciliation if future changes touch either workflow.
+
+Recent commits, oldest first:
+
+- `04d4b0a` hide terminal PRs from Attention.
+- `9b7f32b` avoid repeat proposals for unchanged evidence/rule.
+- `24c3943` reject terminal review execution targets.
+- `6eebc73` keep startup backfill alive around stale terminal targets.
+- Pending commit in this handoff: schedule GET-only reconciliation while
+  publication is enabled.
 
 ### Operational alpha — next, in order
 

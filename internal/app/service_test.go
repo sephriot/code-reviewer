@@ -450,8 +450,8 @@ func TestNewSetsEnabledPublicationModeAndRegistersGuardedWorker(t *testing.T) {
 	if err != nil || summary.PublicationMode != sqlite.PublicationModeEnabled {
 		t.Fatalf("settings=%+v err=%v", summary, err)
 	}
-	if service.schedule != nil {
-		t.Fatal("enabled publication must not schedule projection reconciliation")
+	if service.schedule == nil {
+		t.Fatal("enabled publication must schedule GET-only projection reconciliation")
 	}
 	router := service.jobRunner.(*worker.Runner).Handler.(*worker.Router)
 	err = router.Handle(context.Background(), sqlite.Job{Kind: publishworker.EnabledJobKind, Payload: []byte(`{"effect_id":"effect-1"}`)})
