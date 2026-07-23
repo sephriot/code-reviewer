@@ -202,18 +202,37 @@ reviewd
 
 Profiles are immutable by `(key, version)`. Input files are bounded regular files; settings must be one JSON object.
 
+- `--description-file`: short human-facing purpose. Dashboard and operators use it to identify profile intent.
+- `--instructions-file`: immutable instructions passed into each review bundle; this is where review scope and output expectations live.
+- `--settings-file`: strict JSON object for profile-specific engine-neutral settings. It is retained with profile version, not interpreted as shell arguments.
+
+Copy the tracked example rather than creating opaque local files:
+
+```bash
+cp -R examples/review-profiles ./local-review-profile
+```
+
 ```bash
 go run ./cmd/reviewctl profile create \
   --database data/control-plane.db \
   --key baseline \
   --version 1 \
   --name "Baseline review" \
-  --description-file ./profile-description.txt \
-  --instructions-file ./profile-instructions.txt \
-  --settings-file ./profile-settings.json
+  --description-file examples/review-profiles/baseline-description.txt \
+  --instructions-file examples/review-profiles/baseline-instructions.txt \
+  --settings-file examples/review-profiles/baseline-settings.json
 ```
 
 Create a new version instead of editing an existing one.
+
+Apply the matching safe policy. It may queue reviews automatically, but every pass produces a human-confirmed proposal; it cannot auto-publish GitHub approval.
+
+```bash
+go run ./cmd/reviewctl policy apply \
+  --database data/control-plane.db \
+  --generation 1 \
+  --rules-file examples/review-profiles/baseline-policy.json
+```
 
 ### Queue a review
 

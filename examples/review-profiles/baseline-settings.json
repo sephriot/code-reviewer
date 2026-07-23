@@ -1,0 +1,4 @@
+{
+  "focus": ["correctness", "security", "maintainability"],
+  "max_findings": 20
+}

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +34,7 @@ import (
 	"github.com/sephriot/code-reviewer/internal/application/watchschedule"
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/outbox"
+	"github.com/sephriot/code-reviewer/internal/ownership"
 	storagesqlite "github.com/sephriot/code-reviewer/internal/persistence/sqlite"
 	"github.com/sephriot/code-reviewer/internal/worker"
 )
@@ -46,6 +48,7 @@ type Service struct {
 	schedule         scheduleFunc
 	scheduleInterval time.Duration
 	publicationMode  config.PublicationMode
+	ownershipGuard   *ownership.Guard
 }
 
 type runtimeRunner interface {
@@ -104,6 +107,13 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		return closeOnError(fmt.Errorf("set publication mode: %w", err))
 	}
 
+	var ownershipGuard *ownership.Guard
+	if cfg.PublicationMode == config.PublicationEnabled {
+		ownershipGuard, err = ownership.Acquire(ctx, filepath.Join(filepath.Dir(cfg.DatabasePath), "writer-ownership"), workerOwner(), "reviewd-enabled-publication", time.Now().UTC())
+		if err != nil {
+			return closeOnError(fmt.Errorf("acquire writer ownership: %w", err))
+		}
+	}
 	mutationAuth, err := api.NewMutationAuth()
 	if err != nil {
 		return closeOnError(fmt.Errorf("create control mutation auth: %w", err))
@@ -185,7 +195,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		handlers[publishworker.SimulateJobKind] = publishworker.Handler{Loader: store, Recorder: store}
 	}
 	if cfg.PublicationMode == config.PublicationEnabled {
-		handler, err := newEnabledPublicationHandler(cfg, store, os.LookupEnv)
+		handler, err := newEnabledPublicationHandler(cfg, store, os.LookupEnv, ownershipGuard)
 		if err != nil {
 			return closeOnError(err)
 		}
@@ -207,7 +217,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		}},
 		Owner: workerOwner() + ":outbox",
 	}
-	service := &Service{store: store, server: server, jobRunner: runner, outboxRunner: outboxRunner, publicationMode: cfg.PublicationMode}
+	service := &Service{store: store, server: server, jobRunner: runner, outboxRunner: outboxRunner, publicationMode: cfg.PublicationMode, ownershipGuard: ownershipGuard}
 	if cfg.ShadowReconciliation.Enabled && cfg.PublicationMode != config.PublicationEnabled {
 		reconciliationConfig := reconcile.Config{
 			ConnectionID:      cfg.ShadowReconciliation.ConnectionID,
@@ -360,9 +370,12 @@ func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (r
 	return reviewworker.Handler{Executor: executor, Events: store, AutomaticPolicyStore: store}, nil
 }
 
-func newEnabledPublicationHandler(cfg config.Config, store *storagesqlite.Store, lookup func(string) (string, bool)) (publishworker.EnabledHandler, error) {
-	if store == nil || lookup == nil {
+func newEnabledPublicationHandler(cfg config.Config, store *storagesqlite.Store, lookup func(string) (string, bool), guard *ownership.Guard) (publishworker.EnabledHandler, error) {
+	if store == nil || lookup == nil || guard == nil {
 		return publishworker.EnabledHandler{}, errors.New("enabled publication dependencies are unavailable")
+	}
+	if err := guard.Valid(context.Background()); err != nil {
+		return publishworker.EnabledHandler{}, fmt.Errorf("validate writer ownership before loading GitHub credential: %w", err)
 	}
 	token, found := lookup(cfg.ShadowReconciliation.TokenEnvironment)
 	if !found || strings.TrimSpace(token) == "" {
@@ -376,7 +389,22 @@ func newEnabledPublicationHandler(cfg config.Config, store *storagesqlite.Store,
 	if err != nil {
 		return publishworker.EnabledHandler{}, fmt.Errorf("configure enabled publication writer: %w", err)
 	}
-	return publishworker.EnabledHandler{Claimer: store, Recorder: store, Reader: reader, Publisher: publisher}, nil
+	return publishworker.EnabledHandler{Claimer: store, Recorder: store, Reader: reader, Publisher: ownedPublisher{publisher: publisher, guard: guard}}, nil
+}
+
+type ownedPublisher struct {
+	publisher publishworker.EnabledPublisher
+	guard     *ownership.Guard
+}
+
+func (p ownedPublisher) SubmitReview(ctx context.Context, submission githubadapter.ReviewSubmission) (githubadapter.SubmittedReview, error) {
+	if p.guard == nil {
+		return githubadapter.SubmittedReview{}, errors.New("writer ownership guard is unavailable")
+	}
+	if err := p.guard.Valid(ctx); err != nil {
+		return githubadapter.SubmittedReview{}, fmt.Errorf("validate writer ownership before GitHub write: %w", err)
+	}
+	return p.publisher.SubmitReview(ctx, submission)
 }
 
 // Run listens until the context is canceled or the server fails.
@@ -598,5 +626,9 @@ func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
-	return s.store.Close()
+	err := s.store.Close()
+	if s.ownershipGuard != nil {
+		err = errors.Join(err, s.ownershipGuard.Close())
+	}
+	return err
 }

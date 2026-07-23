@@ -1,0 +1,16 @@
+{
+  "rules": [
+    {
+      "key": "baseline-auto",
+      "enabled": true,
+      "priority": 1,
+      "trigger_kind": "automatic",
+      "external_action_policy": "require_confirmation",
+      "profile_key": "baseline",
+      "profile_version": 1,
+      "match": {},
+      "review": {},
+      "publication": {"allow_automatic_approval": false}
+    }
+  ]
+}
