@@ -1,6 +1,6 @@
 # Go Rewrite Status
 
-Last implementation checkpoint: `fda7e8a` (`test(e2e): cover automatic review run`).
+Last implementation checkpoint: `6a92c06` (`fix(engine): expose safe provider output shape`).
 Last full Go suite checkpoint: `1005372` (`go test ./...`, `go vet
 ./...`, and `go test -race ./...`).
 Last browser fixture checkpoint: current stage (`pnpm test:e2e`).
@@ -77,11 +77,16 @@ it in the same commit as every meaningful implementation stage.
 - [x] Product decision: retain embedded lightweight HTML/CSS/JavaScript control
       desk. React/TypeScript rewrite is explicitly removed from scope unless
       future product pressure justifies it.
-- [ ] One native provider, beginning with Codex, completes a real local review
-      from canonical evidence through persisted assessment and policy proposal.
-- [ ] Claude and Cursor Agent native adapter parity after Codex is proven.
-- [ ] Clear terminal provider/auth/sandbox diagnostics in Runtime Activity and
+- [x] One native provider completes a real local Agent review from canonical
+      evidence through persisted assessment and policy proposal. Agent uses its
+      normal authenticated environment and an isolated trusted bridge workspace.
+- [ ] Claude native adapter real-review parity. Its authenticated structured
+      output invocation has been smoke-checked; run one dashboard review before
+      declaring parity.
+- [x] Clear terminal provider/auth/output diagnostics in Runtime Activity and
       `data/reviewd.log`; no retry storm for local configuration failures.
+- [x] Review lifecycle notifications: `review.started`, `review.completed`,
+      and `review.failed` use existing local Sound/TTS/Browser/Log preferences.
 - [ ] Organization wildcard policy selection (`owner/*`) covered by tests and
       documented.
 - [ ] Backup/restore commandbook and one fixture rehearsal.
@@ -123,3 +128,6 @@ it in the same commit as every meaningful implementation stage.
 - Recent important fix: credentials stored as `env:VARIABLE_NAME` must be
   normalized to `VARIABLE_NAME` only when resolving process environment. Do not
   pass a token value where a token environment-variable name is expected.
+- Native provider output is never persisted as raw agent thinking or text. The
+  runtime records safe output shape diagnostics; agent framing is reduced to a
+  complete JSON object and then validated against immutable diff evidence.
