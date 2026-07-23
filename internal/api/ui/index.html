@@ -322,7 +322,7 @@
       function renderActivity(page) {
         const entries = Array.isArray(page.items) ? page.items : [];
         activityItems.replaceChildren();
-        entries.forEach((entry) => { const item = document.createElement('li'); item.className = 'history-item'; const copy = document.createElement('div'); copy.append(text('strong', `${entry.kind} · ${entry.state}`), text('span', entry.detail)); item.append(copy, text('time', formatTime(entry.occurred_at))); activityItems.append(item); });
+        entries.forEach((entry) => { const item = document.createElement('li'); item.className = 'history-item'; const copy = document.createElement('div'); const failure = entry.error_message ? ` · ${entry.error_class || 'failure'}: ${entry.error_message}` : ''; copy.append(text('strong', `${entry.kind} · ${entry.state}`), text('span', `${entry.detail}${failure}`)); item.append(copy, text('time', formatTime(entry.occurred_at))); activityItems.append(item); });
         clearReadFailure(activityMessage, entries.length ? 'Durable jobs, events, and delivery state.' : 'No durable runtime activity yet.');
       }
       function renderSettings(value) {

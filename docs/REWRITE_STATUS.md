@@ -56,8 +56,8 @@ it in the same commit as every meaningful implementation stage.
       review-engine configuration; retain CLI as complete fallback.
 - [ ] End-to-end browser test: reconcile, hydrate, queue, run, policy proposal,
       human decision, and simulated publication.
-- [ ] Clear operator diagnostics for failed reconciliation/hydration/review jobs
-      in dashboard, not only log file/activity list.
+- [x] Runtime Activity exposes bounded durable job failure class and reason for
+      reconciliation, hydration, and review diagnosis.
 
 ### Complete design acceptance — larger follow-on
 

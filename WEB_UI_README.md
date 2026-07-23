@@ -24,7 +24,8 @@ Open <http://127.0.0.1:8080/>. Default listener is loopback-only. `REVIEWD_LISTE
 - One immutable timeline for selected pull request and local connection,
   including publication effect, attempt, and uncertainty-resolution records.
 - Read-model availability status.
-- Durable lifecycle analytics through the control API.
+- Durable lifecycle analytics and bounded failed-job reasons through the
+  control API.
 - Local proposal-revision edits plus approval/rejection of exact current revisions.
 - Selected-PR canonical evidence hydration. It queues bounded GET-only GitHub
   reads for current metadata evidence and never performs a GitHub write.
