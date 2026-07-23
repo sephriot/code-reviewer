@@ -69,7 +69,8 @@
     textarea.compact { min-height:56px; }
     input:disabled, textarea:disabled, select:disabled, button:disabled { cursor:not-allowed; opacity:.52; }
     .action-row { display:flex; flex-wrap:wrap; gap:8px; }
-    .action { min-height:36px; padding:8px 11px; color:var(--ink); background:transparent; border:1px solid var(--line); cursor:pointer; font-weight:700; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+    .action { display:inline-flex; align-items:center; justify-content:center; min-height:36px; padding:8px 11px; color:var(--ink); background:transparent; border:1px solid var(--line); cursor:pointer; font-weight:700; font-size:11px; letter-spacing:.08em; text-transform:uppercase; text-decoration:none; }
+    .icon-action { width:36px; padding:7px; } .icon-action svg { width:18px; height:18px; fill:currentColor; }
     .action:hover:not(:disabled) { color:#161713; background:var(--signal); border-color:var(--signal); }
     .action.danger:hover:not(:disabled) { background:var(--danger); border-color:var(--danger); }
     .mutation-status { min-height:1.45em; margin:0; color:var(--muted); font-size:12px; }
@@ -135,7 +136,7 @@
       </section>
       <section class="detail" aria-labelledby="timeline-heading">
         <div class="section-head"><h2 id="timeline-heading">Selected pull request</h2></div>
-        <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3><dl class="selected-facts" id="selected-facts" hidden></dl><p class="notice" id="failure-detail" hidden></p></div><div class="action-row"><a class="action" id="open-github" href="#" target="_blank" rel="noreferrer" hidden>Open on GitHub</a><button class="action timeline-toggle" id="timeline-toggle" type="button" aria-expanded="false">Show timeline</button></div></div>
+        <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3><dl class="selected-facts" id="selected-facts" hidden></dl><p class="notice" id="failure-detail" hidden></p></div><div class="action-row"><button class="action timeline-toggle" id="timeline-toggle" type="button" aria-expanded="false">Show timeline</button><a class="action icon-action" id="open-github" href="#" target="_blank" rel="noreferrer" hidden aria-label="Open pull request on GitHub" title="Open on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38l-.01-1.49c-2.01.44-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg></a></div></div>
         <div id="timeline-panel" hidden><p class="notice" id="timeline-message">Choose inbox item to inspect immutable evidence.</p><ol class="timeline" id="timeline-items" aria-label="Selected pull request timeline"></ol></div>
         <section class="mutation" aria-labelledby="review-controls-heading">
           <div class="mutation-head"><h3 id="review-controls-heading">Review</h3><span class="pill">Local</span></div>
