@@ -40,12 +40,12 @@ func (f *fakeNotificationPreferences) UpdateNotificationPreferences(_ context.Co
 	return f.preferences, nil
 }
 
-func TestNotificationPreferencesRoutesExposeAndUpdateOnlySafeFields(t *testing.T) {
+func TestNotificationPreferencesRoutesExposeAndUpdateSpeechTemplates(t *testing.T) {
 	t.Parallel()
 	mutedUntil := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	preferences := &fakeNotificationPreferences{preferences: sqlite.NotificationPreferences{
 		Version: 4, ChannelsJSON: []byte(`{"browser":true,"log":false,"sound":true,"tts":false,"private_future_value":"do-not-expose"}`),
-		QuietHoursJSON: []byte(`{"secret":"do-not-expose"}`), EventTemplatesJSON: []byte(`{"secret":"do-not-expose"}`),
+		QuietHoursJSON: []byte(`{"secret":"do-not-expose"}`), EventTemplatesJSON: []byte(`{"review.completed":"Finished","secret":"do-not-expose"}`),
 		MutedUntil: &mutedUntil, SpeechRateMilli: 1200, CustomSoundPath: "/private/sound.wav", UpdatedAt: time.Unix(20, 0).UTC(),
 	}}
 	now := time.Unix(100, 0).UTC()
@@ -62,7 +62,7 @@ func TestNotificationPreferencesRoutesExposeAndUpdateOnlySafeFields(t *testing.T
 	if err := json.NewDecoder(get.Body).Decode(&loaded); err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Version != 4 || !loaded.Channels.Browser || loaded.Channels.Log || !loaded.Channels.Sound || loaded.Channels.TTS || loaded.SpeechRateMilli != 1200 || loaded.MutedUntil == nil || !loaded.MutedUntil.Equal(mutedUntil) {
+	if loaded.Version != 4 || !loaded.Channels.Browser || loaded.Channels.Log || !loaded.Channels.Sound || loaded.Channels.TTS || loaded.SpeechRateMilli != 1200 || loaded.MutedUntil == nil || !loaded.MutedUntil.Equal(mutedUntil) || loaded.SpeechTemplates.ReviewCompleted != "Finished" {
 		t.Fatalf("safe response = %+v", loaded)
 	}
 	if strings.Contains(get.Body.String(), "secret") || strings.Contains(get.Body.String(), "private") || strings.Contains(get.Body.String(), "path") {
@@ -70,14 +70,14 @@ func TestNotificationPreferencesRoutesExposeAndUpdateOnlySafeFields(t *testing.T
 	}
 
 	post := httptest.NewRecorder()
-	postRequest := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/notification-preferences", strings.NewReader(`{"expected_version":4,"channels":{"browser":false,"log":true,"sound":false,"tts":true},"muted_until":null,"speech_rate_milli":900}`))
+	postRequest := httptest.NewRequest(http.MethodPost, "/api/v1/mutate/notification-preferences", strings.NewReader(`{"expected_version":4,"channels":{"browser":false,"log":true,"sound":false,"tts":true},"muted_until":null,"speech_rate_milli":900,"speech_templates":{"review.started":"Starting","review.completed":"Done","review.failed":"Failed","policy.evaluated":""}}`))
 	postRequest.Header.Set("Content-Type", jsonContentType)
 	handler.ServeHTTP(post, postRequest)
 	if post.Code != http.StatusOK {
 		t.Fatalf("post status=%d body=%s", post.Code, post.Body.String())
 	}
 	if preferences.updateInput.ExpectedVersion != 4 || string(preferences.updateInput.ChannelsJSON) != `{"browser":false,"log":true,"private_future_value":"do-not-expose","sound":false,"tts":true}` ||
-		string(preferences.updateInput.QuietHoursJSON) != `{"secret":"do-not-expose"}` || string(preferences.updateInput.EventTemplatesJSON) != `{"secret":"do-not-expose"}` || preferences.updateInput.MutedUntil != nil || preferences.updateInput.SpeechRateMilli != 900 || preferences.updateInput.CustomSoundPath != "/private/sound.wav" || !preferences.updateInput.UpdatedAt.Equal(now) {
+		string(preferences.updateInput.QuietHoursJSON) != `{"secret":"do-not-expose"}` || string(preferences.updateInput.EventTemplatesJSON) != `{"policy.evaluated":"","review.completed":"Done","review.failed":"Failed","review.started":"Starting","secret":"do-not-expose"}` || preferences.updateInput.MutedUntil != nil || preferences.updateInput.SpeechRateMilli != 900 || preferences.updateInput.CustomSoundPath != "/private/sound.wav" || !preferences.updateInput.UpdatedAt.Equal(now) {
 		t.Fatalf("store input=%+v", preferences.updateInput)
 	}
 }
@@ -122,7 +122,7 @@ func TestNotificationPreferencesRoutesMapConflictsAndNeedOuterGuard(t *testing.T
 	t.Parallel()
 	preferences := &fakeNotificationPreferences{preferences: sqlite.NotificationPreferences{Version: 1, ChannelsJSON: []byte(`{"browser":false,"log":true,"sound":false,"tts":false}`), QuietHoursJSON: []byte(`{}`), EventTemplatesJSON: []byte(`{}`), SpeechRateMilli: 1000}, updateErr: sqlite.ErrNotificationPreferencesConflict}
 	inner := NewNotificationPreferencesHandler(NotificationPreferencesOptions{Store: preferences})
-	body := `{"expected_version":1,"channels":{"browser":true,"log":true,"sound":false,"tts":false},"muted_until":null,"speech_rate_milli":1000}`
+	body := `{"expected_version":1,"channels":{"browser":true,"log":true,"sound":false,"tts":false},"muted_until":null,"speech_rate_milli":1000,"speech_templates":{"review.started":"Start","review.completed":"Done","review.failed":"Failed","policy.evaluated":""}}`
 	if response := serveNotificationPreferenceMutation(inner, body); response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "notification_preferences_conflict") {
 		t.Fatalf("conflict status=%d body=%s", response.Code, response.Body.String())
 	}

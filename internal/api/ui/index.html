@@ -219,6 +219,19 @@
                 <label class="field" for="notification-speech-rate">Speech rate (500–2000)
                   <input id="notification-speech-rate" type="number" min="500" max="2000" step="50" inputmode="numeric">
                 </label>
+                <label class="field" for="notification-speech-started">Say when review starts
+                  <input id="notification-speech-started" maxlength="240" placeholder="Review started.">
+                </label>
+                <label class="field" for="notification-speech-completed">Say when review completes
+                  <input id="notification-speech-completed" maxlength="240" placeholder="Review completed.">
+                </label>
+                <label class="field" for="notification-speech-failed">Say when review fails
+                  <input id="notification-speech-failed" maxlength="240" placeholder="Review failed.">
+                </label>
+                <label class="field" for="notification-speech-policy">Say for policy evaluation (optional)
+                  <input id="notification-speech-policy" maxlength="240" placeholder="Silent by default">
+                </label>
+                <p class="microcopy">Leave a field empty to silence that event. Policy evaluation is silent by default.</p>
                 <div class="action-row"><button class="action" id="save-notification-preferences" type="submit">Save local preferences</button></div>
               </fieldset>
               <p class="notification-status" id="notification-preferences-status" role="status" aria-live="polite">Loading local notification preferences.</p>
@@ -266,6 +279,10 @@
       const notificationTTS = document.querySelector('#notification-tts');
       const notificationMutedUntil = document.querySelector('#notification-muted-until');
       const notificationSpeechRate = document.querySelector('#notification-speech-rate');
+      const notificationSpeechStarted = document.querySelector('#notification-speech-started');
+      const notificationSpeechCompleted = document.querySelector('#notification-speech-completed');
+      const notificationSpeechFailed = document.querySelector('#notification-speech-failed');
+      const notificationSpeechPolicy = document.querySelector('#notification-speech-policy');
       const saveNotificationPreferences = document.querySelector('#save-notification-preferences');
       const proposalControls = document.querySelector('#proposal-controls');
       const proposalForm = document.querySelector('#proposal-form');
@@ -400,8 +417,13 @@
         notificationTTS.checked = Boolean(channels.tts);
         notificationMutedUntil.value = localDateTimeInput(value.muted_until);
         notificationSpeechRate.value = String(value.speech_rate_milli || 1000);
+        const templates = value.speech_templates || {};
+        notificationSpeechStarted.value = templates['review.started'] || '';
+        notificationSpeechCompleted.value = templates['review.completed'] || '';
+        notificationSpeechFailed.value = templates['review.failed'] || '';
+        notificationSpeechPolicy.value = templates['policy.evaluated'] || '';
         syncNotificationPreferenceControls();
-        setNotificationPreferencesStatus('ready', 'Safe local controls only. Templates and machine paths stay private.');
+        setNotificationPreferencesStatus('ready', 'Speech text is local. Empty text silences that event.');
       }
       async function refreshNotificationPreferences() {
         try { renderNotificationPreferences(await api('/api/v1/notification-preferences')); }
@@ -652,7 +674,13 @@
           const updated = await postMutation('/api/v1/mutate/notification-preferences', {
             expected_version: notificationPreferences.version,
             channels: { browser:notificationBrowser.checked, log:notificationLog.checked, sound:notificationSound.checked, tts:notificationTTS.checked },
-            muted_until: mutedUntil, speech_rate_milli: rate
+            muted_until: mutedUntil, speech_rate_milli: rate,
+            speech_templates: {
+              'review.started': notificationSpeechStarted.value.trim(),
+              'review.completed': notificationSpeechCompleted.value.trim(),
+              'review.failed': notificationSpeechFailed.value.trim(),
+              'policy.evaluated': notificationSpeechPolicy.value.trim()
+            }
           });
           renderNotificationPreferences(updated);
           setNotificationPreferencesStatus('ready', 'Local notification preferences saved. Browser alerts use this loopback dashboard.');

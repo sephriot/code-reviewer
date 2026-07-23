@@ -72,16 +72,37 @@ func TestHandlerDeliversConfiguredSoundAndSpeech(t *testing.T) {
 			if err := handler.Handle(context.Background(), notificationJob(`{"delivery_id":"delivery-1"}`)); err != nil {
 				t.Fatal(err)
 			}
-			if recorder.outcome.State != sqlite.NotificationDeliveryDelivered {
+			wantState := sqlite.NotificationDeliveryDelivered
+			if testCase.channel == sqlite.NotificationChannelTTS {
+				wantState = sqlite.NotificationDeliverySuppressed
+			}
+			if recorder.outcome.State != wantState {
 				t.Fatalf("outcome=%+v", recorder.outcome)
 			}
 			if testCase.channel == sqlite.NotificationChannelSound && notifier.sound != "/tmp/tone.aiff" {
 				t.Fatalf("sound=%q", notifier.sound)
 			}
-			if testCase.channel == sqlite.NotificationChannelTTS && (notifier.message != "Code review notification: policy.evaluated" || notifier.rate != 1250) {
+			if testCase.channel == sqlite.NotificationChannelTTS && notifier.message != "" {
 				t.Fatalf("message=%q rate=%d", notifier.message, notifier.rate)
 			}
 		})
+	}
+}
+
+func TestHandlerSpeaksConfiguredTemplate(t *testing.T) {
+	notifier := &localNotifier{}
+	recorder := &outcomeRecorder{}
+	handler := Handler{
+		Loader:        &deliveryLoader{target: sqlite.NotificationDeliveryTarget{ID: "delivery-1", EventType: "review.completed", Channel: sqlite.NotificationChannelTTS, State: sqlite.NotificationDeliveryQueued}},
+		Recorder:      recorder,
+		Preferences:   &preferencesLoader{preferences: sqlite.NotificationPreferences{SpeechRateMilli: 1250, EventTemplatesJSON: []byte(`{"review.completed":"Review finished."}`)}},
+		LocalNotifier: notifier,
+	}
+	if err := handler.Handle(context.Background(), notificationJob(`{"delivery_id":"delivery-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.outcome.State != sqlite.NotificationDeliveryDelivered || notifier.message != "Review finished." || notifier.rate != 1250 {
+		t.Fatalf("outcome=%+v message=%q rate=%d", recorder.outcome, notifier.message, notifier.rate)
 	}
 }
 

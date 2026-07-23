@@ -185,7 +185,11 @@ func (h Handler) deliverLocal(ctx context.Context, delivery sqlite.NotificationD
 	case sqlite.NotificationChannelSound:
 		err = h.LocalNotifier.PlaySound(ctx, preferences.CustomSoundPath)
 	case sqlite.NotificationChannelTTS:
-		err = h.LocalNotifier.Speak(ctx, "Code review notification: "+delivery.EventType, preferences.SpeechRateMilli)
+		message := speechMessage(preferences.EventTemplatesJSON, delivery.EventType)
+		if message == "" {
+			return sqlite.NotificationDeliverySuppressed, nil
+		}
+		err = h.LocalNotifier.Speak(ctx, message, preferences.SpeechRateMilli)
 	default:
 		return "", worker.Permanent(errors.New("local notification channel is unsupported"))
 	}
@@ -196,6 +200,25 @@ func (h Handler) deliverLocal(ctx context.Context, delivery sqlite.NotificationD
 		return "", errors.New("deliver local notification failed")
 	}
 	return sqlite.NotificationDeliveryDelivered, nil
+}
+
+func speechMessage(raw []byte, eventType string) string {
+	values := map[string]string{}
+	if json.Unmarshal(raw, &values) == nil {
+		if value, found := values[eventType]; found {
+			return value
+		}
+	}
+	switch eventType {
+	case "review.started":
+		return "Review started."
+	case "review.completed":
+		return "Review completed."
+	case "review.failed":
+		return "Review failed."
+	default:
+		return ""
+	}
 }
 
 type jobPayload struct {

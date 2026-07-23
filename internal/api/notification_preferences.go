@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/sephriot/code-reviewer/internal/persistence/sqlite"
@@ -58,22 +59,30 @@ type notificationChannelsResponse struct {
 	TTS     bool `json:"tts"`
 }
 
-// notificationPreferencesResponse excludes opaque template settings and
-// machine-local sound paths, which can contain private or future-sensitive
-// data. Only safe, defined local controls cross this API boundary.
 type notificationPreferencesResponse struct {
 	Version         int64                        `json:"version"`
 	Channels        notificationChannelsResponse `json:"channels"`
+	SpeechTemplates notificationSpeechTemplates  `json:"speech_templates"`
 	MutedUntil      *time.Time                   `json:"muted_until"`
 	SpeechRateMilli int                          `json:"speech_rate_milli"`
 	UpdatedAt       time.Time                    `json:"updated_at"`
 }
 
+// notificationSpeechTemplates is the intentionally small, human-facing
+// speech vocabulary. Empty text explicitly suppresses an event.
+type notificationSpeechTemplates struct {
+	ReviewStarted   string `json:"review.started"`
+	ReviewCompleted string `json:"review.completed"`
+	ReviewFailed    string `json:"review.failed"`
+	PolicyEvaluated string `json:"policy.evaluated"`
+}
+
 type notificationPreferencesUpdateRequest struct {
-	ExpectedVersion *int64          `json:"expected_version"`
-	Channels        json.RawMessage `json:"channels"`
-	MutedUntil      json.RawMessage `json:"muted_until"`
-	SpeechRateMilli *int            `json:"speech_rate_milli"`
+	ExpectedVersion *int64                       `json:"expected_version"`
+	Channels        json.RawMessage              `json:"channels"`
+	MutedUntil      json.RawMessage              `json:"muted_until"`
+	SpeechRateMilli *int                         `json:"speech_rate_milli"`
+	SpeechTemplates *notificationSpeechTemplates `json:"speech_templates"`
 }
 
 func (h notificationPreferencesHandler) get(response http.ResponseWriter, request *http.Request) {
@@ -103,7 +112,7 @@ func (h notificationPreferencesHandler) update(response http.ResponseWriter, req
 		writeMutationDecodeError(response, err)
 		return
 	}
-	if input.ExpectedVersion == nil || input.SpeechRateMilli == nil || input.Channels == nil || input.MutedUntil == nil {
+	if input.ExpectedVersion == nil || input.SpeechRateMilli == nil || input.Channels == nil || input.MutedUntil == nil || input.SpeechTemplates == nil {
 		writeControlError(response, http.StatusBadRequest, "invalid_request", "notification preference fields are required", false)
 		return
 	}
@@ -126,9 +135,14 @@ func (h notificationPreferencesHandler) update(response http.ResponseWriter, req
 		writeControlError(response, http.StatusServiceUnavailable, "notification_preferences_unavailable", "notification preferences are unavailable", true)
 		return
 	}
+	mergedTemplates, err := mergeNotificationSpeechTemplates(current.EventTemplatesJSON, *input.SpeechTemplates)
+	if err != nil {
+		writeControlError(response, http.StatusBadRequest, "invalid_request", "speech templates are invalid", false)
+		return
+	}
 	updated, err := h.store.UpdateNotificationPreferences(request.Context(), sqlite.UpdateNotificationPreferencesInput{
 		ExpectedVersion: *input.ExpectedVersion, ChannelsJSON: mergedChannels, QuietHoursJSON: current.QuietHoursJSON,
-		EventTemplatesJSON: current.EventTemplatesJSON, MutedUntil: mutedUntil, SpeechRateMilli: *input.SpeechRateMilli,
+		EventTemplatesJSON: mergedTemplates, MutedUntil: mutedUntil, SpeechRateMilli: *input.SpeechRateMilli,
 		CustomSoundPath: current.CustomSoundPath, UpdatedAt: h.currentTime(),
 	})
 	if err != nil {
@@ -173,9 +187,49 @@ func safeNotificationPreferencesResponse(preferences sqlite.NotificationPreferen
 		return notificationPreferencesResponse{}, errors.New("stored notification preferences are invalid")
 	}
 	return notificationPreferencesResponse{
-		Version: preferences.Version, Channels: channels, MutedUntil: preferences.MutedUntil,
+		Version: preferences.Version, Channels: channels, SpeechTemplates: readNotificationSpeechTemplates(preferences.EventTemplatesJSON), MutedUntil: preferences.MutedUntil,
 		SpeechRateMilli: preferences.SpeechRateMilli, UpdatedAt: preferences.UpdatedAt,
 	}, nil
+}
+
+func readNotificationSpeechTemplates(raw []byte) notificationSpeechTemplates {
+	values := map[string]string{}
+	_ = json.Unmarshal(raw, &values)
+	lookup := func(key, fallback string) string {
+		if value, found := values[key]; found {
+			return value
+		}
+		return fallback
+	}
+	return notificationSpeechTemplates{
+		ReviewStarted: lookup("review.started", "Review started."), ReviewCompleted: lookup("review.completed", "Review completed."),
+		ReviewFailed: lookup("review.failed", "Review failed."), PolicyEvaluated: lookup("policy.evaluated", ""),
+	}
+}
+
+func mergeNotificationSpeechTemplates(current []byte, next notificationSpeechTemplates) ([]byte, error) {
+	values := map[string]json.RawMessage{}
+	if err := json.Unmarshal(current, &values); err != nil || values == nil {
+		return nil, errors.New("stored templates are invalid")
+	}
+	for key, value := range map[string]string{
+		"review.started": next.ReviewStarted, "review.completed": next.ReviewCompleted,
+		"review.failed": next.ReviewFailed, "policy.evaluated": next.PolicyEvaluated,
+	} {
+		if len(value) > 240 || strings.ContainsAny(value, "\x00\r\n") {
+			return nil, errors.New("speech template is invalid")
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		values[key] = encoded
+	}
+	result, err := json.Marshal(values)
+	if err != nil || len(result) > 64*1024 {
+		return nil, errors.New("speech templates are invalid")
+	}
+	return result, nil
 }
 
 func parseNotificationChannels(raw json.RawMessage, allowUnknown bool) (notificationChannelsResponse, error) {
