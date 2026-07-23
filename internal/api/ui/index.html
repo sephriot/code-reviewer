@@ -31,7 +31,10 @@
     .inbox-item > span:last-child { min-width:0; overflow:hidden; }
     .inbox-item:hover { transform:translateX(3px); background:var(--panel); border-color:var(--muted); }
     .inbox-item[aria-current="true"] { background:var(--signal); color:#161713; border-color:var(--signal); }
-    .mark { width:8px; height:8px; margin-top:5px; background:var(--danger); box-shadow:0 0 16px var(--danger); }
+    .mark { width:8px; height:8px; margin-top:5px; background:var(--muted); }
+    .inbox-item[data-kind="failed_run"] .mark { background:var(--danger); box-shadow:0 0 16px var(--danger); }
+    .inbox-item[data-kind="pending_proposal"] .mark { background:var(--signal); box-shadow:0 0 16px var(--signal); }
+    .inbox-item[data-kind="human_review"] .mark { background:var(--blue); box-shadow:0 0 16px var(--blue); }
     .inbox-item[aria-current="true"] .mark { background:#161713; box-shadow:none; }
     .item-top { min-width:0; display:flex; justify-content:space-between; gap:9px; font-size:11px; }
     .item-pr { overflow:hidden; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
@@ -131,9 +134,8 @@
         <ul class="items" id="inbox-items" aria-label="Items needing attention"></ul>
       </section>
       <section class="detail" aria-labelledby="timeline-heading">
-        <div class="section-head"><h2 id="timeline-heading">Evidence timeline</h2><span class="pill">Local session</span></div>
-        <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3><dl class="selected-facts" id="selected-facts" hidden></dl></div><div class="action-row"><a class="action" id="open-github" href="#" target="_blank" rel="noreferrer" hidden>Open on GitHub</a><span class="pill" id="selected-state"></span></div></div>
-        <button class="action timeline-toggle" id="timeline-toggle" type="button" aria-expanded="false">Show timeline</button>
+        <div class="section-head"><h2 id="timeline-heading">Selected pull request</h2></div>
+        <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3><dl class="selected-facts" id="selected-facts" hidden></dl><p class="notice" id="failure-detail" hidden></p></div><div class="action-row"><a class="action" id="open-github" href="#" target="_blank" rel="noreferrer" hidden>Open on GitHub</a><button class="action timeline-toggle" id="timeline-toggle" type="button" aria-expanded="false">Show timeline</button></div></div>
         <div id="timeline-panel" hidden><p class="notice" id="timeline-message">Choose inbox item to inspect immutable evidence.</p><ol class="timeline" id="timeline-items" aria-label="Selected pull request timeline"></ol></div>
         <section class="mutation" aria-labelledby="review-controls-heading">
           <div class="mutation-head"><h3 id="review-controls-heading">Review</h3><span class="pill">Local</span></div>
@@ -239,7 +241,7 @@
       const selectedConnection = document.querySelector('#selected-connection');
       const selectedTitle = document.querySelector('#selected-title');
       const openGitHub = document.querySelector('#open-github');
-      const selectedState = document.querySelector('#selected-state');
+      const failureDetail = document.querySelector('#failure-detail');
       const selectedFacts = document.querySelector('#selected-facts');
       const timeline = document.querySelector('#timeline-items');
       const timelineMessage = document.querySelector('#timeline-message');
@@ -525,7 +527,8 @@
         selectedFacts.hidden = true;
         selectedFacts.replaceChildren();
 		syncReviewControls();
-        selected.hidden = false; selectedConnection.textContent = `${item.repository || 'repository'} #${item.number || '—'} · ${item.author ? `by ${item.author} · ` : ''}${formatTime(item.occurred_at)}`; selectedTitle.textContent = item.title || item.pull_request_id; selectedState.textContent = item.state;
+        failureDetail.hidden = true; failureDetail.textContent = '';
+        selected.hidden = false; selectedConnection.textContent = `${item.repository || 'repository'} #${item.number || '—'} · ${item.author ? `by ${item.author} · ` : ''}${formatTime(item.occurred_at)}`; selectedTitle.textContent = item.title || item.pull_request_id;
         timeline.replaceChildren(); timelineMessage.textContent = 'Loading immutable events.'; timelineMessage.removeAttribute('role');
         clearMutationContext('Loading current proposal records.');
         document.querySelectorAll('.inbox-item').forEach((button) => button.setAttribute('aria-current', String(button.dataset.id === item.id)));
@@ -533,8 +536,8 @@
           if (!selectedItem || selectedItem.id !== item.id || selectedItem.connection_id !== item.connection_id) return;
           selectedConnection.textContent = `${detail.repository || item.repository || 'repository'} #${detail.number || item.number || '—'} · ${detail.author ? `by ${detail.author} · ` : ''}${formatTime(detail.current_observation?.observed_at || item.occurred_at)}`;
           selectedTitle.textContent = detail.title || item.title || item.pull_request_id;
-          selectedState.textContent = detail.state || item.state;
           openGitHub.hidden = !detail.html_url; openGitHub.href = detail.html_url || '#';
+          if (detail.latest_failure) { failureDetail.hidden = false; failureDetail.textContent = `Latest review failure: ${detail.latest_failure}. See Runtime activity for the job log.`; failureDetail.setAttribute('role', 'alert'); }
           evidenceReady = detail.current_revision?.identity_kind === 'canonical_diff';
           renderSelectedFacts(detail);
 		  syncReviewControls();
@@ -556,7 +559,7 @@
         }).catch((error) => { timelineMessage.textContent = error.message; timelineMessage.setAttribute('role', 'alert'); });
       }
       timelineToggle.addEventListener('click', () => { const expanded = timelinePanel.hidden; timelinePanel.hidden = !expanded; timelineToggle.setAttribute('aria-expanded', String(expanded)); timelineToggle.textContent = expanded ? 'Hide timeline' : 'Show timeline'; });
-      function addInboxItem(item) { const button = document.createElement('button'); button.type = 'button'; button.className = 'inbox-item'; button.dataset.id = item.id; button.setAttribute('aria-current', 'false'); const mark = text('span', '', 'mark'); mark.setAttribute('aria-hidden', 'true'); const content = document.createElement('span'); const top = document.createElement('span'); top.className = 'item-top'; const identifier = item.repository && item.number ? `${item.repository} #${item.number}` : item.pull_request_id; top.append(text('span', identifier, 'item-pr'), text('time', formatTime(item.occurred_at), 'item-time')); const title = item.title || item.detail || item.pull_request_id; const context = `${item.author ? `by ${item.author} · ` : ''}${String(item.kind || 'attention').replaceAll('_', ' ')}`; content.append(top, text('strong', title, 'item-detail'), text('span', context, 'item-detail')); button.append(mark, content); button.addEventListener('click', () => showTimeline(item)); inbox.append(button); }
+      function addInboxItem(item) { const button = document.createElement('button'); button.type = 'button'; button.className = 'inbox-item'; button.dataset.id = item.id; button.dataset.kind = item.kind || 'attention'; button.setAttribute('aria-current', 'false'); const mark = text('span', '', 'mark'); mark.setAttribute('aria-hidden', 'true'); const content = document.createElement('span'); const top = document.createElement('span'); top.className = 'item-top'; const identifier = item.repository && item.number ? `${item.repository} #${item.number}` : item.pull_request_id; top.append(text('span', identifier, 'item-pr'), text('time', formatTime(item.occurred_at), 'item-time')); const title = item.title || item.detail || item.pull_request_id; const context = `${item.author ? `by ${item.author} · ` : ''}${String(item.kind || 'attention').replaceAll('_', ' ')}`; content.append(top, text('strong', title, 'item-detail'), text('span', context, 'item-detail')); button.append(mark, content); button.addEventListener('click', () => showTimeline(item)); inbox.append(button); }
       proposalForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         const body = proposalBody.value.trim();

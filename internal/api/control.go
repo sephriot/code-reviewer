@@ -160,6 +160,7 @@ type pullRequestDetailResponse struct {
 	State         string `json:"state"`
 	HTMLURL       string `json:"html_url"`
 	Freshness     string `json:"freshness"`
+	LatestFailure string `json:"latest_failure"`
 
 	CurrentRevision struct {
 		ID           string `json:"id"`
@@ -420,7 +421,7 @@ func newPullRequestDetailResponse(detail sqlite.PullRequestDetail) pullRequestDe
 	response := pullRequestDetailResponse{
 		ConnectionID: detail.ConnectionID, RepositoryID: detail.RepositoryID, PullRequestID: detail.PullRequestID,
 		Owner: detail.Owner, Repository: detail.Repository, Number: detail.Number, Title: detail.Title, Author: detail.Author,
-		State: detail.State, HTMLURL: detail.HTMLURL, Freshness: detail.Freshness,
+		State: detail.State, HTMLURL: detail.HTMLURL, Freshness: detail.Freshness, LatestFailure: detail.LatestFailure,
 	}
 	response.CurrentRevision.ID, response.CurrentRevision.IdentityKind = detail.CurrentRevisionID, detail.CurrentRevisionIdentityKind
 	response.CurrentRevision.HeadSHA, response.CurrentRevision.BaseSHA = detail.CurrentHeadSHA, detail.CurrentBaseSHA

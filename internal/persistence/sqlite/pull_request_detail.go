@@ -34,6 +34,7 @@ type PullRequestDetail struct {
 	State         string
 	HTMLURL       string
 	Freshness     string
+	LatestFailure string
 
 	CurrentRevisionID           string
 	CurrentRevisionIdentityKind string
@@ -131,6 +132,12 @@ SELECT projection.connection_id, repository.id, pull_request.id,
        repository.owner_login, repository.name, pull_request.number,
        observation.title, observation.author_login, observation.github_state, COALESCE(pull_request.html_url, ''),
        projection.freshness,
+	       COALESCE((SELECT event.event_kind || ':' || json_extract(event.payload_json, '$.code')
+	                 FROM review_run_events AS event JOIN review_runs AS run ON run.id = event.run_id
+	                 WHERE run.connection_id = projection.connection_id AND run.pull_request_id = projection.pull_request_id
+	                   AND run.revision_id = projection.current_revision_id AND run.observation_id = projection.current_observation_id
+	                   AND event.event_kind IN ('failed_retryable', 'failed_terminal')
+	                 ORDER BY event.occurred_at_us DESC, event.sequence DESC LIMIT 1), ''),
        COALESCE(revision.id, ''), COALESCE(revision.identity_kind, ''),
        COALESCE(revision.head_sha, ''), COALESCE(revision.base_sha, ''),
        observation.id, observation.observed_at_us,
@@ -158,7 +165,7 @@ LEFT JOIN revisions AS revision
 WHERE projection.connection_id = ? AND projection.pull_request_id = ?`, connectionID, pullRequestID).Scan(
 		&detail.ConnectionID, &detail.RepositoryID, &detail.PullRequestID,
 		&detail.Owner, &detail.Repository, &detail.Number,
-		&detail.Title, &detail.Author, &detail.State, &detail.HTMLURL, &detail.Freshness,
+		&detail.Title, &detail.Author, &detail.State, &detail.HTMLURL, &detail.Freshness, &detail.LatestFailure,
 		&detail.CurrentRevisionID, &detail.CurrentRevisionIdentityKind,
 		&detail.CurrentHeadSHA, &detail.CurrentBaseSHA,
 		&detail.CurrentObservationID, &observedAtUS,
