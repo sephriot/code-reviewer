@@ -12,3 +12,12 @@ func TestNativeConfigValidation(t *testing.T) {
 		t.Fatal("unknown provider accepted")
 	}
 }
+
+func TestNativeInvocationUsesStructuredModes(t *testing.T) {
+	for _, provider := range []Provider{ProviderClaude, ProviderCodex, ProviderAgent} {
+		invocation, err := (NativeConfig{Provider: provider, Executable: string(provider), AuthPath: "/auth", BridgeRoot: ".reviewd"}).Invocation("/tmp/bridge")
+		if err != nil || invocation.SchemaPath != "/tmp/bridge/assessment-schema.json" || len(invocation.Argv) == 0 {
+			t.Fatalf("provider=%s invocation=%+v err=%v", provider, invocation, err)
+		}
+	}
+}
