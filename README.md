@@ -450,4 +450,4 @@ reviewctl proposal edit|decide|publish
 reviewctl publication resolve
 ```
 
-See [GREENFIELD_PRODUCT_DESIGN.md](docs/GREENFIELD_PRODUCT_DESIGN.md) for architecture and product rationale. [WEB_UI_README.md](WEB_UI_README.md) documents current control dashboard behavior.
+See [GREENFIELD_PRODUCT_DESIGN.md](docs/GREENFIELD_PRODUCT_DESIGN.md) for architecture and product rationale. Runtime dashboard behavior and current implementation state live in [REWRITE_STATUS.md](docs/REWRITE_STATUS.md).

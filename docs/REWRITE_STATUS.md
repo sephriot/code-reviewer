@@ -88,9 +88,12 @@ it in the same commit as every meaningful implementation stage.
       and `review.failed` use existing local Sound/TTS/Browser/Log preferences.
 - [x] Organization wildcard policy selection (`owner/*`) covered by tests and
       documented.
-- [ ] Backup/restore commandbook and one fixture rehearsal.
-- [ ] Final Go-only cutover: remove legacy Python runtime and its dependencies
-      only after the above local review workflow is proven.
+- [x] Backup/restore commandbook and rehearsal: format-v1 backup verified with
+      matching logical checksum and table counts; legacy source checksum stayed
+      `682e7096fd28b1c8035fab77ae5c32c296c4bd45ec42ba7ef69464804a2a7fe3`.
+- [x] Final Go-only cutover: legacy Python runtime, tests, and dependency
+      manifests removed after Agent and Claude workflow proof. Legacy database,
+      verified backup, and reference design docs remain retained.
 
 ### Explicitly deferred
 
@@ -111,7 +114,7 @@ it in the same commit as every meaningful implementation stage.
 ## Handoff notes
 
 - Normative architecture: `docs/GREENFIELD_PRODUCT_DESIGN.md`.
-- Runtime and dashboard commands: `README.md`, `WEB_UI_README.md`.
+- Runtime and dashboard commands: `README.md`.
 - `data/reviewd.log` is process output. Durable job/event/outbox state is
   available from dashboard Runtime Activity and `/api/v1/activity`.
 - Operator command discovery and safe first-use workflow live in README's
