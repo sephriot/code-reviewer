@@ -36,7 +36,7 @@ func TestLoad(t *testing.T) {
 		EnvDatabasePath:                   "/var/lib/reviewd/control-plane.db",
 		EnvListenAddress:                  "[::1]:9090",
 		EnvMigrationMode:                  "apply",
-		EnvPublicationMode:                "simulated",
+		EnvPublicationModeEnabled:         "true",
 		EnvShadowReconcileEnabled:         "true",
 		EnvGitHubConnectionID:             "github:local",
 		EnvGitHubAPIBaseURL:               "https://api.github.com",
@@ -63,8 +63,8 @@ func TestLoad(t *testing.T) {
 	if got.MigrationMode != MigrationApply {
 		t.Errorf("MigrationMode = %q, want %q", got.MigrationMode, MigrationApply)
 	}
-	if got.PublicationMode != PublicationSimulated {
-		t.Errorf("PublicationMode = %q, want %q", got.PublicationMode, PublicationSimulated)
+	if got.PublicationMode != PublicationEnabled {
+		t.Errorf("PublicationMode = %q, want %q", got.PublicationMode, PublicationEnabled)
 	}
 	if !got.ShadowReconciliation.Enabled || got.ShadowReconciliation.ConnectionID != "github:local" ||
 		got.ShadowReconciliation.TokenEnvironment != "TEST_GITHUB_TOKEN" || got.ShadowReconciliation.Interval.String() != "2m0s" {
@@ -76,6 +76,48 @@ func TestLoad(t *testing.T) {
 	}
 	if !got.GitHubWebhook.Enabled || got.GitHubWebhook.SecretEnvironment != "TEST_GITHUB_WEBHOOK_SECRET" {
 		t.Errorf("GitHubWebhook = %#v", got.GitHubWebhook)
+	}
+}
+
+func TestLoadPublicationModeEnabledBoolean(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		value   string
+		want    PublicationMode
+		wantErr bool
+	}{
+		{name: "false disables publication", value: "false", want: PublicationDisabled},
+		{name: "true enables publication", value: "true", want: PublicationEnabled},
+		{name: "rejects former mode value", value: "simulated", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, err := Load(func(key string) (string, bool) {
+				values := map[string]string{
+					EnvPublicationModeEnabled: test.value,
+					EnvShadowReconcileEnabled: "true",
+					EnvGitHubConnectionID:     "connection-1",
+					EnvGitHubTokenEnvironment: "GITHUB_TOKEN",
+				}
+				if value, ok := values[key]; ok {
+					return value, true
+				}
+				return "", false
+			})
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), EnvPublicationModeEnabled) {
+					t.Fatalf("Load() error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.PublicationMode != test.want {
+				t.Fatalf("PublicationMode = %q, want %q", cfg.PublicationMode, test.want)
+			}
+		})
 	}
 }
 

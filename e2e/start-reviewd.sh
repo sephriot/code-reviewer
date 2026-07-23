@@ -27,7 +27,7 @@ go run ./cmd/reviewctl policy apply --database "$reviewd_e2e_db" --generation 1 
 REVIEWD_DATABASE_PATH="$reviewd_e2e_db" \
 REVIEWD_LISTEN_ADDRESS="127.0.0.1:18080" \
 REVIEWD_MIGRATION_MODE="check" \
-REVIEWD_PUBLICATION_MODE="disabled" \
+REVIEWD_PUBLICATION_MODE_ENABLED="false" \
 REVIEWD_SHADOW_RECONCILE_ENABLED="true" \
 REVIEWD_GITHUB_CONNECTION_ID="e2e-github" \
 REVIEWD_GITHUB_API_BASE_URL="http://127.0.0.1:18081" \

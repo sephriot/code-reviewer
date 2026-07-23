@@ -30,7 +30,7 @@ strict contract and diff-anchor validation.
 
 ## Safety rules
 
-- Keep `REVIEWD_PUBLICATION_MODE=disabled` for local review operation unless
+- Keep `REVIEWD_PUBLICATION_MODE_ENABLED=false` for local review operation unless
   publication is deliberately tested.
 - Do not log or store GitHub tokens, provider auth values, or raw provider
   output.

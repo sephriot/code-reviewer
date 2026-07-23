@@ -14,7 +14,7 @@ Back up v2 with normal filesystem-consistent SQLite backup tooling while
 
 ## Upgrade
 
-1. Keep `REVIEWD_PUBLICATION_MODE=disabled`.
+1. Keep `REVIEWD_PUBLICATION_MODE_ENABLED=false`.
 2. Stop `reviewd`.
 3. Back up `data/control-plane.db`.
 4. Apply only known migrations:

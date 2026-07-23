@@ -37,7 +37,7 @@ it in the same commit as every meaningful implementation stage.
 - Legacy database SHA-256:
   `682e7096fd28b1c8035fab77ae5c32c296c4bd45ec42ba7ef69464804a2a7fe3`.
 - Current intended default is safe observation:
-  `REVIEWD_PUBLICATION_MODE=disabled`, review execution disabled, and GitHub
+  `REVIEWD_PUBLICATION_MODE_ENABLED=false`, review execution disabled, and GitHub
   reconciliation GET-only.
 
 ## Operator path today

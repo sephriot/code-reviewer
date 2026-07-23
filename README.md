@@ -419,7 +419,7 @@ curl http://127.0.0.1:8080/api/v1/analytics/overview
 | `REVIEWD_DATABASE_PATH` | `data/control-plane.db` | Separate v2 SQLite database |
 | `REVIEWD_LISTEN_ADDRESS` | `127.0.0.1:8080` | Loopback-only API listener |
 | `REVIEWD_MIGRATION_MODE` | `check` | `check` or explicit `apply` |
-| `REVIEWD_PUBLICATION_MODE` | `disabled` | `disabled`, local-only `simulated`, or guarded `enabled` |
+| `REVIEWD_PUBLICATION_MODE_ENABLED` | `false` | `true` enables guarded GitHub publication; `false` keeps it disabled |
 | `REVIEWD_SHADOW_RECONCILE_ENABLED` | `false` | Enables GET-only scheduler |
 | `REVIEWD_GITHUB_CONNECTION_ID` | empty | Local connection identity; required when scheduler enabled |
 | `REVIEWD_GITHUB_API_BASE_URL` | `https://api.github.com` | GitHub REST API base URL |

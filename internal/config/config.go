@@ -24,8 +24,8 @@ const (
 	EnvListenAddress = "REVIEWD_LISTEN_ADDRESS"
 	// EnvMigrationMode chooses whether startup checks or applies migrations.
 	EnvMigrationMode = "REVIEWD_MIGRATION_MODE"
-	// EnvPublicationMode controls external publication.
-	EnvPublicationMode = "REVIEWD_PUBLICATION_MODE"
+	// EnvPublicationModeEnabled enables guarded external publication.
+	EnvPublicationModeEnabled = "REVIEWD_PUBLICATION_MODE_ENABLED"
 	// EnvShadowReconcileEnabled enables read-only GitHub reconciliation.
 	EnvShadowReconcileEnabled = "REVIEWD_SHADOW_RECONCILE_ENABLED"
 	// EnvGitHubConnectionID identifies the locally configured GitHub connection.
@@ -160,10 +160,13 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			return Config{}, fmt.Errorf("%s: %w", EnvMigrationMode, err)
 		}
 	}
-	if value, ok := lookup(EnvPublicationMode); ok {
-		cfg.PublicationMode = PublicationMode(strings.TrimSpace(value))
-		if err := validatePublicationMode(cfg.PublicationMode); err != nil {
-			return Config{}, fmt.Errorf("%s: %w", EnvPublicationMode, err)
+	if value, ok := lookup(EnvPublicationModeEnabled); ok {
+		enabled, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: must be true or false", EnvPublicationModeEnabled)
+		}
+		if enabled {
+			cfg.PublicationMode = PublicationEnabled
 		}
 	}
 	if value, ok := lookup(EnvShadowReconcileEnabled); ok {

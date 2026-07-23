@@ -111,9 +111,8 @@ Optional signed webhook ingress is separate from dashboard traffic. It remains l
 
 Dashboard supports bounded publication only after an operator explicitly enables it:
 
-- `REVIEWD_PUBLICATION_MODE=disabled`: no effect dispatch.
-- `REVIEWD_PUBLICATION_MODE=simulated`: bounded worker records local simulated publication attempts for already-authorized effects.
-- `REVIEWD_PUBLICATION_MODE=enabled`: requires configured shadow reconciliation and GitHub token; dashboard exposes a separately confirmed, guarded dispatch button.
+- `REVIEWD_PUBLICATION_MODE_ENABLED=false`: no effect dispatch.
+- `REVIEWD_PUBLICATION_MODE_ENABLED=true`: requires configured shadow reconciliation and GitHub token; dashboard exposes a separately confirmed, guarded dispatch button.
 
 Enabled dispatch revalidates current diff anchors immediately before it posts. Invalid inline findings move into the review body. A durable pre-send claim means no automatic retry can duplicate an uncertain GitHub write. Operators can record an immutable externally-completed or abandoned resolution through the guarded API/CLI; neither resolution can repost. A human proposal decision remains immutable local evidence until an explicit dispatch request.
 
