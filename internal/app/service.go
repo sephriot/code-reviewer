@@ -152,6 +152,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		BrowserNotifications:    api.BrowserNotificationDeliveryOptions{Store: store},
 		HydrationMutations:      dashboardHydrationMutationOptions(store),
 		ReviewScheduling:        dashboardReviewSchedulingOptions(store, cfg.ReviewExecution.Enabled),
+		ProposalDetails:         api.ProposalDetailOptions{Reader: store},
 		ReviewExecutionEnabled:  cfg.ReviewExecution.Enabled,
 		GitHubWebhooks:          webhookOptions,
 	})

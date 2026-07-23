@@ -42,6 +42,7 @@ type ControlOptions struct {
 	ReviewScheduling        ReviewSchedulingOptions
 	ReviewExecutionEnabled  bool
 	GitHubWebhooks          GitHubWebhookOptions
+	ProposalDetails         ProposalDetailOptions
 }
 
 // NewControlHandler exposes health plus the read-only inbox and timeline.
@@ -80,6 +81,7 @@ func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler
 	mux.HandleFunc("GET /api/v1/settings", handler.settings)
 	registerControlDashboard(mux)
 	registerProposalMutationRoutes(mux, options.ProposalMutations)
+	registerProposalDetailRoutes(mux, options.ProposalDetails)
 	registerPublicationMutationRoutes(mux, options.PublicationMutations)
 	registerPublicationEffectStatusRoutes(mux, options.PublicationStatuses)
 	registerNotificationPreferenceRoutes(mux, options.NotificationPreferences)

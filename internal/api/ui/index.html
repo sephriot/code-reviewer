@@ -71,6 +71,11 @@
     .mutation-status { min-height:1.45em; margin:0; color:var(--muted); font-size:12px; }
     .mutation-status[data-state="error"] { color:var(--danger); }
     .mutation-status[data-state="ready"] { color:var(--signal); }
+    .feedback-preview { display:grid; gap:10px; margin-top:16px; padding-top:16px; border-top:1px solid var(--line); }
+    .feedback-preview h4 { margin:0; color:var(--muted); font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
+    .feedback-body { margin:0; padding:10px; overflow:auto; white-space:pre-wrap; color:var(--ink); background:#151612; border:1px solid var(--line); font-size:12px; }
+    .comment-preview { padding:10px; border-left:3px solid var(--blue); background:rgba(109,156,255,.08); }
+    .comment-preview strong { display:block; font-size:11px; } .comment-preview p { margin:5px 0 0; color:var(--muted); font-size:12px; white-space:pre-wrap; }
     .microcopy { margin:0; color:var(--muted); font-size:10px; letter-spacing:normal; text-transform:none; }
     .telemetry { grid-column:1 / -1; display:grid; grid-template-columns:minmax(0,1.2fr) minmax(260px,.8fr); gap:0; padding:0; border-top:1px solid var(--line); }
     .telemetry > section { min-width:0; padding:clamp(20px,3vw,34px); }
@@ -83,6 +88,7 @@
     .metric dt { overflow:hidden; color:var(--muted); font-size:10px; letter-spacing:.08em; text-overflow:ellipsis; text-transform:uppercase; white-space:nowrap; }
     .metric dd { margin:5px 0 0; color:var(--signal); font:28px/.95 var(--display); letter-spacing:-.04em; }
     .history-list { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
+    #activity-items { max-height:320px; overflow:auto; padding-right:6px; scrollbar-color:var(--line) transparent; }
     .history-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:baseline; padding:9px 0; border-bottom:1px solid var(--line); }
     .history-item strong { display:block; overflow:hidden; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
     .history-item span, .history-item time { color:var(--muted); font-size:11px; }
@@ -169,6 +175,7 @@
             </fieldset>
           </form>
           <p class="mutation-status" id="mutation-status" role="status" aria-live="polite">Select a pending proposal to unlock local actions.</p>
+          <section class="feedback-preview" id="feedback-preview" hidden aria-labelledby="feedback-preview-heading"><h4 id="feedback-preview-heading">Feedback to send</h4><pre class="feedback-body" id="feedback-body"></pre><div id="feedback-comments"></div><p class="microcopy" id="feedback-source"></p></section>
         </section>
       </section>
       <section class="telemetry" aria-label="Control-plane read-only telemetry">
@@ -267,6 +274,7 @@
       const proposalRevisionID = document.querySelector('#proposal-revision-id');
       const actorID = document.querySelector('#actor-id');
       const decisionReason = document.querySelector('#decision-reason');
+      const feedbackPreview = document.querySelector('#feedback-preview'); const feedbackBody = document.querySelector('#feedback-body'); const feedbackComments = document.querySelector('#feedback-comments'); const feedbackSource = document.querySelector('#feedback-source');
       const mutationStatus = document.querySelector('#mutation-status');
       const createRevision = document.querySelector('#create-revision');
       const simulatePublication = document.querySelector('#simulate-publication');
@@ -423,6 +431,20 @@
 		dispatchPublication.hidden = publicationMode !== 'enabled';
 		dispatchPublication.disabled = activeMutation || !hasRevision || publicationMode !== 'enabled';
       }
+      async function loadFeedbackPreview() {
+        const revision = proposalRevisionID.value;
+        feedbackPreview.hidden = true; feedbackComments.replaceChildren(); feedbackBody.textContent = '';
+        if (!revision) return;
+        try {
+          const value = await api(`/api/v1/proposal-revisions/${encodeURIComponent(revision)}`);
+          if (proposalRevisionID.value !== revision) return;
+          feedbackBody.textContent = value.body || '(No general comment)';
+          inlineComments.value = JSON.stringify(value.inline_comments || [], null, 2);
+          (value.inline_comments || []).forEach((comment) => { const card = document.createElement('article'); card.className='comment-preview'; card.append(text('strong', `${comment.path || 'file'}:${comment.line || comment.start_line || '?'}${comment.side ? ` · ${comment.side}` : ''}`), text('p', comment.body || '')); feedbackComments.append(card); });
+          feedbackSource.textContent = (value.inline_comments || []).length ? 'Inline anchors shown. Source snippets are not retained locally; GitHub receives these evidence-bound coordinates.' : 'No inline comments in this revision.';
+          feedbackPreview.hidden = false;
+        } catch (error) { setMutationStatus('error', error.message); }
+      }
       function syncEvidenceControls() {
         hydrateEvidence.disabled = evidenceBusy || !selectedItem || evidenceReady;
         hydrateEvidence.textContent = evidenceBusy ? 'Queueing evidence…' : evidenceReady ? 'Canonical evidence ready' : 'Build canonical evidence';
@@ -448,6 +470,7 @@
           return;
         }
         setMutationStatus('ready', 'Current proposal loaded. Save an edit, then decide its revision.');
+        loadFeedbackPreview();
       }
       const responseError = async (response) => {
         try { const body = await response.json(); if (body && body.error && body.error.message) return body.error.message; } catch (_) { /* response is not JSON */ }
@@ -637,7 +660,7 @@
         } finally { notificationPreferencesBusy = false; syncNotificationPreferenceControls(); }
       });
       proposalID.addEventListener('change', syncMutationControls);
-      proposalRevisionID.addEventListener('change', syncMutationControls);
+      proposalRevisionID.addEventListener('change', () => { syncMutationControls(); loadFeedbackPreview(); });
       bootstrapSession().then(() => Promise.all([reloadInbox(), refreshNotificationPreferences(), deliverBrowserNotifications()])).then(() => { setConnection('ready', 'Read model online'); setInterval(() => { deliverBrowserNotifications().catch(() => {}); if (!activeMutation && !evidenceBusy && !reviewBusy && !notificationPreferencesBusy) reloadInbox().catch(() => {}); else refreshTelemetry().catch(() => {}); }, 10000); }).catch((error) => { inboxMessage.textContent = error.message; inboxMessage.setAttribute('role', 'alert'); setConnection('error', 'Read model unavailable'); });
     })();
   </script>
