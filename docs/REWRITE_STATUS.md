@@ -1,8 +1,9 @@
 # Go Rewrite Status
 
-Last implementation checkpoint: `82ce414` (`feat(dashboard): refresh runtime activity`).
-Last full verification checkpoint: `1005372` (`go test ./...`, `go vet
+Last implementation checkpoint: `fda7e8a` (`test(e2e): cover automatic review run`).
+Last full Go suite checkpoint: `1005372` (`go test ./...`, `go vet
 ./...`, and `go test -race ./...`).
+Last browser fixture checkpoint: current stage (`pnpm test:e2e`).
 
 This file is the handoff checklist for work after the Go rewrite begins. Update
 it in the same commit as every meaningful implementation stage.
@@ -63,8 +64,8 @@ it in the same commit as every meaningful implementation stage.
       hydration, and live inbox refresh against a fake loopback GitHub API.
 - [x] Isolated Playwright fixture verifies automatic-rule selection and trusted
       engine execution after canonical hydration.
-- [ ] End-to-end browser workflow: reconcile, hydrate, queue, run, policy
-      proposal, human decision, and simulated publication.
+- [x] End-to-end browser workflow: reconcile, hydrate, queue, run, policy
+      proposal, human decision, and disabled-mode simulated publication.
 - [x] Runtime Activity exposes bounded durable job failure class and reason for
       reconciliation, hydration, and review diagnosis.
 
