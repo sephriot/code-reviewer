@@ -404,7 +404,17 @@
         document.querySelectorAll('.inbox-item').forEach((button) => button.setAttribute('aria-current', String(button.dataset.id === item.id)));
         api(`/api/v1/pull-requests/${encodeURIComponent(item.pull_request_id)}/timeline?connection_id=${encodeURIComponent(item.connection_id)}`).then((page) => {
           timelineMessage.textContent = page.items.length ? '' : 'No immutable events recorded for this selection.';
-          page.items.forEach((event) => { const row = document.createElement('li'); row.className = `event${event.current ? ' current' : ''}`; row.append(text('span', '', 'dot')); const content = document.createElement('div'); const top = document.createElement('div'); top.className = 'event-top'; top.append(text('strong', event.kind), text('time', formatTime(event.occurred_at))); content.append(top, text('p', event.detail, 'event-detail')); row.append(content); timeline.append(row); });
+          page.items.forEach((event) => {
+            const row = document.createElement('li'); row.className = `event${event.current ? ' current' : ''}`; row.append(text('span', '', 'dot'));
+            const content = document.createElement('div'); const top = document.createElement('div'); top.className = 'event-top';
+            top.append(text('strong', event.kind), text('time', formatTime(event.occurred_at))); content.append(top, text('p', event.detail, 'event-detail')); row.append(content); timeline.append(row);
+            if (event.kind !== 'publication_effect') return;
+            api(`/api/v1/publication-effects/${encodeURIComponent(event.id)}`).then((status) => {
+              const delivery = status.attempt ? `${status.attempt.publication_mode}: ${status.attempt.outcome}` : 'not dispatched';
+              const resolution = status.resolution ? `; resolution: ${status.resolution.resolution}` : '';
+              content.append(text('p', `Delivery: ${delivery}${resolution}`, 'event-detail'));
+            }).catch(() => {});
+          });
           setMutationContext(item, page.items || []);
         }).catch((error) => { timelineMessage.textContent = error.message; timelineMessage.setAttribute('role', 'alert'); });
       }
