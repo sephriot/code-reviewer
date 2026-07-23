@@ -18,3 +18,10 @@ func TestMacOSSandboxProfileRestrictsAuthAndWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestMacOSSandboxCommandUsesProfile(t *testing.T) {
+	command := macOSSandboxCommand("(version 1)", "/bin/echo", []string{"ok"})
+	if command.Path != "/usr/bin/sandbox-exec" || strings.Join(command.Args, " ") != "/usr/bin/sandbox-exec -p (version 1) /bin/echo ok" {
+		t.Fatalf("command = %#v", command.Args)
+	}
+}

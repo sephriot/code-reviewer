@@ -4,6 +4,7 @@ package engine
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -22,4 +23,9 @@ func macOSSandboxProfile(executable, authPath, bridgeHome string) (string, error
 		"(allow process*)\n(allow network-outbound)\n" +
 		"(allow file-read* (subpath \"/System\") (subpath \"/usr\") (subpath \"/opt/homebrew\") (subpath " + quote(authPath) + ") (literal " + quote(executable) + "))\n" +
 		"(allow file-write* (subpath " + quote(bridgeHome) + "))\n", nil
+}
+
+func macOSSandboxCommand(profile, executable string, argv []string) *exec.Cmd {
+	arguments := append([]string{"-p", profile, executable}, argv...)
+	return exec.Command("/usr/bin/sandbox-exec", arguments...)
 }
