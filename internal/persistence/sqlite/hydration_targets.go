@@ -97,11 +97,14 @@ JOIN repositories AS repository
 JOIN connection_repositories AS connection_repository
   ON connection_repository.connection_id = projection.connection_id
  AND connection_repository.repository_id = projection.repository_id
+LEFT JOIN revisions AS revision
+  ON revision.id = projection.current_revision_id
 WHERE projection.connection_id = ?
   AND repository.owner_login = ? COLLATE NOCASE
   AND repository.name = ? COLLATE NOCASE
   AND pull_request.number = ?
-  AND connection_repository.access_state = 'active'`, connectionID, owner, repository, number).
+  AND connection_repository.access_state = 'active'
+  AND (revision.id IS NULL OR revision.identity_kind <> 'canonical_diff')`, connectionID, owner, repository, number).
 		Scan(&target.ConnectionID, &target.ObservationID, &target.PullRequestID, &target.RepositoryID,
 			&target.Owner, &target.Repository, &target.Number, &target.HeadSHA, &target.BaseSHA)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -109,6 +112,47 @@ WHERE projection.connection_id = ?
 	}
 	if err != nil {
 		return CanonicalHydrationTarget{}, fmt.Errorf("find canonical hydration target: %w", err)
+	}
+	return target, nil
+}
+
+// FindCanonicalHydrationTargetByPullRequestID resolves a current selected
+// observation by its stable local ID. It is suitable for local control-plane
+// commands where browser input must not supply repository coordinates.
+func (s *Store) FindCanonicalHydrationTargetByPullRequestID(ctx context.Context, connectionID, pullRequestID string) (CanonicalHydrationTarget, error) {
+	if strings.TrimSpace(connectionID) == "" || strings.TrimSpace(pullRequestID) == "" {
+		return CanonicalHydrationTarget{}, errors.New("canonical hydration target identity is required")
+	}
+	var target CanonicalHydrationTarget
+	err := s.db.QueryRowContext(ctx, `
+SELECT observation.connection_id, observation.id, pull_request.id, repository.id,
+       repository.owner_login, repository.name, pull_request.number,
+       observation.head_sha, observation.base_sha
+FROM pull_request_projection_state AS projection
+JOIN pull_request_observations AS observation
+  ON observation.id = projection.current_observation_id
+ AND observation.pull_request_id = projection.pull_request_id
+ AND observation.connection_id = projection.connection_id
+JOIN pull_requests AS pull_request
+  ON pull_request.id = projection.pull_request_id
+JOIN repositories AS repository
+  ON repository.id = projection.repository_id
+JOIN connection_repositories AS connection_repository
+  ON connection_repository.connection_id = projection.connection_id
+ AND connection_repository.repository_id = projection.repository_id
+LEFT JOIN revisions AS revision
+  ON revision.id = projection.current_revision_id
+WHERE projection.connection_id = ?
+  AND pull_request.id = ?
+  AND connection_repository.access_state = 'active'
+  AND (revision.id IS NULL OR revision.identity_kind <> 'canonical_diff')`, connectionID, pullRequestID).
+		Scan(&target.ConnectionID, &target.ObservationID, &target.PullRequestID, &target.RepositoryID,
+			&target.Owner, &target.Repository, &target.Number, &target.HeadSHA, &target.BaseSHA)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CanonicalHydrationTarget{}, ErrCanonicalHydrationTargetNotFound
+	}
+	if err != nil {
+		return CanonicalHydrationTarget{}, fmt.Errorf("find canonical hydration target by pull request ID: %w", err)
 	}
 	return target, nil
 }

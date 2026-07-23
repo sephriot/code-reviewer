@@ -38,6 +38,7 @@ type ControlOptions struct {
 	PublicationStatuses     PublicationEffectStatusOptions
 	NotificationPreferences NotificationPreferencesOptions
 	BrowserNotifications    BrowserNotificationDeliveryOptions
+	HydrationMutations      HydrationMutationOptions
 	GitHubWebhooks          GitHubWebhookOptions
 }
 
@@ -81,6 +82,7 @@ func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler
 	registerPublicationEffectStatusRoutes(mux, options.PublicationStatuses)
 	registerNotificationPreferenceRoutes(mux, options.NotificationPreferences)
 	registerBrowserNotificationDeliveryRoutes(mux, options.BrowserNotifications)
+	registerHydrationMutationRoutes(mux, options.HydrationMutations)
 	registerGitHubWebhookRoute(mux, options.GitHubWebhooks)
 	return mux
 }

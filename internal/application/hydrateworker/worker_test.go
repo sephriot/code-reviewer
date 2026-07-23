@@ -59,6 +59,23 @@ func TestSchedulerRejectsInvalidTargetBeforeEnqueue(t *testing.T) {
 	}
 }
 
+func TestTargetSchedulerEnqueuesOnlySelectedPullRequest(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	store := &targetSchedulerStore{target: testTarget("observation-7", 7)}
+	result, err := (TargetScheduler{Store: store, Now: func() time.Time { return now }}).SchedulePullRequest(context.Background(), "connection-1", "pr-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.connectionID != "connection-1" || store.pullRequestID != "pr-1" || len(store.inputs) != 1 || result.ID != "job-1" {
+		t.Fatalf("store=%+v result=%+v", store, result)
+	}
+	input := store.inputs[0]
+	if input.ResourceID != "observation-7" || !input.AvailableAt.Equal(now) || input.DedupeKey != HydrateJobKind+":observation-7" {
+		t.Fatalf("input=%+v", input)
+	}
+}
+
 func TestHandlerInvokesHydrationWithPinnedObservation(t *testing.T) {
 	t.Parallel()
 	target := testTarget("observation-1", 7)
@@ -122,6 +139,23 @@ type schedulerStore struct {
 	targets      []sqlite.CanonicalHydrationTarget
 	connectionID string
 	inputs       []sqlite.JobInput
+}
+
+type targetSchedulerStore struct {
+	target        sqlite.CanonicalHydrationTarget
+	connectionID  string
+	pullRequestID string
+	inputs        []sqlite.JobInput
+}
+
+func (s *targetSchedulerStore) FindCanonicalHydrationTargetByPullRequestID(_ context.Context, connectionID, pullRequestID string) (sqlite.CanonicalHydrationTarget, error) {
+	s.connectionID, s.pullRequestID = connectionID, pullRequestID
+	return s.target, nil
+}
+
+func (s *targetSchedulerStore) EnsureJob(_ context.Context, input sqlite.JobInput) (sqlite.EnsureJobResult, error) {
+	s.inputs = append(s.inputs, input)
+	return sqlite.EnsureJobResult{ID: "job-1", Created: true}, nil
 }
 
 func (s *schedulerStore) ListCanonicalHydrationTargets(_ context.Context, connectionID string) ([]sqlite.CanonicalHydrationTarget, error) {

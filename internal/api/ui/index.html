@@ -116,6 +116,12 @@
         <div class="selected" id="selected-pr" hidden><div><div class="selected-meta" id="selected-connection"></div><h3 id="selected-title"></h3></div><span class="pill" id="selected-state"></span></div>
         <p class="notice" id="timeline-message">Choose inbox item to inspect immutable evidence.</p>
         <ol class="timeline" id="timeline-items" aria-label="Selected pull request timeline"></ol>
+        <section class="mutation" id="evidence-controls" aria-labelledby="evidence-controls-heading">
+          <div class="mutation-head"><h3 id="evidence-controls-heading">Evidence control</h3><span class="pill">GET only</span></div>
+          <p class="mutation-copy">Fetch current diff evidence for selected pull request. This queues local work and never writes to GitHub.</p>
+          <div class="action-row"><button class="action" id="hydrate-evidence" type="button">Build canonical evidence</button></div>
+          <p class="mutation-status" id="evidence-status" role="status" aria-live="polite">Select a pull request to queue evidence hydration.</p>
+        </section>
         <section class="mutation" id="proposal-controls" aria-labelledby="proposal-controls-heading" hidden>
           <div class="mutation-head"><h3 id="proposal-controls-heading">Human decision</h3><span class="pill">Append only</span></div>
           <p class="mutation-copy">Edit creates a new immutable proposal revision. Approval or rejection decides selected revision only. No GitHub publication happens here.</p>
@@ -205,6 +211,8 @@
       const selectedState = document.querySelector('#selected-state');
       const timeline = document.querySelector('#timeline-items');
       const timelineMessage = document.querySelector('#timeline-message');
+      const hydrateEvidence = document.querySelector('#hydrate-evidence');
+      const evidenceStatus = document.querySelector('#evidence-status');
       const overviewMessage = document.querySelector('#overview-message');
       const overviewMetrics = document.querySelector('#overview-metrics');
       const historyMessage = document.querySelector('#history-message');
@@ -244,12 +252,14 @@
       let notificationPreferences = null;
       let publicationMode = 'unknown';
       let notificationPreferencesBusy = false;
+      let evidenceBusy = false;
       const formatTime = (value) => { const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'unknown time' : new Intl.DateTimeFormat(undefined, { dateStyle:'medium', timeStyle:'short' }).format(date); };
       const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value || '—'; if (className) node.className = className; return node; };
       const api = async (path) => { const response = await fetch(path, { credentials:'same-origin', headers:{Accept:'application/json'} }); if (!response.ok) throw new Error(`Read model returned ${response.status}`); return response.json(); };
       const bootstrapSession = async () => { const response = await fetch('/api/v1/session', { credentials:'same-origin' }); if (!response.ok) throw new Error(`Local session returned ${response.status}`); };
       const setConnection = (state, value) => { connection.dataset.state = state; connection.textContent = value; };
       const setMutationStatus = (state, value) => { mutationStatus.dataset.state = state; mutationStatus.textContent = value; };
+      const setEvidenceStatus = (state, value) => { evidenceStatus.dataset.state = state; evidenceStatus.textContent = value; };
       const setNotificationPreferencesStatus = (state, value) => { notificationPreferencesStatus.dataset.state = state; notificationPreferencesStatus.textContent = value; };
       const replaceOptions = (select, entries, selectedValue, emptyLabel) => {
         select.replaceChildren();
@@ -356,6 +366,10 @@
 		dispatchPublication.hidden = publicationMode !== 'enabled';
 		dispatchPublication.disabled = activeMutation || !hasRevision || publicationMode !== 'enabled';
       }
+      function syncEvidenceControls() {
+        hydrateEvidence.disabled = evidenceBusy || !selectedItem;
+        hydrateEvidence.textContent = evidenceBusy ? 'Queueing evidence…' : 'Build canonical evidence';
+      }
       function setMutationContext(item, events) {
         proposalControls.hidden = false;
         const proposals = uniqueCurrent(events, 'proposal');
@@ -415,6 +429,8 @@
       }
       function showTimeline(item) {
         selectedItem = item;
+        syncEvidenceControls();
+        setEvidenceStatus('idle', 'Selected pull request can be hydrated with current GET-only GitHub evidence.');
         selected.hidden = false; selectedConnection.textContent = item.connection_id; selectedTitle.textContent = item.title || item.pull_request_id; selectedState.textContent = item.state;
         timeline.replaceChildren(); timelineMessage.textContent = 'Loading immutable events.'; timelineMessage.removeAttribute('role');
         clearMutationContext('Loading current proposal records.');
@@ -489,6 +505,18 @@
           await reloadInbox();
         } catch (error) { setMutationStatus('error', error.message); }
         finally { setMutationBusy(false); }
+      });
+      hydrateEvidence.addEventListener('click', async () => {
+        if (!selectedItem) return;
+        evidenceBusy = true;
+        syncEvidenceControls();
+        setEvidenceStatus('idle', 'Queueing canonical evidence hydration. No GitHub write will run.');
+        try {
+          const result = await postMutation(`/api/v1/mutate/pull-requests/${encodeURIComponent(selectedItem.pull_request_id)}/hydrate`, { connection_id:selectedItem.connection_id });
+          setEvidenceStatus('ready', result.created ? 'Evidence hydration queued. Runtime activity will show outcome.' : 'Evidence job already queued. Runtime activity will show outcome.');
+          await refreshTelemetry();
+        } catch (error) { setEvidenceStatus('error', error.message); }
+        finally { evidenceBusy = false; syncEvidenceControls(); }
       });
       notificationPreferencesForm.addEventListener('submit', async (event) => {
         event.preventDefault();

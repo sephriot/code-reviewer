@@ -34,6 +34,31 @@ VALUES ('pr-1', 'repo-1', 'connection-1', NULL, 'observation-current', 'fresh', 
 	}
 }
 
+func TestFindCanonicalHydrationTargetByPullRequestIDUsesCurrentActiveObservation(t *testing.T) {
+	ctx := context.Background()
+	store := openMigratedStore(t, ctx)
+	seedProjectionConnection(t, ctx, store.db)
+	seedProjectionPullRequest(t, ctx, store.db, "repo-1", "pr-1", 42)
+	seedMetadataObservation(t, ctx, store.db, "pr-1", "observation-1", projectionHeadSHA, projectionBaseSHA, 10)
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO pull_request_projection_state(
+ pull_request_id, repository_id, connection_id, current_revision_id,
+ current_observation_id, freshness, updated_at_us)
+VALUES ('pr-1', 'repo-1', 'connection-1', NULL, 'observation-1', 'fresh', 10)`); err != nil {
+		t.Fatal(err)
+	}
+	target, err := store.FindCanonicalHydrationTargetByPullRequestID(ctx, "connection-1", "pr-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.ObservationID != "observation-1" || target.Owner != "owner" || target.Repository != "repo-1" || target.Number != 42 {
+		t.Fatalf("target=%+v", target)
+	}
+	if _, err := store.FindCanonicalHydrationTargetByPullRequestID(ctx, "connection-2", "pr-1"); !errors.Is(err, ErrCanonicalHydrationTargetNotFound) {
+		t.Fatalf("wrong connection error=%v", err)
+	}
+}
+
 func TestFindCanonicalHydrationTargetRejectsWrongOrInactiveIdentity(t *testing.T) {
 	ctx := context.Background()
 	store := openMigratedStore(t, ctx)

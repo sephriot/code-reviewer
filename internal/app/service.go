@@ -136,6 +136,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 		PublicationStatuses:     api.PublicationEffectStatusOptions{Reader: store},
 		NotificationPreferences: api.NotificationPreferencesOptions{Store: store},
 		BrowserNotifications:    api.BrowserNotificationDeliveryOptions{Store: store},
+		HydrationMutations:      dashboardHydrationMutationOptions(store),
 		GitHubWebhooks:          webhookOptions,
 	})
 	server := &http.Server{
@@ -286,6 +287,25 @@ func (s webhookReconciliationScheduler) Schedule(ctx context.Context) error {
 
 func publicationMutationOptions(store *storagesqlite.Store) api.PublicationMutationOptions {
 	return api.PublicationMutationOptions{AtomicEffects: store, UncertaintyResolver: store}
+}
+
+func dashboardHydrationMutationOptions(store *storagesqlite.Store) api.HydrationMutationOptions {
+	return api.HydrationMutationOptions{Scheduler: dashboardHydrationScheduler{scheduler: hydrateworker.TargetScheduler{Store: store}}}
+}
+
+type dashboardHydrationScheduler struct {
+	scheduler hydrateworker.TargetScheduler
+}
+
+func (s dashboardHydrationScheduler) SchedulePullRequest(ctx context.Context, connectionID, pullRequestID string) (api.HydrationScheduleResult, error) {
+	result, err := s.scheduler.SchedulePullRequest(ctx, connectionID, pullRequestID)
+	if errors.Is(err, storagesqlite.ErrCanonicalHydrationTargetNotFound) {
+		return api.HydrationScheduleResult{}, api.ErrHydrationTargetNotFound
+	}
+	if err != nil {
+		return api.HydrationScheduleResult{}, err
+	}
+	return api.HydrationScheduleResult{JobID: result.ID, Created: result.Created}, nil
 }
 
 func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (reviewworker.Handler, error) {

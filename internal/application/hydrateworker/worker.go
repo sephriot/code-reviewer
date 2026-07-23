@@ -28,11 +28,58 @@ type SchedulerStore interface {
 	EnsureJob(context.Context, sqlite.JobInput) (sqlite.EnsureJobResult, error)
 }
 
+// TargetSchedulerStore resolves one selected hydration target and atomically
+// creates its durable job.
+type TargetSchedulerStore interface {
+	FindCanonicalHydrationTargetByPullRequestID(context.Context, string, string) (sqlite.CanonicalHydrationTarget, error)
+	EnsureJob(context.Context, sqlite.JobInput) (sqlite.EnsureJobResult, error)
+}
+
 // Scheduler queues one hydration job for each current active observation that
 // lacks a canonical current revision.
 type Scheduler struct {
 	Store SchedulerStore
 	Now   func() time.Time
+}
+
+// TargetScheduler schedules one selected current pull-request observation.
+type TargetScheduler struct {
+	Store TargetSchedulerStore
+	Now   func() time.Time
+}
+
+// SchedulePullRequest creates or reuses a hydration job for exactly one local
+// pull request ID. The selected current observation remains pinned in payload.
+func (s TargetScheduler) SchedulePullRequest(ctx context.Context, connectionID, pullRequestID string) (sqlite.EnsureJobResult, error) {
+	if s.Store == nil {
+		return sqlite.EnsureJobResult{}, errors.New("canonical hydration job store is required")
+	}
+	if strings.TrimSpace(connectionID) == "" || strings.TrimSpace(pullRequestID) == "" {
+		return sqlite.EnsureJobResult{}, errors.New("canonical hydration target identity is required")
+	}
+	target, err := s.Store.FindCanonicalHydrationTargetByPullRequestID(ctx, connectionID, pullRequestID)
+	if err != nil {
+		return sqlite.EnsureJobResult{}, fmt.Errorf("find selected canonical hydration target: %w", err)
+	}
+	if target.ConnectionID != connectionID || target.PullRequestID != pullRequestID {
+		return sqlite.EnsureJobResult{}, errors.New("selected canonical hydration target does not match request")
+	}
+	payload, err := marshalJobPayload(target)
+	if err != nil {
+		return sqlite.EnsureJobResult{}, err
+	}
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.Now().UTC()
+	}
+	result, err := s.Store.EnsureJob(ctx, sqlite.JobInput{
+		Kind: HydrateJobKind, ResourceType: "pull_request_observation", ResourceID: target.ObservationID,
+		DedupeKey: HydrateJobKind + ":" + target.ObservationID, Payload: payload, AvailableAt: now, MaxAttempts: 3,
+	})
+	if err != nil {
+		return sqlite.EnsureJobResult{}, fmt.Errorf("ensure selected canonical hydration job: %w", err)
+	}
+	return result, nil
 }
 
 // Schedule returns jobs created or reused for every eligible observation.

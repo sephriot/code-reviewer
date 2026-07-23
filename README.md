@@ -290,6 +290,11 @@ Both commands reject likely secret-bearing arguments and file content. Decisions
 
 `reviewctl proposal publish --proposal-revision-id ID --dispatch` works only in `enabled` mode and queues one guarded publication job for `reviewd`; it does not write from `reviewctl`. Enabled runtime requires configured shadow reconciliation and GitHub token. Before posting, worker fetches live diff, converts invalid inline comments to review-body findings, claims durable one-shot dispatch, and records success or uncertainty without automatic retry.
 
+Dashboard users may instead select an observed pull request and choose **Build
+canonical evidence**. This local authenticated action queues one deduplicated
+`github.hydrate.v1` job for current metadata evidence; it performs only bounded
+GET requests and cannot publish to GitHub.
+
 An uncertain enabled delivery has no repost command. After inspecting GitHub, an operator can permanently record either the verified external result or abandonment:
 
 ```sh
