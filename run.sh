@@ -8,13 +8,14 @@ cd "$root_dir"
 # .env.v2 is the explicit Go control-plane configuration. Legacy .env remains
 # useful for inherited credentials such as GITHUB_TOKEN, but its Python-only
 # settings are deliberately ignored by reviewd.
+if [[ -f .env ]]; then
+  set -a
+  . ./.env
+  set +a
+fi
 if [[ -f .env.v2 ]]; then
   set -a
   . ./.env.v2
-  set +a
-elif [[ -f .env ]]; then
-  set -a
-  . ./.env
   set +a
 fi
 
