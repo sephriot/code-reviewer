@@ -61,6 +61,12 @@ type AutomaticPublication interface {
 	PublishAutomaticApproval(context.Context, string) error
 }
 
+// LifecycleTargetLoader obtains the immutable PR identity before execution so
+// a local notification can render useful, non-secret speech context.
+type LifecycleTargetLoader interface {
+	LoadReviewRunExecutionTarget(context.Context, string) (sqlite.ReviewRunExecutionTarget, error)
+}
+
 // Handler executes a single prepared review run. It has no GitHub publication
 // dependency and stores only fixed diagnostic codes for failures.
 type Handler struct {
@@ -69,6 +75,7 @@ type Handler struct {
 	Notifications        NotificationEvents
 	AutomaticPolicyStore AutomaticPolicyStore
 	AutomaticPublication AutomaticPublication
+	LifecycleTargets     LifecycleTargetLoader
 	Now                  func() time.Time
 }
 
@@ -84,7 +91,8 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 	if h.Executor == nil || h.Events == nil {
 		return h.recordFailure(ctx, runID, failureTerminal, "configuration_invalid", errors.New("review execution dependencies are unavailable"))
 	}
-	h.notifyLifecycle(ctx, runID, "review.started")
+	lifecycle := h.loadLifecycleTarget(ctx, runID)
+	h.notifyLifecycle(ctx, runID, "review.started", lifecycle)
 
 	execution, err := h.Executor.Execute(ctx, runID)
 	if err == nil {
@@ -94,25 +102,45 @@ func (h Handler) Handle(ctx context.Context, job sqlite.Job) error {
 			// job permanently and leave publication unavailable.
 			return worker.Permanent(err)
 		}
-		h.notifyLifecycle(ctx, runID, "review.completed")
+		h.notifyLifecycle(ctx, runID, "review.completed", lifecycle)
 		return nil
 	}
 	result := classifyFailure(err)
 	recordErr := h.recordFailure(ctx, runID, result.kind, result.code, err)
-	h.notifyLifecycle(ctx, runID, "review.failed")
+	h.notifyLifecycle(ctx, runID, "review.failed", lifecycle)
 	return recordErr
 }
 
-func (h Handler) notifyLifecycle(ctx context.Context, runID, eventType string) {
+func (h Handler) loadLifecycleTarget(ctx context.Context, runID string) sqlite.ReviewRunExecutionTarget {
+	if h.LifecycleTargets == nil {
+		return sqlite.ReviewRunExecutionTarget{}
+	}
+	target, err := h.LifecycleTargets.LoadReviewRunExecutionTarget(ctx, runID)
+	if err != nil {
+		slog.Default().Warn("review lifecycle context unavailable", "run_id", runID, "error", err)
+		return sqlite.ReviewRunExecutionTarget{}
+	}
+	return target
+}
+
+func (h Handler) notifyLifecycle(ctx context.Context, runID, eventType string, target sqlite.ReviewRunExecutionTarget) {
 	if h.Notifications == nil {
 		return
 	}
 	digest := sha256.Sum256([]byte("review-lifecycle-notification:v1:" + eventType + ":" + runID))
 	eventID := fmt.Sprintf("notification-event-%x", digest[:])
+	repository := ""
+	if target.Owner != "" && target.Repository != "" {
+		repository = target.Owner + "/" + target.Repository
+	}
 	payload, err := json.Marshal(struct {
-		RunID string `json:"run_id"`
-		Phase string `json:"phase"`
-	}{RunID: runID, Phase: eventType})
+		RunID      string `json:"run_id"`
+		Phase      string `json:"phase"`
+		Repository string `json:"repository,omitempty"`
+		Number     int    `json:"number,omitempty"`
+		Title      string `json:"title,omitempty"`
+		Author     string `json:"author,omitempty"`
+	}{RunID: runID, Phase: eventType, Repository: repository, Number: target.Number, Title: target.Title, Author: target.Author})
 	if err != nil {
 		slog.Default().Warn("review lifecycle notification encoding failed", "event_type", eventType)
 		return

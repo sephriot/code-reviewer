@@ -49,6 +49,8 @@ type ReviewRunExecutionTarget struct {
 	Owner            string
 	Repository       string
 	Number           int
+	Title            string
+	Author           string
 	Canonical        CanonicalReviewTarget
 	Profile          ReviewExecutionProfile
 
@@ -72,7 +74,7 @@ SELECT run.id, intent.id, context.id,
        intent.revision_id, intent.observation_id, intent.trigger_kind, intent.trigger_sha256,
 	       run.engine_kind, run.engine_config_json, context.access_mode,
 	       context.manifest_sha256, context.manifest_json,
-       repository.owner_login, repository.name, pull_request.number,
+	       repository.owner_login, repository.name, pull_request.number, COALESCE(pull_request.title, ''), COALESCE(pull_request.author_login, ''),
        profile.id, version.id, profile.profile_key, version.version,
        version.name, version.description, version.instructions, version.output_schema_version,
        version.settings_json, version.content_sha256
@@ -91,7 +93,7 @@ WHERE run.id = ?
 		&target.RevisionID, &target.ObservationID, &target.TriggerKind, &target.TriggerSHA256,
 		&target.EngineKind, &target.EngineConfigJSON, &target.AccessMode,
 		&target.contextManifestSHA256, &target.contextManifestJSON,
-		&target.Owner, &target.Repository, &target.Number,
+		&target.Owner, &target.Repository, &target.Number, &target.Title, &target.Author,
 		&target.Profile.ProfileID, &target.Profile.ProfileVersionID, &target.Profile.ProfileKey, &target.Profile.Version,
 		&target.Profile.Name, &target.Profile.Description, &target.Profile.Instructions, &target.Profile.OutputSchemaVersion,
 		&target.Profile.SettingsJSON, &target.Profile.ContentSHA256,

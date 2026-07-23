@@ -93,16 +93,31 @@ func TestHandlerSpeaksConfiguredTemplate(t *testing.T) {
 	notifier := &localNotifier{}
 	recorder := &outcomeRecorder{}
 	handler := Handler{
-		Loader:        &deliveryLoader{target: sqlite.NotificationDeliveryTarget{ID: "delivery-1", EventType: "review.completed", Channel: sqlite.NotificationChannelTTS, State: sqlite.NotificationDeliveryQueued}},
+		Loader:        &deliveryLoader{target: sqlite.NotificationDeliveryTarget{ID: "delivery-1", EventType: "review.completed", PayloadJSON: []byte(`{"repository":"acme/widgets","number":42,"title":"Fix widget","author":"octocat"}`), Channel: sqlite.NotificationChannelTTS, State: sqlite.NotificationDeliveryQueued}},
 		Recorder:      recorder,
-		Preferences:   &preferencesLoader{preferences: sqlite.NotificationPreferences{SpeechRateMilli: 1250, EventTemplatesJSON: []byte(`{"review.completed":"Review finished."}`)}},
+		Preferences:   &preferencesLoader{preferences: sqlite.NotificationPreferences{SpeechRateMilli: 1250, EventTemplatesJSON: []byte(`{"review.completed":"{repository} #{number}: {title} by {author}"}`)}},
 		LocalNotifier: notifier,
 	}
 	if err := handler.Handle(context.Background(), notificationJob(`{"delivery_id":"delivery-1"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if recorder.outcome.State != sqlite.NotificationDeliveryDelivered || notifier.message != "Review finished." || notifier.rate != 1250 {
+	if recorder.outcome.State != sqlite.NotificationDeliveryDelivered || notifier.message != "acme/widgets #42: Fix widget by octocat" || notifier.rate != 1250 {
 		t.Fatalf("outcome=%+v message=%q rate=%d", recorder.outcome, notifier.message, notifier.rate)
+	}
+}
+
+func TestHandlerSuppressesEmptyConfiguredSpeechTemplate(t *testing.T) {
+	notifier := &localNotifier{}
+	recorder := &outcomeRecorder{}
+	handler := Handler{
+		Loader:   &deliveryLoader{target: sqlite.NotificationDeliveryTarget{ID: "delivery-1", EventType: "review.completed", Channel: sqlite.NotificationChannelTTS, State: sqlite.NotificationDeliveryQueued}},
+		Recorder: recorder, Preferences: &preferencesLoader{preferences: sqlite.NotificationPreferences{SpeechRateMilli: 1000, EventTemplatesJSON: []byte(`{"review.completed":""}`)}}, LocalNotifier: notifier,
+	}
+	if err := handler.Handle(context.Background(), notificationJob(`{"delivery_id":"delivery-1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.outcome.State != sqlite.NotificationDeliverySuppressed || notifier.message != "" {
+		t.Fatalf("outcome=%+v message=%q", recorder.outcome, notifier.message)
 	}
 }
 

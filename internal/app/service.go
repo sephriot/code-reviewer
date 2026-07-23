@@ -407,7 +407,7 @@ func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (r
 		Engine:    adapter,
 		Recorder:  store,
 	}
-	return reviewworker.Handler{Executor: executor, Events: store, AutomaticPolicyStore: store}, nil
+	return reviewworker.Handler{Executor: executor, Events: store, AutomaticPolicyStore: store, LifecycleTargets: store}, nil
 }
 
 func newEnabledPublicationHandler(cfg config.Config, store *storagesqlite.Store, lookup func(string) (string, bool), guard *ownership.Guard) (publishworker.EnabledHandler, error) {

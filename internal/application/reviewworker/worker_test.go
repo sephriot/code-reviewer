@@ -1,6 +1,7 @@
 package reviewworker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -216,8 +217,9 @@ func TestHandlerEmitsReviewLifecycleNotifications(t *testing.T) {
 		Executor: executorFunc(func(context.Context, string) (reviewexecute.Result, error) {
 			return reviewexecute.Result{}, nil
 		}),
-		Events:        &eventRecorder{},
-		Notifications: notifications,
+		Events:           &eventRecorder{},
+		Notifications:    notifications,
+		LifecycleTargets: lifecycleTargetLoader{target: sqlite.ReviewRunExecutionTarget{Owner: "acme", Repository: "widgets", Number: 42, Title: "Fix widget", Author: "octocat"}},
 	}
 	if err := handler.Handle(context.Background(), reviewJob(`{"run_id":"run-1"}`)); err != nil {
 		t.Fatal(err)
@@ -229,7 +231,19 @@ func TestHandlerEmitsReviewLifecycleNotifications(t *testing.T) {
 		if event.AggregateType != "review_run" || event.AggregateID != "run-1" || len(event.Payload) == 0 {
 			t.Fatalf("event=%+v", event)
 		}
+		if !bytes.Contains(event.Payload, []byte(`"title":"Fix widget"`)) || !bytes.Contains(event.Payload, []byte(`"author":"octocat"`)) {
+			t.Fatalf("event payload=%s", event.Payload)
+		}
 	}
+}
+
+type lifecycleTargetLoader struct {
+	target sqlite.ReviewRunExecutionTarget
+	err    error
+}
+
+func (l lifecycleTargetLoader) LoadReviewRunExecutionTarget(context.Context, string) (sqlite.ReviewRunExecutionTarget, error) {
+	return l.target, l.err
 }
 
 func reviewJob(payload string) sqlite.Job {

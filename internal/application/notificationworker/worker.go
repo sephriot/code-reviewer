@@ -185,7 +185,7 @@ func (h Handler) deliverLocal(ctx context.Context, delivery sqlite.NotificationD
 	case sqlite.NotificationChannelSound:
 		err = h.LocalNotifier.PlaySound(ctx, preferences.CustomSoundPath)
 	case sqlite.NotificationChannelTTS:
-		message := speechMessage(preferences.EventTemplatesJSON, delivery.EventType)
+		message := speechMessage(preferences.EventTemplatesJSON, delivery.EventType, delivery.PayloadJSON)
 		if message == "" {
 			return sqlite.NotificationDeliverySuppressed, nil
 		}
@@ -202,23 +202,36 @@ func (h Handler) deliverLocal(ctx context.Context, delivery sqlite.NotificationD
 	return sqlite.NotificationDeliveryDelivered, nil
 }
 
-func speechMessage(raw []byte, eventType string) string {
+func speechMessage(raw []byte, eventType string, payload []byte) string {
 	values := map[string]string{}
+	template := ""
+	configured := false
 	if json.Unmarshal(raw, &values) == nil {
 		if value, found := values[eventType]; found {
-			return value
+			template = value
+			configured = true
 		}
 	}
-	switch eventType {
-	case "review.started":
-		return "Review started."
-	case "review.completed":
-		return "Review completed."
-	case "review.failed":
-		return "Review failed."
-	default:
-		return ""
+	if !configured {
+		switch eventType {
+		case "review.started":
+			template = "Review started."
+		case "review.completed":
+			template = "Review completed."
+		case "review.failed":
+			template = "Review failed."
+		default:
+			return ""
+		}
 	}
+	var context struct {
+		Repository string `json:"repository"`
+		Number     int    `json:"number"`
+		Title      string `json:"title"`
+		Author     string `json:"author"`
+	}
+	_ = json.Unmarshal(payload, &context)
+	return strings.NewReplacer("{repository}", context.Repository, "{number}", fmt.Sprintf("%d", context.Number), "{title}", context.Title, "{author}", context.Author).Replace(template)
 }
 
 type jobPayload struct {

@@ -216,7 +216,7 @@ func mergeNotificationSpeechTemplates(current []byte, next notificationSpeechTem
 		"review.started": next.ReviewStarted, "review.completed": next.ReviewCompleted,
 		"review.failed": next.ReviewFailed, "policy.evaluated": next.PolicyEvaluated,
 	} {
-		if len(value) > 240 || strings.ContainsAny(value, "\x00\r\n") {
+		if len(value) > 240 || strings.ContainsAny(value, "\x00\r\n") || !validSpeechTemplate(value) {
 			return nil, errors.New("speech template is invalid")
 		}
 		encoded, err := json.Marshal(value)
@@ -230,6 +230,21 @@ func mergeNotificationSpeechTemplates(current []byte, next notificationSpeechTem
 		return nil, errors.New("speech templates are invalid")
 	}
 	return result, nil
+}
+
+func validSpeechTemplate(value string) bool {
+	for _, part := range strings.Split(value, "{")[1:] {
+		closing := strings.IndexByte(part, '}')
+		if closing < 0 {
+			return false
+		}
+		switch part[:closing] {
+		case "title", "author", "repository", "number":
+		default:
+			return false
+		}
+	}
+	return !strings.Contains(value, "}") || strings.Count(value, "{") == strings.Count(value, "}")
 }
 
 func parseNotificationChannels(raw json.RawMessage, allowUnknown bool) (notificationChannelsResponse, error) {

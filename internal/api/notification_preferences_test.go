@@ -103,6 +103,7 @@ func TestNotificationPreferencesRoutesRejectUnsafeOrMalformedRequests(t *testing
 		{jsonContentType, `{"expected_version":1,"channels":{"browser":"yes","log":true,"sound":false,"tts":false},"muted_until":null,"speech_rate_milli":1000}`},
 		{jsonContentType, `{"expected_version":1,"channels":{"browser":true,"log":true,"sound":false,"tts":false},"muted_until":"not-a-time","speech_rate_milli":1000}`},
 		{jsonContentType, `{"expected_version":1,"channels":{"browser":true,"log":true,"sound":false,"tts":false},"muted_until":null,"speech_rate_milli":499}`},
+		{jsonContentType, `{"expected_version":1,"channels":{"browser":true,"log":true,"sound":false,"tts":false},"muted_until":null,"speech_rate_milli":1000,"speech_templates":{"review.started":"{unknown}","review.completed":"Done","review.failed":"Failed","policy.evaluated":""}}`},
 		{jsonContentType, `{} {}`},
 	} {
 		response := httptest.NewRecorder()

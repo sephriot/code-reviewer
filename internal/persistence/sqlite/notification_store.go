@@ -244,13 +244,14 @@ type CreateNotificationDeliveryResult struct {
 }
 
 // NotificationDeliveryTarget is immutable delivery work plus its current
-// progress state. Payload facts remain opaque to local channel adapters.
+// progress state. Payload facts are available to the bounded local adapters.
 type NotificationDeliveryTarget struct {
-	ID        string
-	EventType string
-	Channel   NotificationChannel
-	State     NotificationDeliveryState
-	Attempt   int
+	ID          string
+	EventType   string
+	PayloadJSON []byte
+	Channel     NotificationChannel
+	State       NotificationDeliveryState
+	Attempt     int
 }
 
 // NotificationDeliveryOutcome supplies one local terminal delivery result.
@@ -278,9 +279,9 @@ func (s *Store) LoadNotificationDelivery(ctx context.Context, id string) (Notifi
 	}
 	var target NotificationDeliveryTarget
 	err := s.db.QueryRowContext(ctx, `
-SELECT id, event_type, channel, state, attempt
+SELECT id, event_type, payload_json, channel, state, attempt
 FROM notification_deliveries WHERE id = ?`, id).Scan(
-		&target.ID, &target.EventType, &target.Channel, &target.State, &target.Attempt,
+		&target.ID, &target.EventType, &target.PayloadJSON, &target.Channel, &target.State, &target.Attempt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return NotificationDeliveryTarget{}, ErrNotificationDeliveryNotFound
@@ -288,7 +289,7 @@ FROM notification_deliveries WHERE id = ?`, id).Scan(
 	if err != nil {
 		return NotificationDeliveryTarget{}, fmt.Errorf("load notification delivery: %w", err)
 	}
-	if target.ID != id || !validNotificationChannel(target.Channel) || !validNotificationDeliveryState(target.State) || target.Attempt < 0 {
+	if target.ID != id || !validNotificationChannel(target.Channel) || !validNotificationDeliveryState(target.State) || target.Attempt < 0 || !json.Valid(target.PayloadJSON) {
 		return NotificationDeliveryTarget{}, errors.New("stored notification delivery is invalid")
 	}
 	return target, nil
