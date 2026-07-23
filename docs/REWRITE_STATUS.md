@@ -18,8 +18,8 @@ it in the same commit as every meaningful implementation stage.
 - Startup schedules GET-only GitHub reconciliation and canonical hydration.
 - Dashboard shows observed pull requests when no attention record exists,
   immutable timeline, durable activity, history, analytics, settings, and
-  notification preferences. Runtime Activity, history, analytics, and settings
-  refresh every 10 seconds without page reload.
+  notification preferences. Inbox, Runtime Activity, history, analytics, and
+  settings refresh every 10 seconds without page reload.
 - Selected PR can queue canonical evidence hydration from dashboard. It creates
   or reuses one durable `github.hydrate.v1` job and cannot write to GitHub.
 - Review profiles, review runs, assessment validation, policy, proposals,
@@ -59,6 +59,8 @@ it in the same commit as every meaningful implementation stage.
       local review-engine configuration; `reviewctl` remains complete fallback.
 - [x] Isolated Playwright dashboard smoke test starts a temporary v2 database
       and verifies local control-desk bootstrap.
+- [x] Isolated Playwright fixture verifies GET-only reconciliation, canonical
+      hydration, and live inbox refresh against a fake loopback GitHub API.
 - [ ] End-to-end browser workflow: reconcile, hydrate, queue, run, policy
       proposal, human decision, and simulated publication.
 - [x] Runtime Activity exposes bounded durable job failure class and reason for

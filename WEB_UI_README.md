@@ -21,6 +21,8 @@ Open <http://127.0.0.1:8080/>. Default listener is loopback-only. `REVIEWD_LISTE
 ## What dashboard shows
 
 - Current attention items from canonical review/policy/proposal/publication state.
+- Observed pull-request inventory refreshes automatically while reconciliation
+  runs, so newly observed work appears without a manual page reload.
 - One immutable timeline for selected pull request and local connection,
   including publication effect, attempt, and uncertainty-resolution records.
 - Read-model availability status.
