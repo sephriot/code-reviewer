@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -353,7 +354,22 @@ func (s dashboardHydrationScheduler) SchedulePullRequest(ctx context.Context, co
 }
 
 func newReviewExecutionHandler(cfg config.Config, store *storagesqlite.Store) (reviewworker.Handler, error) {
-	adapter, err := engine.New(engine.Config{Argv: cfg.ReviewExecution.EngineArgv})
+	var adapter engine.Adapter
+	var err error
+	if cfg.ReviewExecution.Provider == "" {
+		adapter, err = engine.New(engine.Config{Argv: cfg.ReviewExecution.EngineArgv})
+	} else {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return reviewworker.Handler{}, fmt.Errorf("resolve provider auth home: %w", homeErr)
+		}
+		provider := engine.Provider(cfg.ReviewExecution.Provider)
+		authPath := map[engine.Provider]string{engine.ProviderClaude: filepath.Join(home, ".claude"), engine.ProviderCodex: filepath.Join(home, ".codex"), engine.ProviderAgent: filepath.Join(home, ".cursor")}[provider]
+		if authPath == "" {
+			return reviewworker.Handler{}, errors.New("review engine provider is invalid")
+		}
+		adapter, err = engine.NewNative(engine.NativeConfig{Provider: provider, Executable: cfg.ReviewExecution.EngineArgv[0], AuthPath: authPath, BridgeRoot: cfg.ReviewExecution.AuthRoot})
+	}
 	if err != nil {
 		return reviewworker.Handler{}, fmt.Errorf("configure review engine: %w", err)
 	}

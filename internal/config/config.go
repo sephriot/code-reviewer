@@ -41,6 +41,7 @@ const (
 	// EnvReviewEngineArgv supplies the trusted review engine command as a JSON argv array.
 	EnvReviewEngineArgv     = "REVIEWD_REVIEW_ENGINE_ARGV"
 	EnvReviewEngineAuthRoot = "REVIEWD_REVIEW_ENGINE_AUTH_ROOT"
+	EnvReviewEngineProvider = "REVIEWD_REVIEW_ENGINE_PROVIDER"
 	// EnvGitHubWebhookEnabled enables signed GitHub webhook ingress on loopback.
 	EnvGitHubWebhookEnabled = "REVIEWD_GITHUB_WEBHOOK_ENABLED"
 	// EnvGitHubWebhookSecretEnvironment names, but never contains, the signing
@@ -100,6 +101,7 @@ type ReviewExecutionConfig struct {
 	Enabled    bool     `json:"enabled"`
 	EngineArgv []string `json:"engine_argv"`
 	AuthRoot   string   `json:"engine_auth_root"`
+	Provider   string   `json:"engine_provider"`
 }
 
 // GitHubWebhookConfig configures local signed webhook ingress. SecretEnvironment
@@ -203,6 +205,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if value, ok := lookup(EnvReviewEngineAuthRoot); ok {
 		cfg.ReviewExecution.AuthRoot = strings.TrimSpace(value)
+	}
+	if value, ok := lookup(EnvReviewEngineProvider); ok {
+		cfg.ReviewExecution.Provider = strings.TrimSpace(value)
 	}
 	if value, ok := lookup(EnvGitHubWebhookEnabled); ok {
 		enabled, err := strconv.ParseBool(strings.TrimSpace(value))
@@ -339,7 +344,7 @@ func validateReviewExecution(review ReviewExecutionConfig, shadow ShadowReconcil
 	if !shadow.Enabled {
 		return errors.New("review execution requires enabled shadow reconciliation")
 	}
-	if strings.TrimSpace(review.AuthRoot) == "" || filepath.Clean(review.AuthRoot) == "." {
+	if review.Provider != "" && (strings.TrimSpace(review.AuthRoot) == "" || filepath.Clean(review.AuthRoot) == ".") {
 		return errors.New("review engine auth root is invalid")
 	}
 	if len(review.EngineArgv) == 0 || strings.TrimSpace(review.EngineArgv[0]) == "" {
