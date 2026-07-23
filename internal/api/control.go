@@ -33,6 +33,7 @@ type ControlOptions struct {
 	Reader                  ControlReader
 	ProposalMutations       ProposalMutationOptions
 	PublicationMutations    PublicationMutationOptions
+	PublicationStatuses     PublicationEffectStatusOptions
 	NotificationPreferences NotificationPreferencesOptions
 	BrowserNotifications    BrowserNotificationDeliveryOptions
 	GitHubWebhooks          GitHubWebhookOptions
@@ -73,6 +74,7 @@ func NewControlHandler(readiness Readiness, options ControlOptions) http.Handler
 	registerControlDashboard(mux)
 	registerProposalMutationRoutes(mux, options.ProposalMutations)
 	registerPublicationMutationRoutes(mux, options.PublicationMutations)
+	registerPublicationEffectStatusRoutes(mux, options.PublicationStatuses)
 	registerNotificationPreferenceRoutes(mux, options.NotificationPreferences)
 	registerBrowserNotificationDeliveryRoutes(mux, options.BrowserNotifications)
 	registerGitHubWebhookRoute(mux, options.GitHubWebhooks)

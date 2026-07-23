@@ -44,6 +44,25 @@ FROM publication_attempts WHERE id = ?`, first.AttemptID).Scan(&mode, &outcome, 
 	}
 }
 
+func TestPublicationEffectStatusReturnsSafeAttemptState(t *testing.T) {
+	ctx := context.Background()
+	store, _ := seedPolicyPublicationChain(t, ctx)
+
+	status, err := store.PublicationEffectStatus(ctx, "effect-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.EffectID != "effect-1" || status.PublicationMode != PublicationModeDisabled || status.Attempt == nil ||
+		status.Attempt.AttemptID != "attempt-1" || status.Attempt.PublicationMode != PublicationModeSimulated ||
+		status.Attempt.Outcome != "simulated" || !status.Attempt.CompletedAt.Equal(time.UnixMicro(57).UTC()) ||
+		status.Resolution != nil {
+		t.Fatalf("status = %+v", status)
+	}
+	if _, err := store.PublicationEffectStatus(ctx, "missing"); !errors.Is(err, ErrPublicationEffectNotFound) {
+		t.Fatalf("missing status error = %v", err)
+	}
+}
+
 func TestPublicationDispatchDisabledEffectNeverCreatesAttempt(t *testing.T) {
 	ctx := context.Background()
 	store, fixture := seedApprovedPublicationProposal(t, ctx)

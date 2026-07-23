@@ -93,6 +93,31 @@ type RecordEnabledPublicationAttemptResult struct {
 	Created   bool
 }
 
+// PublicationEffectStatus is a safe read model for one immutable effect. It
+// omits rendered payloads, provider responses, errors, and actor details.
+type PublicationEffectStatus struct {
+	EffectID        string
+	PublicationMode PublicationMode
+	Attempt         *PublicationAttemptStatus
+	Resolution      *PublicationUncertaintyResolutionStatus
+}
+
+// PublicationAttemptStatus identifies the latest local delivery result.
+type PublicationAttemptStatus struct {
+	AttemptID       string
+	PublicationMode PublicationMode
+	Outcome         string
+	CompletedAt     time.Time
+}
+
+// PublicationUncertaintyResolutionStatus identifies an immutable human
+// terminal classification without exposing the operator's reason.
+type PublicationUncertaintyResolutionStatus struct {
+	ResolutionID string
+	Resolution   PublicationUncertaintyResolution
+	ResolvedAt   time.Time
+}
+
 // PublicationUncertaintyResolution is an operator's terminal classification
 // of an enabled delivery whose external result cannot be safely inferred.
 type PublicationUncertaintyResolution string
@@ -152,6 +177,60 @@ func (s *Store) LoadCurrentPublicationEffect(ctx context.Context, effectID strin
 		return PublicationEffectTarget{}, err
 	}
 	return target, nil
+}
+
+// PublicationEffectStatus loads immutable delivery state for local operator
+// inspection. It accepts stale effects because uncertainty must remain
+// resolvable after newer canonical evidence arrives.
+func (s *Store) PublicationEffectStatus(ctx context.Context, effectID string) (PublicationEffectStatus, error) {
+	effectID, err := normalizePublicationEffectID(effectID)
+	if err != nil {
+		return PublicationEffectStatus{}, err
+	}
+	var status PublicationEffectStatus
+	var attemptID, attemptMode, attemptOutcome, resolutionID, resolution string
+	var completedAtUS, resolvedAtUS sql.NullInt64
+	err = s.db.QueryRowContext(ctx, `
+SELECT effect.id, effect.publication_mode_at_authorization,
+       COALESCE(attempt.id, ''), COALESCE(attempt.publication_mode, ''), COALESCE(attempt.outcome, ''), attempt.completed_at_us,
+       COALESCE(resolution.id, ''), COALESCE(resolution.resolution, ''), resolution.resolved_at_us
+FROM publication_effects AS effect
+LEFT JOIN publication_attempts AS attempt ON attempt.id = (
+  SELECT candidate.id FROM publication_attempts AS candidate
+  WHERE candidate.effect_id = effect.id
+  ORDER BY candidate.attempt_number DESC, candidate.id DESC LIMIT 1
+)
+LEFT JOIN publication_uncertainty_resolutions AS resolution ON resolution.effect_id = effect.id
+WHERE effect.id = ?`, effectID).Scan(
+		&status.EffectID, &status.PublicationMode,
+		&attemptID, &attemptMode, &attemptOutcome, &completedAtUS,
+		&resolutionID, &resolution, &resolvedAtUS,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PublicationEffectStatus{}, ErrPublicationEffectNotFound
+	}
+	if err != nil {
+		return PublicationEffectStatus{}, fmt.Errorf("load publication effect status: %w", err)
+	}
+	if attemptID != "" {
+		if !completedAtUS.Valid {
+			return PublicationEffectStatus{}, errors.New("stored publication attempt status is invalid")
+		}
+		status.Attempt = &PublicationAttemptStatus{
+			AttemptID: attemptID, PublicationMode: PublicationMode(attemptMode),
+			Outcome: attemptOutcome, CompletedAt: time.UnixMicro(completedAtUS.Int64).UTC(),
+		}
+	}
+	if resolutionID != "" {
+		if !resolvedAtUS.Valid {
+			return PublicationEffectStatus{}, errors.New("stored publication uncertainty resolution is invalid")
+		}
+		status.Resolution = &PublicationUncertaintyResolutionStatus{
+			ResolutionID: resolutionID, Resolution: PublicationUncertaintyResolution(resolution),
+			ResolvedAt: time.UnixMicro(resolvedAtUS.Int64).UTC(),
+		}
+	}
+	return status, nil
 }
 
 // ClaimEnabledPublicationAttempt writes the immutable pre-send claim for a

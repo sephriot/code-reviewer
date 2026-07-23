@@ -26,6 +26,9 @@ type fakeInboxReader struct {
 	analyticsCalls int
 	settings       sqlite.SettingsSummary
 	settingsCalls  int
+	status         sqlite.PublicationEffectStatus
+	statusEffectID string
+	statusErr      error
 	err            error
 }
 
@@ -57,6 +60,11 @@ func (f *fakeInboxReader) AnalyticsOverview(_ context.Context) (sqlite.Analytics
 func (f *fakeInboxReader) SettingsSummary(_ context.Context) (sqlite.SettingsSummary, error) {
 	f.settingsCalls++
 	return f.settings, f.err
+}
+
+func (f *fakeInboxReader) PublicationEffectStatus(_ context.Context, effectID string) (sqlite.PublicationEffectStatus, error) {
+	f.statusEffectID = effectID
+	return f.status, f.statusErr
 }
 
 func TestControlReadEndpointsAndAliases(t *testing.T) {
@@ -121,6 +129,32 @@ func TestControlReadEndpointsAndAliases(t *testing.T) {
 		if reader.detailQuery.ConnectionID != "connection-1" || reader.detailQuery.PullRequestID != "pr-1" {
 			t.Fatalf("detail query = %+v", reader.detailQuery)
 		}
+	}
+}
+
+func TestPublicationEffectStatusIsLoopbackOnlyAndSafe(t *testing.T) {
+	t.Parallel()
+	reader := &fakeInboxReader{status: sqlite.PublicationEffectStatus{
+		EffectID: "effect-1", PublicationMode: sqlite.PublicationModeEnabled,
+		Attempt: &sqlite.PublicationAttemptStatus{
+			AttemptID: "attempt-1", PublicationMode: sqlite.PublicationModeEnabled,
+			Outcome: "uncertain", CompletedAt: time.Unix(10, 0).UTC(),
+		},
+	}}
+	handler := NewControlHandler(Readiness{}, ControlOptions{PublicationStatuses: PublicationEffectStatusOptions{Reader: reader}})
+	remote := httptest.NewRequest(http.MethodGet, "/api/v1/publication-effects/effect-1", nil)
+	remote.RemoteAddr = "198.51.100.7:443"
+	remoteResponse := httptest.NewRecorder()
+	handler.ServeHTTP(remoteResponse, remote)
+	if remoteResponse.Code != http.StatusForbidden || reader.statusEffectID != "" {
+		t.Fatalf("remote status=%d effect=%q", remoteResponse.Code, reader.statusEffectID)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/publication-effects/effect-1", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || reader.statusEffectID != "effect-1" || !strings.Contains(response.Body.String(), "uncertain") {
+		t.Fatalf("status=%d effect=%q body=%s", response.Code, reader.statusEffectID, response.Body.String())
 	}
 }
 
