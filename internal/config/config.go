@@ -18,6 +18,8 @@ import (
 const (
 	// EnvDatabasePath overrides the control-plane SQLite database path.
 	EnvDatabasePath = "REVIEWD_DATABASE_PATH"
+	// EnvWriterOwnershipStateDir overrides separate local writer-lock state.
+	EnvWriterOwnershipStateDir = "REVIEWD_WRITER_OWNERSHIP_STATE_DIR"
 	// EnvListenAddress overrides the loopback control API listener.
 	EnvListenAddress = "REVIEWD_LISTEN_ADDRESS"
 	// EnvMigrationMode chooses whether startup checks or applies migrations.
@@ -70,13 +72,14 @@ const (
 
 // Config contains startup-only control-plane settings.
 type Config struct {
-	DatabasePath         string                     `json:"database_path"`
-	ListenAddress        string                     `json:"listen_address"`
-	MigrationMode        MigrationMode              `json:"migration_mode"`
-	PublicationMode      PublicationMode            `json:"publication_mode"`
-	ShadowReconciliation ShadowReconciliationConfig `json:"shadow_reconciliation"`
-	ReviewExecution      ReviewExecutionConfig      `json:"review_execution"`
-	GitHubWebhook        GitHubWebhookConfig        `json:"github_webhook"`
+	DatabasePath            string                     `json:"database_path"`
+	WriterOwnershipStateDir string                     `json:"writer_ownership_state_dir"`
+	ListenAddress           string                     `json:"listen_address"`
+	MigrationMode           MigrationMode              `json:"migration_mode"`
+	PublicationMode         PublicationMode            `json:"publication_mode"`
+	ShadowReconciliation    ShadowReconciliationConfig `json:"shadow_reconciliation"`
+	ReviewExecution         ReviewExecutionConfig      `json:"review_execution"`
+	GitHubWebhook           GitHubWebhookConfig        `json:"github_webhook"`
 }
 
 // ShadowReconciliationConfig configures opt-in, GET-only GitHub observation.
@@ -107,10 +110,11 @@ type GitHubWebhookConfig struct {
 // Default returns the safe local bootstrap configuration.
 func Default() Config {
 	return Config{
-		DatabasePath:    filepath.Join("data", "control-plane.db"),
-		ListenAddress:   "127.0.0.1:8080",
-		MigrationMode:   MigrationCheck,
-		PublicationMode: PublicationDisabled,
+		DatabasePath:            filepath.Join("data", "control-plane.db"),
+		WriterOwnershipStateDir: filepath.Join("data", "writer-ownership"),
+		ListenAddress:           "127.0.0.1:8080",
+		MigrationMode:           MigrationCheck,
+		PublicationMode:         PublicationDisabled,
 		ShadowReconciliation: ShadowReconciliationConfig{
 			APIBaseURL: "https://api.github.com",
 			Interval:   5 * time.Minute,
@@ -135,6 +139,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		if err := validateDatabasePath(cfg.DatabasePath); err != nil {
 			return Config{}, fmt.Errorf("%s: %w", EnvDatabasePath, err)
 		}
+	}
+	if value, ok := lookup(EnvWriterOwnershipStateDir); ok {
+		cfg.WriterOwnershipStateDir = strings.TrimSpace(value)
 	}
 	if value, ok := lookup(EnvListenAddress); ok {
 		cfg.ListenAddress = strings.TrimSpace(value)
@@ -212,6 +219,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 func (cfg Config) Validate() error {
 	if err := validateDatabasePath(cfg.DatabasePath); err != nil {
 		return err
+	}
+	if strings.TrimSpace(cfg.WriterOwnershipStateDir) == "" || filepath.Clean(cfg.WriterOwnershipStateDir) == "." {
+		return errors.New("writer ownership state directory is invalid")
 	}
 	if err := validateListenAddress(cfg.ListenAddress); err != nil {
 		return err

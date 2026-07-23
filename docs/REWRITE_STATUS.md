@@ -106,6 +106,8 @@ it in the same commit as every meaningful implementation stage.
   instructions, settings, and a human-confirmed automatic policy.
 - `docs/POLICIES.md` documents policy fields and explicitly marks `review` as
   retained-but-not-yet-interpreted runtime metadata.
+- `REVIEWD_WRITER_OWNERSHIP_STATE_DIR` makes shared local writer lock location
+  explicit for future controlled cutover.
 - Recent important fix: credentials stored as `env:VARIABLE_NAME` must be
   normalized to `VARIABLE_NAME` only when resolving process environment. Do not
   pass a token value where a token environment-variable name is expected.

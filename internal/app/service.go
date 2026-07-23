@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,7 +111,7 @@ func New(ctx context.Context, cfg config.Config) (*Service, error) {
 	}
 
 	if cfg.PublicationMode == config.PublicationEnabled {
-		ownershipGuard, err = ownership.Acquire(ctx, filepath.Join(filepath.Dir(cfg.DatabasePath), "writer-ownership"), workerOwner(), "reviewd-enabled-publication", time.Now().UTC())
+		ownershipGuard, err = ownership.Acquire(ctx, cfg.WriterOwnershipStateDir, workerOwner(), "reviewd-enabled-publication", time.Now().UTC())
 		if err != nil {
 			return closeOnError(fmt.Errorf("acquire writer ownership: %w", err))
 		}
