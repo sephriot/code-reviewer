@@ -272,7 +272,9 @@ SELECT attention.kind, attention.id, attention.proposal_id, attention.connection
 FROM ranked AS attention
 JOIN pull_requests AS pull_request ON pull_request.id = attention.pull_request_id
 JOIN repositories AS repository ON repository.id = pull_request.repository_id
-WHERE attention.position = 1 AND (? = '' OR attention.connection_id = ?)
+JOIN pull_request_observations AS observation ON observation.id = attention.observation_id
+WHERE attention.position = 1 AND observation.github_state = 'open'
+  AND (? = '' OR attention.connection_id = ?)
   AND (? = 0 OR attention.occurred_at_us < ? OR (attention.occurred_at_us = ? AND (attention.kind > ? OR (attention.kind = ? AND attention.id > ?))))
 ORDER BY attention.occurred_at_us DESC, attention.kind, attention.id
 LIMIT ?`, connectionID, connectionID, hasCursor, cursor.OccurredAtUS, cursor.OccurredAtUS, cursor.Kind, cursor.Kind, cursor.ID, limit+1)

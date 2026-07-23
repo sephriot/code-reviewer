@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,6 +61,69 @@ func TestListCurrentAttentionIsBoundedCurrentAndReadOnly(t *testing.T) {
 	}
 	if ids.AssessmentID == "" { // Ensure the fixture's decided proposal stays out of inbox.
 		t.Fatal("fixture missing assessment")
+	}
+}
+
+func TestListCurrentAttentionExcludesTerminalPullRequests(t *testing.T) {
+	ctx := context.Background()
+	store, target := seedCurrentCanonicalReviewTarget(t, ctx)
+	seedReviewProfileVersion(t, ctx, store, "profile-1", "profile-version-1")
+	var nextObservationAt, nextProjectionAt int64
+	if err := store.db.QueryRowContext(ctx, `
+SELECT observation.github_updated_at_us + 1, projection.updated_at_us + 1
+FROM pull_request_projection_state AS projection
+JOIN pull_request_observations AS observation ON observation.id = projection.current_observation_id
+WHERE projection.pull_request_id = 'pr-1'`).Scan(&nextObservationAt, &nextProjectionAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO pull_request_observations(
+ id, connection_id, repository_id, pull_request_id, revision_id, head_sha, base_sha,
+ source_kind, source_priority, facts_format_version, facts_sha256, title,
+ author_login, author_database_id, body_sha256, labels_json, is_draft, base_ref,
+ requested_reviewers_json, relationship_set_json, github_state,
+ github_updated_at_us, observed_at_us, created_at_us)
+VALUES ('merged-observation', 'connection-1', 'repo-1', 'pr-1', ?, ?, ?,
+ 'direct_refresh', 30, 1, ?, 'Merged pull request', 'author', 8001, ?, '[]', 0, 'main', '[]', '[]', 'merged',
+ ?, ?, ?)`, target.RevisionID, projectionHeadSHA, projectionBaseSHA, strings.Repeat("f", 64), projectionDigest, nextObservationAt, nextObservationAt, nextObservationAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+UPDATE pull_request_projection_state
+SET current_observation_id = 'merged-observation', updated_at_us = ?
+WHERE pull_request_id = 'pr-1'`, nextProjectionAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO review_intents(
+ id, connection_id, repository_id, pull_request_id, revision_id, observation_id,
+ profile_id, profile_version_id, trigger_kind, idempotency_key, trigger_sha256,
+ requested_at_us, created_at_us)
+VALUES ('merged-pr-intent', 'connection-1', 'repo-1', 'pr-1', ?, 'merged-observation',
+ 'profile-1', 'profile-version-1', 'manual', 'merged-pr-run', ?, 110, 110)`,
+		target.RevisionID, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO review_runs(
+ id, intent_id, connection_id, pull_request_id, revision_id, observation_id,
+ attempt_number, engine_kind, engine_config_json, started_at_us, created_at_us)
+VALUES ('merged-pr-run', 'merged-pr-intent', 'connection-1', 'pr-1', ?, 'merged-observation',
+ 1, 'cli', '{}', 110, 110)`, target.RevisionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO review_run_events(id, run_id, sequence, event_kind, payload_json, occurred_at_us, created_at_us)
+VALUES ('merged-pr-run-failed', 'merged-pr-run', 1, 'failed_terminal', '{"code":"engine_protocol_invalid"}', 110, 110)`); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := store.ListCurrentAttention(ctx, AttentionQuery{ConnectionID: "connection-1", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 0 {
+		t.Fatalf("terminal pull request remained in attention: %+v", page.Items)
 	}
 }
 

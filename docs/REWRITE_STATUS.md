@@ -1,7 +1,7 @@
 # Go Rewrite Status
 
-Last implementation checkpoint: current queue-filter stage (this commit).
-Last full Go suite checkpoint: current queue-filter stage (`go test ./...`, `go vet
+Last implementation checkpoint: terminal-PR inbox exclusion stage (this commit).
+Last full Go suite checkpoint: terminal-PR inbox exclusion stage (`go test ./...`, `go vet
 ./...`).
 Last browser fixture checkpoint: current queue-filter stage (`pnpm test:e2e`).
 
@@ -25,6 +25,8 @@ it in the same commit as every meaningful implementation stage.
   browser session, updates the visible count, and clears stale PR detail when
   nothing matches. Browser fixture covers filtering, reload persistence, and
   clear-filter recovery.
+- Attention queue excludes current `closed` and `merged` GitHub observations;
+  their immutable review records remain available in History and Timeline.
 - Selected PR can queue canonical evidence hydration from dashboard. It creates
   or reuses one durable `github.hydrate.v1` job and cannot write to GitHub.
 - Review profiles, review runs, assessment validation, policy, proposals,
