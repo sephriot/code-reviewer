@@ -72,18 +72,28 @@ it in the same commit as every meaningful implementation stage.
 - [x] Runtime Activity exposes bounded durable job failure class and reason for
       reconciliation, hydration, and review diagnosis.
 
-### Complete design acceptance — larger follow-on
+### Local review MVP — required before legacy removal
 
 - [x] Product decision: retain embedded lightweight HTML/CSS/JavaScript control
       desk. React/TypeScript rewrite is explicitly removed from scope unless
       future product pressure justifies it.
-- [ ] Writer-ownership guard shared with legacy, cutover checkpointing,
-      reverse export, rollback suppression, and lock integration probes.
-- [ ] Backup/restore/upgrade commandbook and cutover rehearsal against fixtures.
-- [ ] Engine contract suite for Claude CLI, Codex CLI, Cursor Agent CLI, and a
-      direct API adapter.
-- [ ] Accessibility and responsive browser-suite completion.
-- [ ] Retention/export controls and operational metrics/alerts.
+- [ ] One native provider, beginning with Codex, completes a real local review
+      from canonical evidence through persisted assessment and policy proposal.
+- [ ] Claude and Cursor Agent native adapter parity after Codex is proven.
+- [ ] Clear terminal provider/auth/sandbox diagnostics in Runtime Activity and
+      `data/reviewd.log`; no retry storm for local configuration failures.
+- [ ] Organization wildcard policy selection (`owner/*`) covered by tests and
+      documented.
+- [ ] Backup/restore commandbook and one fixture rehearsal.
+- [ ] Final Go-only cutover: remove legacy Python runtime and its dependencies
+      only after the above local review workflow is proven.
+
+### Explicitly deferred
+
+- Reverse export, rollback suppression, and shared legacy/v2 writer transfer.
+- Multi-user/server control plane, retention controls, alerts, and a direct API
+  review-engine adapter.
+- Full accessibility/responsive completion beyond current local dashboard.
 
 ## Safety rules
 
