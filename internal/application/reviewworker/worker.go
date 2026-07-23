@@ -229,7 +229,7 @@ func safeFailureSummary(cause error) string {
 	case strings.Contains(message, "native engine execution"):
 		return "native provider process failed; run its status command and confirm its login"
 	case strings.Contains(message, "native engine output"):
-		return "native provider did not return a structured assessment"
+		return nativeOutputSummary(message)
 	case strings.Contains(message, "sandbox"):
 		return "native provider sandbox configuration blocked execution"
 	case strings.Contains(message, "validate review engine assessment"):
@@ -239,6 +239,19 @@ func safeFailureSummary(cause error) string {
 	default:
 		return "review execution failed"
 	}
+}
+
+func nativeOutputSummary(message string) string {
+	const prefix = "native engine output has no assessment JSON document: "
+	position := strings.Index(message, prefix)
+	if position < 0 {
+		return "native provider did not return a structured assessment"
+	}
+	detail := strings.TrimSpace(message[position+len(prefix):])
+	if detail == "" || len(detail) > 240 {
+		return "native provider did not return a structured assessment"
+	}
+	return "native provider returned unsupported output; " + detail
 }
 
 func assessmentValidationSummary(message string) string {
