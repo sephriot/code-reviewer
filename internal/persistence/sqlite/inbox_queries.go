@@ -56,6 +56,10 @@ type AttentionItem struct {
 	State         TimelineState
 	Current       bool
 	Detail        string
+	Repository    string
+	Number        int
+	Title         string
+	Author        string
 }
 
 // AttentionPage is one bounded page of current operational attention.
@@ -256,11 +260,14 @@ WITH latest_run_events AS (
    AND run.observation_id = projection.current_observation_id
    AND event.event_kind IN ('failed_retryable', 'failed_terminal', 'canceled', 'superseded')
 )
-SELECT kind, id, connection_id, pull_request_id, revision_id, observation_id, occurred_at_us, detail
+SELECT attention.kind, attention.id, attention.connection_id, attention.pull_request_id, attention.revision_id, attention.observation_id, attention.occurred_at_us, attention.detail,
+       repository.full_name, pull_request.number, pull_request.title, pull_request.author_login
 FROM attention
-WHERE (? = '' OR connection_id = ?)
-  AND (? = 0 OR occurred_at_us < ? OR (occurred_at_us = ? AND (kind > ? OR (kind = ? AND id > ?))))
-ORDER BY occurred_at_us DESC, kind, id
+JOIN pull_requests AS pull_request ON pull_request.id = attention.pull_request_id
+JOIN repositories AS repository ON repository.id = pull_request.repository_id
+WHERE (? = '' OR attention.connection_id = ?)
+  AND (? = 0 OR attention.occurred_at_us < ? OR (attention.occurred_at_us = ? AND (attention.kind > ? OR (attention.kind = ? AND attention.id > ?))))
+ORDER BY attention.occurred_at_us DESC, attention.kind, attention.id
 LIMIT ?`, connectionID, connectionID, hasCursor, cursor.OccurredAtUS, cursor.OccurredAtUS, cursor.Kind, cursor.Kind, cursor.ID, limit+1)
 	if err != nil {
 		return AttentionPage{}, fmt.Errorf("list current attention: %w", err)
@@ -271,7 +278,7 @@ LIMIT ?`, connectionID, connectionID, hasCursor, cursor.OccurredAtUS, cursor.Occ
 	for rows.Next() {
 		var item AttentionItem
 		var occurredAtUS int64
-		if err := rows.Scan(&item.Kind, &item.ID, &item.ConnectionID, &item.PullRequestID, &item.RevisionID, &item.ObservationID, &occurredAtUS, &item.Detail); err != nil {
+		if err := rows.Scan(&item.Kind, &item.ID, &item.ConnectionID, &item.PullRequestID, &item.RevisionID, &item.ObservationID, &occurredAtUS, &item.Detail, &item.Repository, &item.Number, &item.Title, &item.Author); err != nil {
 			return AttentionPage{}, fmt.Errorf("scan current attention: %w", err)
 		}
 		item.OccurredAt, item.State, item.Current = time.UnixMicro(occurredAtUS).UTC(), TimelineStateCurrent, true

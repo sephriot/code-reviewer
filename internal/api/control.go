@@ -129,6 +129,10 @@ type attentionResponse struct {
 	State         sqlite.TimelineState `json:"state"`
 	Current       bool                 `json:"current"`
 	Detail        string               `json:"detail"`
+	Repository    string               `json:"repository"`
+	Number        int                  `json:"number"`
+	Title         string               `json:"title"`
+	Author        string               `json:"author"`
 }
 
 type timelineResponse struct {
@@ -246,7 +250,7 @@ func (h controlHandler) inbox(response http.ResponseWriter, request *http.Reques
 	}
 	items := make([]attentionResponse, len(page.Items))
 	for index, item := range page.Items {
-		items[index] = attentionResponse{item.Kind, item.ID, item.ConnectionID, item.PullRequestID, item.RevisionID, item.ObservationID, item.OccurredAt, item.State, item.Current, item.Detail}
+		items[index] = attentionResponse{item.Kind, item.ID, item.ConnectionID, item.PullRequestID, item.RevisionID, item.ObservationID, item.OccurredAt, item.State, item.Current, item.Detail, item.Repository, item.Number, item.Title, item.Author}
 	}
 	writeControlJSON(response, http.StatusOK, pageResponse[attentionResponse]{Items: items, NextCursor: page.NextCursor})
 }
