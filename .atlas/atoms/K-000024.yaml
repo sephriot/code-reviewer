@@ -1,0 +1,15 @@
+id: K-000024
+title: Closed-to-merged backfill on scan
+type: recipe
+confidence: high
+summary: Each Scan backfillMergedStates re-fetches state=closed PRs and upgrades to merged via GetPRDetails/NormalizePRState.
+tags:
+- scanner
+- pr-state
+- backfill
+sources:
+- internal/scanner/scanner.go
+- internal/db/db.go
+links:
+- K-000023
+updated_at: 2026-07-24

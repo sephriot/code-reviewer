@@ -72,6 +72,7 @@ func (s *Scanner) Scan(ctx context.Context) error {
 	}
 
 	s.reconcileStalePRs(ctx, dedup)
+	s.backfillMergedStates(ctx)
 
 	log.Printf("scan: done, %d new review requests", newRequests)
 
@@ -292,6 +293,52 @@ func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSu
 		if err != nil {
 			log.Printf("scan: reconcile upsert error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
 		}
+	}
+}
+
+// backfillMergedStates re-fetches PRs stored as closed and upgrades them to
+// merged when GitHub reports merged. Needed because older scans stored
+// GitHub's raw state (closed) for merged PRs.
+func (s *Scanner) backfillMergedStates(ctx context.Context) {
+	closed, err := s.db.ListClosedPRs()
+	if err != nil {
+		log.Printf("scan: error listing closed PRs for merged backfill: %v", err)
+		return
+	}
+	updated := 0
+	for _, pr := range closed {
+		parts := strings.SplitN(pr.Repo, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		details, err := s.gh.GetPRDetails(ctx, parts[0], parts[1], pr.PRNumber)
+		if err != nil {
+			log.Printf("scan: merged backfill error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
+			continue
+		}
+		if details.State != db.PRStateMerged {
+			continue
+		}
+		log.Printf("scan: backfill %s#%d closed -> merged", pr.Repo, pr.PRNumber)
+		_, err = s.db.UpsertPR(db.PullRequest{
+			Repo:           pr.Repo,
+			PRNumber:       pr.PRNumber,
+			Title:          details.Title,
+			Author:         details.Author,
+			CommitSHA:      details.CommitSHA,
+			Draft:          details.Draft,
+			State:          db.PRStateMerged,
+			NeedsReview:    false,
+			FilteredReason: "",
+		})
+		if err != nil {
+			log.Printf("scan: merged backfill upsert error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
+			continue
+		}
+		updated++
+	}
+	if updated > 0 {
+		log.Printf("scan: backfilled %d closed PRs to merged", updated)
 	}
 }
 

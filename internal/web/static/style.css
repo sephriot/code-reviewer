@@ -171,7 +171,8 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
 .failed { background: #f8d7da; color: #721c24; }
 
 .pr-status.open { color: var(--success); }
-.pr-status.closed, .pr-status.merged { color: var(--text-muted); }
+.pr-status.closed { color: var(--danger); }
+.pr-status.merged { color: #8250df; }
 
 .queue ul {
   list-style: none;
@@ -434,4 +435,28 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   display: flex;
   gap: 0.5rem;
   justify-content: flex-end;
+}
+
+.history-feed .review-summary {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.25rem 0 2rem;
+}
+
+.pagination .page-indicator {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.btn-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: default;
 }

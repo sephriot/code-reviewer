@@ -11,19 +11,19 @@ import (
 )
 
 type PRSummary struct {
-	Owner    string
-	Repo     string
-	Number   int
-	Title    string
-	Author   string
+	Owner     string
+	Repo      string
+	Number    int
+	Title     string
+	Author    string
 	CommitSHA string
-	Draft    bool
-	State    string
+	Draft     bool
+	State     string
 }
 
 type ReviewSubmission struct {
-	Outcome string
-	Body    string
+	Outcome  string
+	Body     string
 	Comments []ReviewComment
 }
 
@@ -88,17 +88,29 @@ func prIssuesToSummaries(issues []*github.Issue) []PRSummary {
 		repoFull := issue.GetRepositoryURL()
 		owner, repo := parseRepoURL(repoFull)
 		summaries = append(summaries, PRSummary{
-			Owner:    owner,
-			Repo:     repo,
-			Number:   issue.GetNumber(),
-			Title:    issue.GetTitle(),
-			Author:   issue.GetUser().GetLogin(),
+			Owner:     owner,
+			Repo:      repo,
+			Number:    issue.GetNumber(),
+			Title:     issue.GetTitle(),
+			Author:    issue.GetUser().GetLogin(),
 			CommitSHA: "",
-			Draft:    false,
-			State:    "open",
+			Draft:     false,
+			State:     "open",
 		})
 	}
 	return summaries
+}
+
+// NormalizePRState maps GitHub PR fields to our stored state.
+// GitHub only returns open|closed; merged PRs are closed with merged=true.
+func NormalizePRState(ghState string, merged bool) string {
+	if merged {
+		return "merged"
+	}
+	if ghState == "" {
+		return "open"
+	}
+	return ghState
 }
 
 func (c *Client) GetPRDetails(ctx context.Context, owner, repo string, number int) (*PRSummary, error) {
@@ -111,14 +123,14 @@ func (c *Client) GetPRDetails(ctx context.Context, owner, repo string, number in
 		sha = pr.Head.GetSHA()
 	}
 	return &PRSummary{
-		Owner:    owner,
-		Repo:     repo,
-		Number:   pr.GetNumber(),
-		Title:    pr.GetTitle(),
-		Author:   pr.GetUser().GetLogin(),
+		Owner:     owner,
+		Repo:      repo,
+		Number:    pr.GetNumber(),
+		Title:     pr.GetTitle(),
+		Author:    pr.GetUser().GetLogin(),
 		CommitSHA: sha,
-		Draft:    pr.GetDraft(),
-		State:    pr.GetState(),
+		Draft:     pr.GetDraft(),
+		State:     NormalizePRState(pr.GetState(), pr.GetMerged()),
 	}, nil
 }
 
@@ -158,10 +170,10 @@ func (c *Client) SubmitReview(ctx context.Context, owner, repo string, number in
 	for _, c := range submission.Comments {
 		body := c.Message
 		review.Comments = append(review.Comments, &github.DraftReviewComment{
-			Path:     &c.File,
-			Body:     &body,
-			Line:     &c.Line,
-			Side:     github.String("RIGHT"),
+			Path: &c.File,
+			Body: &body,
+			Line: &c.Line,
+			Side: github.String("RIGHT"),
 		})
 	}
 
@@ -187,10 +199,10 @@ func (c *Client) CreatePRComment(ctx context.Context, owner, repo string, number
 func (c *Client) CreateReviewComment(ctx context.Context, owner, repo string, number int, comment ReviewComment) error {
 	body := comment.Message
 	_, _, err := c.PullRequests.CreateComment(ctx, owner, repo, number, &github.PullRequestComment{
-		Body:  &body,
-		Path:  &comment.File,
-		Line:  &comment.Line,
-		Side:  github.String("RIGHT"),
+		Body: &body,
+		Path: &comment.File,
+		Line: &comment.Line,
+		Side: github.String("RIGHT"),
 	})
 	if err != nil {
 		return fmt.Errorf("create review comment on %s/%s#%d: %w", owner, repo, number, err)

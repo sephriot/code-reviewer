@@ -24,14 +24,14 @@ import (
 var content embed.FS
 
 type Server struct {
-	cfg     *config.Config
-	d       *db.DB
-	gh      *gh.Client
-	runner  *review.Runner
+	cfg    *config.Config
+	d      *db.DB
+	gh     *gh.Client
+	runner *review.Runner
 
-	events    chan review.ReviewEvent
-	subs      map[chan review.ReviewEvent]struct{}
-	subsMu    sync.RWMutex
+	events chan review.ReviewEvent
+	subs   map[chan review.ReviewEvent]struct{}
+	subsMu sync.RWMutex
 }
 
 func New(cfg *config.Config, d *db.DB, gh *gh.Client, runner *review.Runner) *Server {
@@ -114,7 +114,7 @@ func (s *Server) Serve(ctx context.Context) error {
 func (s *Server) render(w http.ResponseWriter, name string, data interface{}) {
 	t := template.New("")
 	t.Funcs(template.FuncMap{
-		"safe": func(s string) template.HTML { return template.HTML(s) },
+		"safe":       func(s string) template.HTML { return template.HTML(s) },
 		"formatTime": func(t time.Time) string { return t.Format("2006-01-02 15:04") },
 	})
 	t, err := t.ParseFS(content, "templates/base.html", "templates/"+name)
@@ -209,8 +209,8 @@ func (s *Server) prDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "pr_detail.html", map[string]interface{}{
-		"PR":       pr,
-		"Reviews":  reviewList,
+		"PR":      pr,
+		"Reviews": reviewList,
 	})
 }
 
@@ -225,9 +225,34 @@ func (s *Server) historyPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+
+	known := make(map[int64]struct{}, len(prs))
+	for _, pr := range prs {
+		known[pr.ID] = struct{}{}
+	}
+	for _, rev := range published {
+		if _, ok := known[rev.PullRequestID]; ok {
+			continue
+		}
+		pr, err := s.d.GetPR(rev.PullRequestID)
+		if err != nil || pr == nil {
+			continue
+		}
+		prs = append(prs, *pr)
+		known[pr.ID] = struct{}{}
+	}
+
+	feed := BuildHistoryFeed(prs, published)
+	page := 1
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			page = n
+		}
+	}
+	items, meta := PaginateFeed(feed, page, 10)
 	s.render(w, "history.html", map[string]interface{}{
-		"PRs":       prs,
-		"Published": published,
+		"Items": items,
+		"Meta":  meta,
 	})
 }
 

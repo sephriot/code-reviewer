@@ -291,8 +291,17 @@ func (d *DB) ListOpenActivePRs() ([]PullRequest, error) {
 	return scanPRs(rows)
 }
 
+func (d *DB) ListPRsByState(state string) ([]PullRequest, error) {
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE state = ? AND deleted_at IS NULL ORDER BY updated_at DESC", state)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPRs(rows)
+}
+
 func (d *DB) ListClosedPRs() ([]PullRequest, error) {
-	return d.ListHistoryPRs()
+	return d.ListPRsByState(PRStateClosed)
 }
 
 func (d *DB) SetPRNeedsReview(id int64, needs bool) error {

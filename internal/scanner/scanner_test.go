@@ -13,9 +13,9 @@ import (
 )
 
 type fakeGH struct {
-	details      map[string]*gh.PRSummary
-	hasReviewed  map[string]bool
-	getCalls     int
+	details     map[string]*gh.PRSummary
+	hasReviewed map[string]bool
+	getCalls    int
 }
 
 func (f *fakeGH) key(owner, repo string, n int) string {
@@ -162,6 +162,37 @@ func TestProcessPR_ClosedGoesToHistoryNotFiltered(t *testing.T) {
 	}
 }
 
+func TestProcessPR_MergedGoesToHistoryAsMerged(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 15572)
+	fake := &fakeGH{details: map[string]*gh.PRSummary{
+		key: {Owner: "spacelift-io", Repo: "backend", Number: 15572, Title: "shipped", Author: "kutluhanmetin", CommitSHA: "beef", State: "merged"},
+	}}
+	s, d := testScanner(t, &config.Config{}, fake)
+	created, err := s.processPR(context.Background(), gh.PRSummary{
+		Owner: "spacelift-io", Repo: "backend", Number: 15572, Title: "shipped", Author: "kutluhanmetin",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("no review request for merged")
+	}
+	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 15572)
+	if pr == nil || pr.State != "merged" || pr.FilteredReason != "" || pr.NeedsReview {
+		t.Fatalf("got %#v", pr)
+	}
+	history, _ := d.ListHistoryPRs()
+	found := false
+	for _, h := range history {
+		if h.ID == pr.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("merged PR missing from history")
+	}
+}
+
 func TestProcessPR_DraftToReadySameSHAClearsFilter(t *testing.T) {
 	key := prKey("spacelift-io", "backend", 10)
 	sha := "same-sha"
@@ -243,5 +274,38 @@ func TestReconcileStale_FilteredThenClosedLeavesFiltered(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("should be on history")
+	}
+}
+
+func TestBackfillMergedStates_UpgradesClosedToMerged(t *testing.T) {
+	keyMerged := prKey("spacelift-io", "backend", 30)
+	keyClosed := prKey("spacelift-io", "backend", 31)
+	fake := &fakeGH{details: map[string]*gh.PRSummary{
+		keyMerged: {Owner: "spacelift-io", Repo: "backend", Number: 30, Title: "shipped", Author: "a", CommitSHA: "a1", State: "merged"},
+		keyClosed: {Owner: "spacelift-io", Repo: "backend", Number: 31, Title: "abandoned", Author: "b", CommitSHA: "b1", State: "closed"},
+	}}
+	s, d := testScanner(t, &config.Config{}, fake)
+	if _, err := d.UpsertPR(db.PullRequest{
+		Repo: "spacelift-io/backend", PRNumber: 30, Title: "shipped", Author: "a",
+		CommitSHA: "a1", State: "closed", NeedsReview: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.UpsertPR(db.PullRequest{
+		Repo: "spacelift-io/backend", PRNumber: 31, Title: "abandoned", Author: "b",
+		CommitSHA: "b1", State: "closed", NeedsReview: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.backfillMergedStates(context.Background())
+
+	merged, err := d.GetPRByRepoAndNumber("spacelift-io/backend", 30)
+	if err != nil || merged == nil || merged.State != "merged" {
+		t.Fatalf("want merged, got %#v err=%v", merged, err)
+	}
+	closed, err := d.GetPRByRepoAndNumber("spacelift-io/backend", 31)
+	if err != nil || closed == nil || closed.State != "closed" {
+		t.Fatalf("want still closed, got %#v err=%v", closed, err)
 	}
 }

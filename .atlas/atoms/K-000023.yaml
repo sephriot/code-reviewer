@@ -1,0 +1,13 @@
+id: K-000023
+title: GitHub merged PRs stored as state=merged
+type: gotcha
+confidence: high
+summary: GitHub GetState is only open|closed; use GetMerged() via NormalizePRState so history can show merged vs closed.
+details: Existing DB rows stay 'closed' until the next GetPRDetails reconcile updates them.
+tags:
+- github
+- pr-state
+- history
+sources:
+- internal/github/client.go
+updated_at: 2026-07-24

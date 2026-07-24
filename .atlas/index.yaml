@@ -1,4 +1,4 @@
-next_id: 22
+next_id: 25
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -199,3 +199,41 @@ entries:
   - internal/config/config.go
   - internal/review/runner.go
   - .env.example
+- id: K-000022
+  title: History tab uses merged activity feed
+  type: decision
+  confidence: high
+  tags:
+  - web
+  - history
+  - pagination
+  - ui
+  sources:
+  - internal/web/history_feed.go
+  - internal/web/server.go
+  - internal/web/templates/history.html
+  links:
+  - K-000018
+- id: K-000023
+  title: GitHub merged PRs stored as state=merged
+  type: gotcha
+  confidence: high
+  tags:
+  - github
+  - pr-state
+  - history
+  sources:
+  - internal/github/client.go
+- id: K-000024
+  title: Closed-to-merged backfill on scan
+  type: recipe
+  confidence: high
+  tags:
+  - scanner
+  - pr-state
+  - backfill
+  sources:
+  - internal/scanner/scanner.go
+  - internal/db/db.go
+  links:
+  - K-000023

@@ -1,0 +1,32 @@
+id: K-000022
+title: History tab uses merged activity feed
+type: decision
+confidence: high
+summary: History is one PR feed (history ∪ published), one row with state+published tags, sorted by max(PR.updated_at, latest published.created_at), paginated 10/page in-memory.
+details: |-
+  ## Decision
+  Prefer a single merged history feed over separate Closed / Published sections.
+
+  ## Rules
+  - Membership: ListHistoryPRs OR has published review (fetch missing PRs via GetPR).
+  - One row per PR; annotate with state badge + optional `published` + latest outcome/summary.
+  - Sort: max(PR.updated_at, latest published review.created_at) descending.
+  - Pagination: in-memory PaginateFeed, page size 10, `?page=N`.
+
+  ## Why not SQL LIMIT
+  Local SQLite scale; keep ListHistoryPRs / ListPublishedReviews unchanged; pure helper is unit-testable.
+
+  ## Related
+  - [K-000018] Web UI templates + SSE architecture
+tags:
+- web
+- history
+- pagination
+- ui
+sources:
+- internal/web/history_feed.go
+- internal/web/server.go
+- internal/web/templates/history.html
+links:
+- K-000018
+updated_at: 2026-07-24

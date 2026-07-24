@@ -1,47 +1,44 @@
 {{define "content"}}
 <h1>History</h1>
 
-<section class="pr-list">
-  <h2>Closed PRs</h2>
-  {{range .PRs}}
-  <div class="pr-card" data-pr-id="{{.ID}}">
+<section class="pr-list history-feed">
+  {{range .Items}}
+  <div class="pr-card" data-pr-id="{{.PR.ID}}">
     <div class="pr-header">
-      <span class="pr-repo">{{.Repo}}</span>
-      <span class="pr-number">#{{.PRNumber}}</span>
+      <span class="pr-repo">{{.PR.Repo}}</span>
+      <span class="pr-number">#{{.PR.PRNumber}}</span>
     </div>
     <div class="pr-title">
-      <a href="/pr/{{.ID}}">{{.Title}}</a>
+      <a href="/pr/{{.PR.ID}}">{{.PR.Title}}</a>
     </div>
     <div class="pr-meta">
-      <span>{{.Author}}</span>
-      <span class="pr-status {{.State}}">{{.State}}</span>
+      <span>{{.PR.Author}}</span>
+      <span class="pr-status {{.PR.State}}">{{.PR.State}}</span>
+      {{if .Published}}<span class="badge published">published</span>{{end}}
+      {{if .Outcome}}<span class="outcome-badge {{.Outcome}}">{{.Outcome}}</span>{{end}}
     </div>
-  </div>
-  {{else}}
-  <p class="empty">No closed pull requests.</p>
-  {{end}}
-</section>
-
-<section class="published-reviews">
-  <h2>Published Reviews</h2>
-  {{range .Published}}
-  <div class="review-card outcome-{{.Outcome}}">
-    <div class="review-header">
-      <strong>{{.Repo}} #{{.PRNumber}}</strong>
-      <span class="outcome-badge {{.Outcome}}">{{.Outcome}}</span>
-      <small>{{.CreatedAt | formatTime}}</small>
-    </div>
-    <div class="review-meta">{{.PRTitle}} by {{.PRAuthor}}</div>
+    {{if .Summary}}
     <div class="review-summary">{{.Summary}}</div>
-    {{if .GeneralComment}}
-    <div class="review-comment">
-      <strong>Review comment:</strong>
-      <pre>{{.GeneralComment}}</pre>
-    </div>
     {{end}}
   </div>
   {{else}}
-  <p class="empty">No published reviews yet.</p>
+  <p class="empty">No history yet.</p>
   {{end}}
 </section>
+
+{{if gt .Meta.TotalPages 1}}
+<nav class="pagination" aria-label="History pages">
+  {{if .Meta.HasPrev}}
+  <a class="btn btn-sm" href="/history?page={{.Meta.PrevPage}}">Previous</a>
+  {{else}}
+  <span class="btn btn-sm btn-disabled" aria-disabled="true">Previous</span>
+  {{end}}
+  <span class="page-indicator">Page {{.Meta.Page}} of {{.Meta.TotalPages}}</span>
+  {{if .Meta.HasNext}}
+  <a class="btn btn-sm" href="/history?page={{.Meta.NextPage}}">Next</a>
+  {{else}}
+  <span class="btn btn-sm btn-disabled" aria-disabled="true">Next</span>
+  {{end}}
+</nav>
+{{end}}
 {{end}}
