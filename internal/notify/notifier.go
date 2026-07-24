@@ -5,18 +5,10 @@ import (
 	"log"
 	"os/exec"
 	"strings"
-	"text/template"
 
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/db"
 )
-
-type TemplateData struct {
-	Repo      string
-	PRNumber  int
-	Title     string
-	Author    string
-}
 
 type Notifier struct {
 	cfg *config.Config
@@ -28,7 +20,7 @@ func New(cfg *config.Config) *Notifier {
 
 func (n *Notifier) ReviewStarted(pr db.PullRequest) {
 	n.playSound(n.cfg.ReviewStartedSoundEnabled, n.cfg.ReviewStartedSoundFile, pr, "review started")
-	n.browserNotify("Review Started", fmt.Sprintf("Review started for PR #%d in %s", pr.PRNumber, pr.Repo))
+	n.browserNotify("Review Started", fmt.Sprintf("Review started for PR #%d by %s in %s", pr.PRNumber, pr.Author, pr.Repo))
 }
 
 func (n *Notifier) ReviewApproved(pr db.PullRequest) {
@@ -38,7 +30,7 @@ func (n *Notifier) ReviewApproved(pr db.PullRequest) {
 
 func (n *Notifier) ReviewFailed(pr db.PullRequest, reason string) {
 	n.playSound(n.cfg.TimeoutSoundEnabled, n.cfg.TimeoutSoundFile, pr, fmt.Sprintf("review failed: %s", reason))
-	n.browserNotify("Review Failed", fmt.Sprintf("PR #%d in %s: %s", pr.PRNumber, pr.Repo, reason))
+	n.browserNotify("Review Failed", fmt.Sprintf("PR #%d by %s in %s: %s", pr.PRNumber, pr.Author, pr.Repo, reason))
 }
 
 func (n *Notifier) HumanReviewNeeded(pr db.PullRequest) {
@@ -97,20 +89,9 @@ func (n *Notifier) browserNotify(title, body string) {
 }
 
 func renderTemplate(tmpl string, pr db.PullRequest) string {
-	data := TemplateData{
-		Repo:     pr.Repo,
-		PRNumber: pr.PRNumber,
-		Title:    pr.Title,
-		Author:   pr.Author,
-	}
-
-	var buf strings.Builder
-	t, err := template.New("notify").Parse(tmpl)
-	if err != nil {
-		return tmpl
-	}
-	if err := t.Execute(&buf, data); err != nil {
-		return tmpl
-	}
-	return buf.String()
+	s := strings.ReplaceAll(tmpl, "{title}", pr.Title)
+	s = strings.ReplaceAll(s, "{repo}", pr.Repo)
+	s = strings.ReplaceAll(s, "{author}", pr.Author)
+	s = strings.ReplaceAll(s, "{number}", fmt.Sprintf("%d", pr.PRNumber))
+	return s
 }
