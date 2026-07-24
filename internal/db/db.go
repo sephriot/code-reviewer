@@ -519,6 +519,11 @@ func (d *DB) UpdateReviewComment(id int64, message string) error {
 	return err
 }
 
+func (d *DB) UpdateReviewGeneralComment(id int64, comment string) error {
+	_, err := d.Exec("UPDATE reviews SET general_comment = ?, updated_at = datetime('now') WHERE id = ?", comment, id)
+	return err
+}
+
 func (d *DB) CountReviewsByOutcomeSince(outcome string, since time.Time) (int, error) {
 	var count int
 	err := d.QueryRow("SELECT COUNT(*) FROM reviews WHERE outcome = ? AND created_at >= ? AND deleted_at IS NULL", outcome, since.Format("2006-01-02 15:04:05")).Scan(&count)

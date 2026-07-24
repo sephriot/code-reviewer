@@ -290,6 +290,24 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   overflow-x: auto;
 }
 
+.review-comment-input, .comment-input {
+  width: 100%;
+  min-height: 5rem;
+  font-size: 0.875rem;
+  font-family: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem;
+  resize: vertical;
+  margin-top: 0.25rem;
+}
+
+.review-comment-input:focus, .comment-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
 .actions {
   margin-bottom: 1rem;
 }

@@ -25,7 +25,7 @@
       {{if .GeneralComment}}
       <div class="review-comment">
         <strong>Review comment:</strong>
-        <pre>{{.GeneralComment}}</pre>
+        <textarea class="review-comment-input" data-review-id="{{.ID}}" onchange="saveGeneralComment(this)">{{.GeneralComment}}</textarea>
       </div>
       {{end}}
       <div class="review-actions">
@@ -44,11 +44,11 @@
     {{range .Comments}}
     <div class="comment" data-comment-id="{{.ID}}">
       <code>{{.File}}:{{.Line}}</code>
-      <p>{{.Message}}</p>
+      <textarea class="comment-input" data-comment-id="{{.ID}}" onchange="saveInlineComment(this)">{{.Message}}</textarea>
       {{if .CodeSnippet}}
       <pre class="code-snippet"><code>{{.CodeSnippet}}</code></pre>
       {{end}}
-      <button onclick="deleteComment({{.ID}})" class="btn btn-sm btn-danger">Delete</button>
+      <button onclick="deleteInlineComment({{.ID}})" class="btn btn-sm btn-danger">Delete</button>
     </div>
     {{else}}
     <p class="empty">No inline comments.</p>
@@ -69,9 +69,25 @@ async function requestReview(prId) {
   await fetch('/api/pr/' + prId + '/review', {method: 'POST'});
   location.href = '/';
 }
-async function deleteComment(id) {
-  await fetch('/api/review/comment/' + id, {method: 'DELETE'});
+async function saveGeneralComment(el) {
+  const id = el.dataset.reviewId;
+  await fetch('/api/review/' + id + '/general-comment', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({comment: el.value})
+  });
+}
+async function deleteInlineComment(id) {
+  await fetch('/api/inline-comment/' + id, {method: 'DELETE'});
   location.reload();
+}
+async function saveInlineComment(el) {
+  const id = el.dataset.commentId;
+  await fetch('/api/inline-comment/' + id, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({message: el.value})
+  });
 }
 </script>
 {{end}}

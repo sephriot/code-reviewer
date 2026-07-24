@@ -91,6 +91,7 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	mux.HandleFunc("/api/pr/", s.apiPR)
 	mux.HandleFunc("/api/review/", s.apiReview)
+	mux.HandleFunc("/api/inline-comment/", s.apiInlineComment)
 	mux.HandleFunc("/api/analytics", s.apiAnalytics)
 
 	staticFS, _ := fs.Sub(content, "static")
@@ -346,10 +347,61 @@ func (s *Server) apiReview(w http.ResponseWriter, r *http.Request) {
 		s.publishReview(w, rv)
 	case len(parts) >= 2 && parts[1] == "publish-comments" && r.Method == "POST":
 		s.publishReviewComments(w, rv)
+	case len(parts) >= 2 && parts[1] == "general-comment" && r.Method == "PUT":
+		var body struct {
+			Comment string `json:"comment"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", 400)
+			return
+		}
+		if err := s.d.UpdateReviewGeneralComment(reviewID, body.Comment); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		s.respondJSON(w, map[string]string{"status": "updated"})
 	case r.Method == "DELETE":
 		http.Error(w, "not implemented", 501)
 	default:
 		s.respondJSON(w, rv)
+	}
+}
+
+func (s *Server) apiInlineComment(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/inline-comment/"), "/")
+	if len(parts) < 1 {
+		http.NotFound(w, r)
+		return
+	}
+
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch r.Method {
+	case "DELETE":
+		if err := s.d.DeleteReviewComment(id); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		s.respondJSON(w, map[string]string{"status": "deleted"})
+	case "PUT":
+		var body struct {
+			Message string `json:"message"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", 400)
+			return
+		}
+		if err := s.d.UpdateReviewComment(id, body.Message); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		s.respondJSON(w, map[string]string{"status": "updated"})
+	default:
+		http.Error(w, "method not allowed", 405)
 	}
 }
 
