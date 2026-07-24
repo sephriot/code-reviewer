@@ -108,14 +108,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			log.Printf("scan: %s/%s#%d already reviewed, needs_review=false", pr.Owner, pr.Repo, pr.Number)
 		} else {
 			s.db.SetPRNeedsReview(existing.ID, true)
-			req, err := s.db.GetPendingRequestByPR(existing.ID)
-			if err != nil {
-				return false, err
-			}
-			if req == nil {
-				s.db.CreateReviewRequest(existing.ID)
-				log.Printf("scan: %s/%s#%d not reviewed, create review request", pr.Owner, pr.Repo, pr.Number)
-			}
+			log.Printf("scan: %s/%s#%d not reviewed, needs_review=true", pr.Owner, pr.Repo, pr.Number)
 		}
 		return false, nil
 	}
