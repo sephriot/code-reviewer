@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -114,7 +116,26 @@ func (r *Runner) execClaude(ctx context.Context, prompt string) (string, error) 
 	if r.cfg.ClaudeModel != "" {
 		args = append(args, "--model", r.cfg.ClaudeModel)
 	}
+	log.Printf("runner: executing %v", args)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+
+	if r.cfg.ShowThinking {
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return "", fmt.Errorf("stdout pipe: %w", err)
+		}
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			return "", fmt.Errorf("claude start: %w", err)
+		}
+		output, _ := io.ReadAll(stdout)
+		os.Stdout.Write(output)
+		if err := cmd.Wait(); err != nil {
+			return "", fmt.Errorf("claude execution: %w\noutput: %s", err, string(output))
+		}
+		return string(output), nil
+	}
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("claude execution: %w\noutput: %s", err, string(output))
@@ -129,6 +150,7 @@ func (r *Runner) execCodex(ctx context.Context, prompt string) (string, error) {
 
 func (r *Runner) execAgent(ctx context.Context, prompt string) (string, error) {
 	args := []string{"agent", "--print", "--output-format", "json", "--trust"}
+	log.Printf("runner: executing %v", args)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Stdin = strings.NewReader(prompt)
 	output, err := cmd.CombinedOutput()

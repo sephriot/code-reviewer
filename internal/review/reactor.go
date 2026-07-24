@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"log"
+	"sync"
 
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/db"
@@ -15,6 +16,7 @@ type Reactor struct {
 	gh     *gh.Client
 	runner *Runner
 	onEvent func(event ReviewEvent)
+	mu     sync.Mutex
 }
 
 type ReviewEvent struct {
@@ -36,6 +38,15 @@ func NewReactor(cfg *config.Config, d *db.DB, gh *gh.Client, runner *Runner, onE
 }
 
 func (r *Reactor) ProcessQueue(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if n, err := r.db.ResetStaleReviewRequests(r.cfg.ReviewTimeout); err != nil {
+		log.Printf("reactor: stale reset error: %v", err)
+	} else if n > 0 {
+		log.Printf("reactor: reset %d stale in_progress requests to pending", n)
+	}
+
 	for {
 		rr, err := r.db.GetNextPendingReviewRequest()
 		if err != nil {

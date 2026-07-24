@@ -283,7 +283,7 @@ func (d *DB) CreateReviewRequest(prID int64) (int64, error) {
 }
 
 func (d *DB) GetNextPendingReviewRequest() (*ReviewRequest, error) {
-	row := d.QueryRow("SELECT id, pull_request_id, status, created_at, updated_at, deleted_at FROM review_requests WHERE status = 'pending' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1")
+	row := d.QueryRow("SELECT id, pull_request_id, status, created_at, updated_at, deleted_at FROM review_requests WHERE status = 'pending' AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM review_requests WHERE status = 'in_progress' AND deleted_at IS NULL) ORDER BY created_at ASC LIMIT 1")
 	var rr ReviewRequest
 	var createdAt scanTime
 	var updatedAt scanTime
@@ -301,6 +301,17 @@ func (d *DB) GetNextPendingReviewRequest() (*ReviewRequest, error) {
 		rr.DeletedAt = &deletedAt.Time
 	}
 	return &rr, nil
+}
+
+func (d *DB) ResetStaleReviewRequests(timeout time.Duration) (int64, error) {
+	buffer := 5 * time.Minute
+	threshold := timeout + buffer
+	modifier := fmt.Sprintf("-%d seconds", int64(threshold.Seconds()))
+	res, err := d.Exec("UPDATE review_requests SET status = 'pending', updated_at = datetime('now') WHERE status = 'in_progress' AND deleted_at IS NULL AND updated_at < datetime('now', ?)", modifier)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (d *DB) UpdateReviewRequestStatus(id int64, status string) error {
