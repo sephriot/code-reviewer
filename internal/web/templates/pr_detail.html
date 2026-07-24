@@ -1,0 +1,69 @@
+{{define "content"}}
+<div class="pr-detail">
+  <h1>{{.PR.Repo}} #{{.PR.PRNumber}}</h1>
+  <h2>{{.PR.Title}}</h2>
+  <div class="pr-meta">
+    <span>Author: {{.PR.Author}}</span>
+    <span>Commit: {{.PR.CommitSHA}}</span>
+    <span>{{.PR.State}}</span>
+  </div>
+
+  <div class="actions">
+    <button onclick="requestReview({{.PR.ID}})" class="btn">Request Review</button>
+  </div>
+
+  <section class="reviews">
+    <h2>Reviews</h2>
+    {{range .Reviews}}
+    <div class="review-card outcome-{{.Outcome}}">
+      <div class="review-header">
+        <span class="outcome-badge {{.Outcome}}">{{.Outcome}}</span>
+        <small>{{.CreatedAt | formatTime}}</small>
+        {{if .Published}}<span class="badge published">published</span>{{end}}
+      </div>
+      <div class="review-summary">{{.Summary}}</div>
+      {{if not .Published}}
+      <div class="review-actions">
+        <button onclick="publishReview({{.ID}})" class="btn btn-sm">Publish Full Review</button>
+        <button onclick="publishComments({{.ID}})" class="btn btn-sm">Publish Comments Only</button>
+      </div>
+      {{end}}
+    </div>
+    {{else}}
+    <p class="empty">No reviews yet.</p>
+    {{end}}
+  </section>
+
+  <section class="comments">
+    <h2>Inline Comments</h2>
+    {{range .Comments}}
+    <div class="comment" data-comment-id="{{.ID}}">
+      <code>{{.File}}:{{.Line}}</code>
+      <p>{{.Message}}</p>
+      <button onclick="deleteComment({{.ID}})" class="btn btn-sm btn-danger">Delete</button>
+    </div>
+    {{else}}
+    <p class="empty">No inline comments.</p>
+    {{end}}
+  </section>
+</div>
+
+<script>
+async function publishReview(id) {
+  await fetch('/api/review/' + id + '/publish', {method: 'POST'});
+  location.reload();
+}
+async function publishComments(id) {
+  await fetch('/api/review/' + id + '/publish-comments', {method: 'POST'});
+  location.reload();
+}
+async function requestReview(prId) {
+  await fetch('/api/pr/' + prId + '/review', {method: 'POST'});
+  location.reload();
+}
+async function deleteComment(id) {
+  await fetch('/api/review/comment/' + id, {method: 'DELETE'});
+  location.reload();
+}
+</script>
+{{end}}

@@ -1,0 +1,39 @@
+{{define "content"}}
+<h1>Pull Requests</h1>
+
+<section class="pr-list">
+  {{range .PRs}}
+  <div class="pr-card" data-pr-id="{{.ID}}">
+    <div class="pr-header">
+      <span class="pr-repo">{{.Repo}}</span>
+      <span class="pr-number">#{{.PRNumber}}</span>
+    </div>
+    <div class="pr-title">
+      <a href="/pr/{{.ID}}">{{.Title}}</a>
+    </div>
+    <div class="pr-meta">
+      <span>{{.Author}}</span>
+      <span class="pr-status {{.State}}">{{.State}}</span>
+      {{if .NeedsReview}}<span class="badge needs-review">needs review</span>{{end}}
+      {{if .IsOutdated}}<span class="badge outdated">outdated</span>{{end}}
+    </div>
+  </div>
+  {{else}}
+  <p class="empty">No open pull requests.</p>
+  {{end}}
+</section>
+
+<section class="queue">
+  <h2>Review Queue</h2>
+  <ul>
+  {{range .Requests}}
+    <li class="rr-{{.Status}}">
+      Request #{{.ID}} — <span class="status-badge {{.Status}}">{{.Status}}</span>
+      <small>{{.CreatedAt | formatTime}}</small>
+    </li>
+  {{else}}
+    <li class="empty">No pending reviews.</li>
+  {{end}}
+  </ul>
+</section>
+{{end}}
