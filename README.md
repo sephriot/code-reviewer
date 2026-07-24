@@ -1,528 +1,110 @@
 # Code Reviewer
 
-An automated GitHub PR code review system using Claude Code. This tool monitors for new pull requests where you're assigned as a reviewer and automatically performs code reviews using Claude AI.
+Automated GitHub PR review agent. Scans assigned PRs, runs them through a review tool (Claude/Codex/Agent), stores results, and surfaces them in a web UI.
 
-## Features
+## Tech Stack
 
-- 🔍 **Smart PR Monitoring**: Detects new review requests and code changes
-- 🤖 **Automated Reviews**: Uses Claude Code for intelligent code analysis
-- 📝 **Customizable Prompts**: Tailor review criteria to your needs
-- ✅ **Multiple Actions**: Approve, request changes, or flag for human review
-- 💬 **Inline Comments**: Specific feedback on problematic code lines
-- 🔔 **Sound Notifications**: Audio alerts for PRs requiring human attention
-- 🌐 **Web Dashboard**: Optional web interface for managing pending approvals and review history
-- 🧠 **Smart Tracking**: Never reviews the same commit twice, automatically re-reviews when new commits are pushed
-- 🗄️ **Review History**: SQLite database tracks all review decisions with complete approval history
-- 🏃 **Dry Run Mode**: Test behavior without making actual PR actions
-- 🔄 **Continuous Monitoring**: Graceful shutdown with SIGTERM handling
+- **Go** — single binary, no runtime deps
+- **Go templates** — lightweight server-side rendered UI
+- **SQLite** — via `modernc.org/sqlite` (pure Go, no CGO)
+- **SSE** — real-time push to browser
 
-## Prerequisites
+## Quick Start
 
-- Python 3.8+
-- [Claude Code CLI](https://docs.anthropic.com/claude/docs/claude-code) installed and configured
-- GitHub Personal Access Token with appropriate permissions
-- Git repository access for the repositories you want to monitor
-
-## Installation
-
-1. Clone this repository:
 ```bash
-git clone <repository-url>
-cd code-reviewer
+cp .env.example .env
+# edit .env with your GITHUB_TOKEN and GITHUB_USERNAME
+go build -o code-reviewer ./cmd/code-reviewer/
+./code-reviewer
 ```
 
-2. Create and activate a virtual environment:
-```bash
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-# On Windows:
-# venv\Scripts\activate
-```
-
-3. Install the package in development mode:
-```bash
-pip install -e .
-```
-
-Or install dependencies directly:
-```bash
-pip install -r requirements.txt
-```
+Open http://127.0.0.1:8000
 
 ## Configuration
 
-### Environment Variables
+Precedence: env vars > YAML config > CLI flags.
 
-Create a `.env` file in the project root:
+See `.env.example` for all options.
 
-```env
-GITHUB_TOKEN=your_github_personal_access_token
-GITHUB_USERNAME=your_github_username
-PROMPT_FILE=prompts/review_prompt.txt
-REVIEW_TOOL=CLAUDE  # options: CLAUDE, CODEX, or AGENT
-# REVIEW_MODEL=CLAUDE  # Legacy alias; use REVIEW_TOOL for new configuration.
-# CLAUDE_MODEL=sonnet  # Claude CLI --model alias: opus, sonnet, or fable.
-# REVIEW_EFFORT=high  # Claude CLI only: low, medium, high, xhigh, max.
-#                     # Ignored (with a startup log line) for other models or invalid values.
-POLL_INTERVAL=60
-REVIEW_TIMEOUT=600
-# Set to 0 to disable the timeout
-LOG_LEVEL=INFO
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `--config` | `CONFIG_PATH` | `config.yaml` | YAML config path |
+| `--port` | `WEB_PORT` | `8000` | Web UI port |
+| `--host` | `WEB_HOST` | `127.0.0.1` | Web UI host |
+| `--log` | `LOG_LEVEL` | `INFO` | Log level |
 
-# Sound notifications
-SOUND_ENABLED=true
-# Master switch: false disables every sound event.
-# STARTUP_SOUNDS_ENABLED=false  # Disable startup demo sounds only.
-SPEECH_RATE=200  # macOS say speech rate in words per minute
-# SOUND_FILE=sounds/notification.wav
-
-# Timeout notifications
-TIMEOUT_SOUND_ENABLED=true
-# TIMEOUT_SOUND_FILE=sounds/review_timeout.wav
-
-# Own PRs monitoring
-OWN_PR_MODE=auto  # off (default), auto (review automatically), or manual
-#                 # (track in the web UI; review only when explicitly requested)
-# OWN_PR_ENABLED=true  # Legacy boolean: true=auto, false=off. Ignored when OWN_PR_MODE is set.
-# REPOSITORIES=owner/repo1,owner/repo2  # Same filter as regular PR monitoring
-
-# Own PR sound notifications
-OWN_PR_READY_SOUND_ENABLED=true
-# OWN_PR_READY_SOUND_FILE=sounds/pr_ready.wav
-OWN_PR_NEEDS_ATTENTION_SOUND_ENABLED=true
-# OWN_PR_NEEDS_ATTENTION_SOUND_FILE=sounds/pr_needs_attention.wav
-
-# Dry run mode
-DRY_RUN=false
-
-# Database path
-DATABASE_PATH=data/reviews.db
-
-# Web UI settings (optional)
-WEB_ENABLED=true
-WEB_HOST=127.0.0.1
-WEB_PORT=8000
-```
-
-### GitHub Token Setup
-
-#### Option 1: Use GitHub CLI (Recommended)
-
-If you have the GitHub CLI (`gh`) installed and authenticated:
-
-```bash
-# Get your token from GitHub CLI
-gh auth token
-
-# Automatically update your .env file
-sed -i.bak "s/GITHUB_TOKEN=.*/GITHUB_TOKEN=$(gh auth token)/" .env
-```
-
-This uses the same authentication as your `gh` CLI, so no additional setup is needed.
-
-#### Option 2: Create Personal Access Token
-
-If you don't use GitHub CLI, create a Personal Access Token with these scopes:
-- `repo` (for private repositories)
-- `public_repo` (for public repositories) 
-- `pull_requests:read`
-- `pull_requests:write`
-
-### Configuration File (Optional)
-
-You can also use a YAML configuration file:
-
-```yaml
-# config/config.yaml
-github_token: "your_token_here"
-github_username: "your_username"
-prompt_file: "prompts/custom_prompt.txt"
-review_tool: "CLAUDE"  # options: CLAUDE, CODEX, or AGENT
-claude_model: "sonnet"  # optional Claude CLI --model alias: opus, sonnet, or fable
-poll_interval: 30
-review_timeout: 600
-log_level: "DEBUG"
-
-# Sound notifications
-sound_enabled: true
-speech_rate: 200  # macOS say speech rate in words per minute
-# sound_file: "sounds/notification.wav"
-
-# Review timeout notifications
-timeout_sound_enabled: true
-# timeout_sound_file: "sounds/review_timeout.wav"
-
-# Dry run and database
-dry_run: false
-database_path: "data/reviews.db"
-
-# Web UI settings (optional)
-web_enabled: true
-web_host: "127.0.0.1"
-web_port: 8000
-
-# Optional: Specific repositories to monitor (format: owner/repo)
-repositories:
-  - "owner/repo1"
-  - "owner/repo2"
-```
-
-## Usage
-
-### Basic Usage
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Using environment variables
-code-reviewer
-
-# Using command line options
-code-reviewer --github-token YOUR_TOKEN --github-username YOUR_USERNAME
-
-# Using configuration file
-code-reviewer --config config/config.yaml
-
-# Using custom prompt file
-code-reviewer --prompt prompts/my_custom_prompt.txt
-
-# Enable web UI dashboard
-code-reviewer --web-enabled
-
-# Run with web UI on custom host and port
-code-reviewer --web-enabled --web-host 0.0.0.0 --web-port 8080
-```
-
-### Command Line Options
-
-- `--config, -c`: Path to configuration file
-- `--prompt, -p`: Path to prompt template file
-- `--github-token`: GitHub personal access token
-- `--github-username`: GitHub username to monitor
-- `--poll-interval`: Polling interval in seconds (default: 60)
-- `--review-timeout`: Maximum seconds allowed for an automated review before marking it for human attention (default: 600, use 0 to disable)
-- `--claude-model`: Claude CLI model alias for reviews (env: `CLAUDE_MODEL`): `opus`, `sonnet`, or `fable`
-- `--effort`: Reasoning effort for the review CLI (env: `REVIEW_EFFORT`). Claude CLI only — `low`, `medium`, `high`, `xhigh`, `max`. Other models or invalid values are logged at startup and ignored (tool default used).
-- `--tool`: Choose review CLI; `--model` remains a deprecated alias
-- `--sound-enabled/--no-sound`: Enable/disable sound notifications
-- `--startup-sounds/--no-startup-sounds`: Enable/disable startup demo sounds without affecting later notifications
-- `--speech-rate, -r`: Speech rate for macOS `say` TTS in words per minute (env: `SPEECH_RATE`, config: `speech_rate`; default: `200`)
-- `--sound-file`: Custom sound file for notifications
-- `--web-enabled/--no-web`: Enable/disable web UI dashboard
-- `--timeout-sound-enabled/--no-timeout-sound`: Enable/disable timeout notification sounds
-- `--timeout-sound-file`: Custom sound file for timeout notifications
-- `--web-host`: Web server host address (default: 127.0.0.1)
-- `--web-port`: Web server port (default: 8000)
-- `--dry-run`: Log actions instead of performing them
-
-## Customizing Review Prompts
-
-The default prompt is created at `prompts/review_prompt.txt`. You can customize it to match your review requirements:
-
-```text
-# Custom Code Review Prompt
-
-You are reviewing a pull request. Analyze the code and respond with JSON:
-
-{
-  "action": "approve_with_comment" | "approve_without_comment" | "request_changes" | "requires_human_review",
-  "comment": "Comment for approval",
-  "summary": "Summary for changes requested",
-  "reason": "Why human review is needed",
-  "comments": [
-    {
-      "file": "path/to/file.py",
-      "line": 42,
-      "message": "Specific feedback"
-    }
-  ]
-}
-
-PR Details:
-- Title: {title}
-- Author: {author}
-- Files: {changed_files}
-
-Focus on:
-1. Security vulnerabilities
-2. Performance issues  
-3. Code style consistency
-4. Test coverage
-```
-
-## Advanced Usage
-
-### Dry Run Mode
-
-Test the system without making actual GitHub actions:
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Enable dry run mode
-code-reviewer --dry-run
-
-# Combine with other options
-code-reviewer --dry-run --no-sound --poll-interval 30
-```
-
-### Sound Notifications
-
-Configure audio alerts for PRs requiring human review:
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Enable sound (default)
-code-reviewer --sound-enabled
-
-# Disable sound notifications
-code-reviewer --no-sound
-
-# Use custom sound file
-code-reviewer --sound-file /path/to/notification.wav
-```
-
-### Text-to-Speech (TTS) Notifications
-
-Instead of audio files, you can use text-to-speech tools (like `say` on macOS or `espeak` on Linux) for vocal notifications. This is useful for hearing what type of notification is playing.
-
-**Format:** `tool:text to speak`
-
-```bash
-# macOS: Use 'say' command with custom message
-REVIEW_STARTED_SOUND_FILE="say:Review started for PR"
-APPROVAL_SOUND_FILE="say:PR approved!"
-SPEECH_RATE=175
-
-# Linux: Use 'espeak' command
-REVIEW_STARTED_SOUND_FILE="espeak:Review started"
-TIMEOUT_SOUND_FILE="espeak:Review timed out"
-
-# Use audio file (just specify the path)
-REVIEW_STARTED_SOUND_FILE="sounds/review_started.mp3"
-```
-
-**Template Placeholders:** You can include dynamic information in TTS messages using placeholders:
-
-| Placeholder | Description |
-|-------------|-------------|
-| `{repo}` | Repository name (owner/repo) |
-| `{pr_number}` | PR number |
-| `{author}` | PR author username |
-| `{title}` | PR title |
-
-```bash
-# Examples with templates
-SOUND_FILE="say:New review request for PR {title} in {repo} authored by {author}"
-APPROVAL_SOUND_FILE="say:PR {title} in {repo} has been approved"
-OWN_PR_READY_SOUND_FILE="say:Your own PR {title} in {repo} is ready!"
-OWN_PR_NEEDS_ATTENTION_SOUND_FILE="say:Your own PR {title} in {repo} needs attention!"
-```
-
-**Available sound file options:**
-
-| Environment Variable | Description |
-|---------------------|-------------|
-| `SOUND_FILE` | General notification sound |
-| `APPROVAL_SOUND_FILE` | PR approval sound |
-| `TIMEOUT_SOUND_FILE` | Review timeout sound |
-| `MERGED_OR_CLOSED_SOUND_FILE` | PR merged/closed sound |
-| `REVIEW_STARTED_SOUND_FILE` | Review started sound (new!) |
-| `OWN_PR_READY_SOUND_FILE` | Own PR ready for merge sound |
-| `OWN_PR_NEEDS_ATTENTION_SOUND_FILE` | Own PR needs attention sound |
-
-### Review Actions
-
-The system can take four different actions based on Claude's analysis:
-
-- **`approve_with_comment`**: Code is good with minor suggestions
-- **`approve_without_comment`**: Code is perfect and ready to merge  
-- **`request_changes`**: Code has issues that must be fixed
-- **`requires_human_review`**: Complex PR needing domain expertise (triggers sound notification)
-
-### Smart Review Tracking
-
-The system automatically tracks review history using commit SHA comparison:
-
-- ✅ **Never reviews the same commit twice**
-- 🔄 **Automatically re-reviews when new commits are pushed**
-- 🚫 **Permanently skips PRs marked for human review**
-- 📊 **Maintains complete audit trail in SQLite database with commit SHA tracking**
-- 🌐 **Web dashboard shows complete approval history with before/after comparisons**
-- 🔄 **Conditional pending approval overwrites**: Preserves approved/rejected reviews while updating pending ones for new commits
-
-### Web Dashboard Features
-
-When web UI is enabled (`--web-enabled` or `WEB_ENABLED=true`):
-
-- 🔔 **Review Requests**: See every PR found by the latest periodic review-request scan, even when repository or author filters exclude it from automatic review; on-demand reviews are acknowledged from SQLite immediately, then revalidate only the selected PR in the background
-- 🚨 **Operational Inbox**: Live counts for pending decisions, human reviews, and review requests link directly to their working queues
-- 📋 **Pending Approvals**: Review and approve/reject `approve_with_comments` actions before posting to GitHub
-- 👤 **Human Reviews**: View all PRs flagged for human attention with reasons and timestamps
-- 🧹 **Human Review Cleanup**: Closed or merged PRs leave the active human-review queue automatically while their review history remains available
-- 📚 **Unified History**: Completed, approved, rejected, merged/closed, and expired review records in one tab, including:
-  - Original vs final comments comparison
-  - Original vs final inline comments
-  - Original vs final review summaries
-  - Direct links to GitHub PRs
-- 🔄 **Real-time Updates**: JavaScript interface with automatic refresh
-- 📱 **Mobile Responsive**: Works on both desktop and mobile devices
-- ♿ **Keyboard Accessible**: Skip link, arrow-key tab navigation, live status announcements, and focus-managed approval/rejection dialog
-- 🧹 **Outdated Queue Cleanup**: Pending approvals auto-expire when a PR merges or closes, so the dashboard only shows actionable items
-
-Access the dashboard at `http://localhost:8000` (or your configured host/port).
-
-### Repository Filtering
-
-Limit monitoring to specific repositories:
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Via environment variable (comma-separated)
-REPOSITORIES=owner/repo1,owner/repo2 code-reviewer
-
-# Via config file
-repositories:
-  - "owner/repo1"
-  - "owner/repo2"
-```
-
-**Important**: Repository names must be in `owner/repo` format. Invalid formats will be ignored with a warning. These filters control automatic reviews; the web dashboard's Review Requests tab still lists every PR currently requesting your review.
-
-Examples:
-- ✅ `microsoft/vscode`
-- ✅ `facebook/react`  
-- ❌ `vscode` (missing owner)
-- ❌ `my-repo` (missing owner)
-
-## Running as a Service
-
-### Using systemd (Linux)
-
-Create a service file at `/etc/systemd/system/code-reviewer.service`:
-
-```ini
-[Unit]
-Description=Automated Code Reviewer
-After=network.target
-
-[Service]
-Type=simple
-User=your-user
-WorkingDirectory=/path/to/code-reviewer
-Environment=PATH=/path/to/code-reviewer/venv/bin
-ExecStart=/path/to/code-reviewer/venv/bin/code-reviewer
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
-```bash
-sudo systemctl enable code-reviewer
-sudo systemctl start code-reviewer
-```
-
-
-## Development
-
-### Running Tests
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Install development dependencies
-pip install -e .[dev]
-
-# Run tests
-pytest tests/
-
-# Run with coverage
-pytest --cov=src/code_reviewer tests/
-```
-
-### Code Quality
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-# Format code
-black src/ tests/
-
-# Lint code
-flake8 src/ tests/
-
-# Type checking
-mypy src/
-```
+Key env vars: `GITHUB_TOKEN`, `GITHUB_USERNAME`, `REVIEW_TOOL` (CLAUDE/CODEX/AGENT), `REVIEW_TIMEOUT` (seconds), `POLL_INTERVAL` (seconds), `PROMPT_FILE`, `REPOSITORIES`, `PR_AUTHORS`.
 
 ## Architecture
 
-The application consists of several key components:
-
-- **main.py**: Entry point and application orchestration
-- **github_monitor.py**: Monitors GitHub for new PRs
-- **github_client.py**: GitHub API interactions
-- **claude_integration.py**: Claude Code integration
-- **config.py**: Configuration management
-
-## Troubleshooting
-
-### Common Issues
-
-1. **"GitHub API rate limit exceeded"**
-   - Increase `poll_interval` to reduce API calls
-   - Ensure your token has sufficient rate limits
-
-2. **"Claude Code command not found"**
-   - Install Claude Code CLI
-   - Ensure it's in your PATH
-
-3. **"Permission denied for repository"**
-   - Check your GitHub token permissions
-   - Verify you have access to the repositories
-
-### Logging
-
-Enable debug logging to troubleshoot issues:
-
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On macOS/Linux
-# venv\Scripts\activate  # On Windows
-
-LOG_LEVEL=DEBUG code-reviewer
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│  Scanner    │────>│  DB/SQLite   │<────│  Reactor    │
+│ (ticker)    │     │              │     │ (ticker)    │
+└──────┬──────┘     │ pull_req     │     └──────┬──────┘
+       │            │ review_req   │            │
+┌──────▼──────┐     │ reviews      │     ┌──────▼──────┐
+│  GitHub     │     │ comments     │     │  Runner     │
+│  API        │     └──────┬───────┘     │ (os/exec)   │
+└─────────────┘            │             └──────┬──────┘
+                    ┌──────▼───────┐            │
+                    │  Web UI      │     ┌──────▼──────┐
+                    │  (SSE+JSON)  │     │  Claude/    │
+                    │  Templates   │     │  Codex/Agent│
+                    └──────┬───────┘     └─────────────┘
+                           │
+                    ┌──────▼───────┐
+                    │  Notify      │
+                    │  (say TTS)   │
+                    └──────────────┘
 ```
 
-## Contributing
+Two loops:
+1. **Scanning** — polls GitHub for assigned PRs, reconciles with local DB, detects new commits, creates review requests
+2. **Reaction** — processes review requests sequentially, invokes review tool, stores results, emits notifications
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Run the test suite
-6. Submit a pull request
+## Project Structure
 
-## License
+```
+cmd/code-reviewer/main.go     — entry point, wiring, graceful shutdown
+internal/
+  config/config.go            — env/yaml/flag loading
+  db/db.go                    — SQLite queries, migrations
+  db/models.go                — domain types
+  github/client.go            — GitHub REST API client
+  review/runner.go            — review tool executor, output parser
+  review/reactor.go           — review request queue processor
+  notify/notifier.go          — TTS (say) + browser notifications
+  scanner/scanner.go          — periodic PR scan + reconciliation
+  web/server.go               — HTTP server, routes, SSE, API
+  web/templates/              — Go HTML templates
+  web/static/                 — CSS, JS
+```
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+## Web UI Routes
+
+- `GET /` — Dashboard (open PRs, queue)
+- `GET /pr/{id}` — PR detail (review, comments, publish)
+- `GET /analytics` — Analytics (period + outcome breakdown)
+- `GET /filtered` — Filtered-out PRs (manual request review)
+- `GET /events` — SSE stream
+- `POST /api/pr/{id}/review` — Request re-review
+- `POST /api/review/{id}/publish` — Publish full review to GitHub
+- `POST /api/review/{id}/publish-comments` — Publish inline comments only
+- `GET /api/analytics?period=30d&group=outcome` — Analytics data
+
+## Outcomes
+
+| DB value | Meaning |
+|----------|---------|
+| `approve_without_comments` | Auto-approved, no feedback |
+| `approve_with_comments` | Approved with suggestions |
+| `human_review` | Escalated — needs human decision |
+| `tool_failed` | Review tool crashed/timed out |
+
+## Notifications
+
+- **TTS** via macOS `say` — templatable with `{repo}`, `{title}`, `{author}`, `{pr_number}`
+- **Browser** via Notification API — permission requested on first visit
+- **Sound files** — `.mp3`/`.wav` played via `afplay`
+- Per-event enable/disable + custom template in config

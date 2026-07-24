@@ -1,7 +1,7 @@
 # Implementation Progress
 
-> Status: All components implemented (10 commits on `version2`).
-> Next: testing, session persistence, review comment edit/delete, chart rendering, own PR review polish.
+> Status: All components implemented (11 commits on `version2`).
+> Build: `go build ./cmd/code-reviewer/ && go vet ./...` clean.
 
 ## ✅ Phase 1 — Foundation
 
@@ -28,6 +28,17 @@
 - [x] **12. Wire everything** (`f9878e1`)
 
 ---
+
+## 📋 Open Items (not blockers, needs attention)
+
+- [ ] **Review comment edit/delete API** — `server.go` has a stub DELETE handler returning 501. Need edit endpoint too. `db.go` has `UpdateReviewComment`/`DeleteReviewComment` ready.
+- [ ] **Own PR mode review flow** — Scanner fetches own PRs but the reactor needs to handle them distinctly (e.g. different outcome treatment, notification).
+- [ ] **Session / context passing across reviews** — When retrying review of same PR, the tool should receive previous review context so it doesn't repeat itself. No mechanism yet.
+- [ ] **Visual analytics charts** — Table view works. SVG/Canvas chart rendering not implemented.
+- [ ] **Filtered PRs visibility** — Scanner skips filtered PRs before storing. Need to store them in DB with a `filtered_out` flag so the `/filtered` page can show them.
+- [ ] **Test suite** — No tests yet. Go table-driven tests for each package.
+- [ ] **Review prompt context builder** — `Runner.BuildReviewPromptContext` exists but is never called. The actual PR diff/Cli context needs to be passed to the review tool.
+- [ ] **Graceful shutdown in tickers** — `main.go` uses `for/select` with `ctx.Done()` in the main goroutine, but the scanner/reactor goroutines might still be mid-flight. Need a WaitGroup or similar.
 
 ## Notes for successor agents
 
