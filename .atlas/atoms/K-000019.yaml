@@ -1,28 +1,20 @@
 id: K-000019
-title: Constructor-time asyncio locks can bind to the wrong loop in Python 3.9
+title: SQLite TEXT dates require custom sql.Scanner
 type: gotcha
 confidence: high
-summary: Do not create `asyncio.Lock()` in synchronous constructors for long-lived service objects that will be used after `asyncio.run()` starts. In this project, `LLMIntegration` and `GitHubMonitor` must create their locks lazily inside the running loop, otherwise concurrent review serialization can fail with `Future attached to a different loop`.
+summary: SQLite stores dates as TEXT via datetime('now'). Must implement custom sql.Scanner (scanTime/nullScanTime) to scan into time.Time.
 details: |-
-  The failure surfaced when assigned-PR monitoring and own-PR monitoring shared one `LLMIntegration` instance. The first review acquired a lock created before the runtime loop existed, and a second review waiting on that lock raised a cross-loop future error. The fix is to store `None` in `__init__`, then create or refresh the lock in a helper that calls `asyncio.get_running_loop()`. Regression coverage should include objects constructed before the loop starts and then exercised via `asyncio.run()`.
-
-  Related files:
-  - `src/code_reviewer/llm_integration.py`
-  - `src/code_reviewer/github_monitor.py`
-  - `tests/test_review_serialization.py`
+  SQLite datetime('now') returns TEXT like "2024-01-15 10:30:00".
+  database/sql cannot scan TEXT into time.Time directly.
+  Fix: create scanTime (implements sql.Scanner) and nullScanTime (nullable variant).
+  Both parse "2006-01-02 15:04:05" format.
+  All scan functions use these intermediaries then convert: pr.CreatedAt = time.Time(createdAt).
+  DeletedAt uses nullScanTime scanning into go's *time.Time via deletedAt.Valid check.
+  This avoids sql.NullString manual parsing that was needed before.
 tags:
-- asyncio
-- lock
-- event-loop
-- python-3.9
-- llm
-- monitoring
+- database
+- sqlite
 - gotcha
 sources:
-- src/code_reviewer/llm_integration.py
-- src/code_reviewer/github_monitor.py
-- tests/test_review_serialization.py
-links:
-- K-000001
-- K-000014
-updated_at: 2026-04-03
+- internal/db/db.go
+updated_at: 2026-07-24

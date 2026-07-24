@@ -1,15 +1,14 @@
 id: K-000012
-title: Four review actions with different handling paths
-type: note
+title: code-reviewer Go rewrite architecture
+type: decision
 confidence: high
-summary: 'ReviewAction enum defines four outcomes, each with distinct handling: (1) approve_without_comment → auto-posted to GitHub, recorded in pr_reviews immediately. (2) approve_with_comment → queued in pending_approvals, human confirms via web UI. (3) request_changes → queued in pending_approvals, human confirms via web UI. (4) requires_human_review → recorded in pr_reviews with reason, no GitHub action. Actions 2 and 3 are only recorded in pr_reviews after human approval in the web UI.'
+summary: Go rewrite starting from design.md. Modular packages, SQLite, env-based config.
+details: 'Go rewrite of code-reviewer. Project structure: cmd/code-reviewer/main.go entry point, internal/config/ for config (env > yaml > flags), SQLite via modernc.org (no CGO), GitHub REST API, SSE for real-time UI updates, sequential review queue, macOS say for TTS. Config precedence: env vars override yaml, flags override both.'
 tags:
-- review-actions
-- workflow
-- enum
+- architecture
+- go
 sources:
-- src/code_reviewer/models.py
-- src/code_reviewer/github_monitor.py
-links:
-- K-000005
-updated_at: 2026-02-13
+- design.md
+- internal/config/config.go
+- PROGRESS.md
+updated_at: 2026-07-24

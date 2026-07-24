@@ -1,11 +1,24 @@
 id: K-000017
-title: TTS sound notification with dynamic templates
-type: note
+title: review tool output contract and outcome mapping
+type: gotcha
 confidence: high
-summary: 'Sound notifications support both audio files and text-to-speech (TTS). For TTS, use format `tool:text to speak` (e.g., `say:Hello world` on macOS, `espeak:Hello` on Linux). Dynamic placeholders are supported: {repo}, {pr_number}, {author}, {title}. Placeholders are replaced at runtime with PR metadata.'
+summary: Tool must return JSON. Runner strips non-JSON prefix/suffix. Maps approve_without_comment/approve_with_comment/request_changes/requires_human_review to 4 DB outcomes.
+details: |-
+  Critical mapping logic in mapActionToOutcome:
+  - "approve_without_comment" → approve_without_comments
+  - "approve_with_comment" → approve_with_comments
+  - "request_changes" → approve_with_comments (mapped to same outcome as approved-with-comments)
+  - "requires_human_review" → human_review
+  - default → tool_failed
+
+  The tool output JSON schema (embedded in runner.go as outputFormatPrompt):
+  { action, comment, summary, reason, comments: [{file, line, message}] }
+
+  stripNonJSON() finds first { and last } to handle LLM wrapping text around JSON.
+  Timeout is per-review, configurable, default 15min. Context deadline propagates to os/exec.
 tags:
-- sound
-- tts
-- notification
-- template
-updated_at: 2026-04-03
+- tool-execution
+- review
+sources:
+- internal/review/runner.go
+updated_at: 2026-07-24

@@ -1,0 +1,43 @@
+{{define "content"}}
+<h1>Analytics</h1>
+
+<div class="analytics-controls">
+  <label>Period:
+    <select id="period" onchange="loadAnalytics()">
+      <option value="7d">Last Week</option>
+      <option value="30d" selected>Last Month</option>
+      <option value="quarter">Last Quarter</option>
+      <option value="year">Last Year</option>
+      <option value="all">All Time</option>
+    </select>
+  </label>
+</div>
+
+<div id="analytics-chart" class="chart-container">
+  <p class="empty">Select a period to view analytics.</p>
+</div>
+
+<script>
+async function loadAnalytics() {
+  const period = document.getElementById('period').value;
+  const res = await fetch('/api/analytics?period=' + period + '&group=outcome');
+  const data = await res.json();
+
+  const container = document.getElementById('analytics-chart');
+  if (!data.data) {
+    container.innerHTML = '<p class="empty">No data.</p>';
+    return;
+  }
+
+  let html = '<div class="analytics-summary"><div class="summary-card"><strong>Reviews Done</strong><span class="summary-value">' + data.total + '</span></div><div class="summary-card"><strong>Published</strong><span class="summary-value">' + data.published + '</span></div></div>';
+  html += '<table class="analytics-table"><thead><tr><th>Outcome</th><th>Count</th></tr></thead><tbody>';
+  for (const [outcome, count] of Object.entries(data.data)) {
+    html += '<tr><td>' + outcome + '</td><td>' + count + '</td></tr>';
+  }
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+loadAnalytics();
+</script>
+{{end}}

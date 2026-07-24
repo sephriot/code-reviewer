@@ -1,11 +1,27 @@
 id: K-000016
-title: Click duplicate option names cause silent startup failures
-type: gotcha
+title: DB schema and soft-delete pattern
+type: recipe
 confidence: high
-summary: When using Click framework, duplicate parameter names cause silent failures. The app may fail to start with cryptic errors like \"missing required positional arguments\" even though all options are properly defined. Always verify each @click.option has a unique name, and avoid reusing option names in different decorators.
+summary: SQLite with modernc.org, soft-delete on all 4 tables, auto-migration on startup.
+details: |-
+  All 4 tables have created_at (TEXT, datetime('now') default), updated_at, deleted_at.
+  Soft-delete: rows are never hard-deleted via SQL. DeleteReviewComment sets deleted_at.
+  Queries filter WHERE deleted_at IS NULL.
+  Upsert for pull_requests: INSERT OR UPDATE by (repo, pr_number) unique index.
+  PR uniqueness key: (repo, pr_number). Not commit SHA — SHA is the change detector.
+  migrate() runs on DB open, uses CREATE TABLE IF NOT EXISTS — no version tracking needed.
+
+  Outcome constants in models.go:
+  - ReviewOutcomeApproveWithoutComments = "approve_without_comments"
+  - ReviewOutcomeApproveWithComments = "approve_with_comments"
+  - ReviewOutcomeHumanReview = "human_review"
+  - ReviewOutcomeToolFailed = "tool_failed"
+
+  Request statuses: pending, in_progress, done, failed.
 tags:
-- click
-- cli
-- bugfix
-- startup
-updated_at: 2026-04-03
+- database
+- sqlite
+sources:
+- internal/db/db.go
+- internal/db/models.go
+updated_at: 2026-07-24

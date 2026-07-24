@@ -1,0 +1,33 @@
+{{define "content"}}
+<h1>Filtered Pull Requests</h1>
+<p class="subtitle">PRs discarded by scanner filters (repo, author, or draft). Closed and merged PRs appear in History.</p>
+
+<section class="pr-list">
+  {{range .PRs}}
+  <div class="pr-card" data-pr-id="{{.ID}}">
+    <div class="pr-header">
+      <span class="pr-repo">{{.Repo}}</span>
+      <span class="pr-number">#{{.PRNumber}}</span>
+    </div>
+    <div class="pr-title">
+      <a href="/pr/{{.ID}}">{{.Title}}</a>
+    </div>
+    <div class="pr-meta">
+      <span>{{.Author}}</span>
+      <span class="pr-status {{.State}}">{{.State}}</span>
+      {{if .FilteredReason}}<span class="badge filtered-reason">{{.FilteredReason}}</span>{{end}}
+    </div>
+    <button onclick="requestReview({{.ID}})" class="btn btn-sm">Request Review</button>
+  </div>
+  {{else}}
+  <p class="empty">No filtered PRs.</p>
+  {{end}}
+</section>
+
+<script>
+async function requestReview(prId) {
+  await fetch('/api/pr/' + prId + '/review', {method: 'POST'});
+  location.reload();
+}
+</script>
+{{end}}
