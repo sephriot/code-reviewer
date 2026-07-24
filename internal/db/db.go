@@ -292,6 +292,27 @@ func (d *DB) CreateReviewRequest(prID int64) (int64, error) {
 	return res.LastInsertId()
 }
 
+func (d *DB) GetPendingRequestByPR(prID int64) (*ReviewRequest, error) {
+	row := d.QueryRow("SELECT id, pull_request_id, status, created_at, updated_at, deleted_at FROM review_requests WHERE pull_request_id = ? AND deleted_at IS NULL AND status != 'done' ORDER BY created_at ASC LIMIT 1", prID)
+	var rr ReviewRequest
+	var createdAt scanTime
+	var updatedAt scanTime
+	var deletedAt nullScanTime
+	err := row.Scan(&rr.ID, &rr.PullRequestID, &rr.Status, &createdAt, &updatedAt, &deletedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	rr.CreatedAt = time.Time(createdAt)
+	rr.UpdatedAt = time.Time(updatedAt)
+	if deletedAt.Valid {
+		rr.DeletedAt = &deletedAt.Time
+	}
+	return &rr, nil
+}
+
 func (d *DB) GetNextPendingReviewRequest() (*ReviewRequest, error) {
 	row := d.QueryRow("SELECT id, pull_request_id, status, created_at, updated_at, deleted_at FROM review_requests WHERE status = 'pending' AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM review_requests WHERE status = 'in_progress' AND deleted_at IS NULL) ORDER BY created_at ASC LIMIT 1")
 	var rr ReviewRequest
