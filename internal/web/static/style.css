@@ -275,6 +275,21 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   margin-bottom: 0.25rem;
 }
 
+.review-comment {
+  margin-top: 0.5rem;
+}
+
+.review-comment pre, .code-snippet {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.875rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  overflow-x: auto;
+}
+
 .actions {
   margin-bottom: 1rem;
 }
