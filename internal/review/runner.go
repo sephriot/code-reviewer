@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -65,13 +66,14 @@ Quality Thresholds:
 
 For inline comments, the "line" field must be the actual line number in the new version of the file.`
 
-func (r *Runner) RunReview(ctx context.Context, prID int64, promptPath string) (*db.Review, error) {
+func (r *Runner) RunReview(ctx context.Context, pr db.PullRequest, promptPath string) (*db.Review, error) {
 	prompt, err := os.ReadFile(promptPath)
 	if err != nil {
 		return nil, fmt.Errorf("read prompt file %s: %w", promptPath, err)
 	}
 
-	fullPrompt := string(prompt) + "\n\n" + outputFormatPrompt
+	prCtx := BuildPromptContext(pr)
+	fullPrompt := prCtx + "\n\n" + string(prompt) + "\n\n" + outputFormatPrompt
 
 	output, err := r.executeTool(ctx, fullPrompt)
 	if err != nil {
@@ -85,7 +87,7 @@ func (r *Runner) RunReview(ctx context.Context, prID int64, promptPath string) (
 
 	outcome := mapActionToOutcome(toolOut.Action)
 	review := &db.Review{
-		PullRequestID:  prID,
+		PullRequestID:  pr.ID,
 		Outcome:        outcome,
 		Summary:        toolOut.Summary,
 		GeneralComment: toolOut.Comment,
@@ -112,35 +114,99 @@ func (r *Runner) executeTool(ctx context.Context, prompt string) (string, error)
 }
 
 func (r *Runner) execClaude(ctx context.Context, prompt string) (string, error) {
-	args := []string{"claude", "-p", prompt}
+	args := []string{"claude", "--print"}
 	if r.cfg.ClaudeModel != "" {
 		args = append(args, "--model", r.cfg.ClaudeModel)
 	}
+	if r.cfg.ShowThinking {
+		args = append(args, "--output-format", "stream-json", "--verbose")
+	}
 	log.Printf("runner: executing %v", args)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.Stdin = strings.NewReader(prompt)
+	cmd.Stderr = os.Stderr
 
-	if r.cfg.ShowThinking {
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			return "", fmt.Errorf("stdout pipe: %w", err)
-		}
-		cmd.Stderr = os.Stderr
-		if err := cmd.Start(); err != nil {
-			return "", fmt.Errorf("claude start: %w", err)
-		}
-		output, _ := io.ReadAll(stdout)
-		os.Stdout.Write(output)
-		if err := cmd.Wait(); err != nil {
-			return "", fmt.Errorf("claude execution: %w\noutput: %s", err, string(output))
-		}
-		return string(output), nil
-	}
-
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("claude execution: %w\noutput: %s", err, string(output))
+		return "", fmt.Errorf("stdout pipe: %w", err)
 	}
-	return string(output), nil
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("claude start: %w", err)
+	}
+
+	var result string
+	if r.cfg.ShowThinking {
+		result, err = r.readClaudeStreamJSON(stdout)
+	} else {
+		var out []byte
+		out, err = io.ReadAll(io.TeeReader(stdout, os.Stdout))
+		if err == nil {
+			result = string(out)
+		}
+	}
+	if err != nil {
+		cmd.Process.Kill()
+		return "", err
+	}
+	if err := cmd.Wait(); err != nil {
+		return "", fmt.Errorf("claude execution: %w\noutput: %s", err, result)
+	}
+	return result, nil
+}
+
+// claudeStreamEvent matches a single --output-format stream-json line.
+type claudeStreamEvent struct {
+	Type    string `json:"type"`
+	Result  string `json:"result,omitempty"`
+	Message *struct {
+		Content []struct {
+			Type     string `json:"type"`
+			Thinking string `json:"thinking,omitempty"`
+			Text     string `json:"text,omitempty"`
+		} `json:"content"`
+	} `json:"message,omitempty"`
+}
+
+func (r *Runner) readClaudeStreamJSON(stdout io.Reader) (string, error) {
+	var resultText string
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var ev claudeStreamEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			continue
+		}
+		switch ev.Type {
+		case "assistant":
+			if ev.Message == nil {
+				continue
+			}
+			for _, b := range ev.Message.Content {
+				switch b.Type {
+				case "thinking":
+					if b.Thinking != "" {
+						for _, tl := range strings.Split(b.Thinking, "\n") {
+							log.Printf("[THINKING] %s", tl)
+						}
+					}
+				case "text":
+					if b.Text != "" {
+						os.Stdout.WriteString(b.Text)
+					}
+				}
+			}
+		case "result":
+			resultText = ev.Result
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("stream read: %w", err)
+	}
+	return resultText, nil
 }
 
 func (r *Runner) execCodex(ctx context.Context, prompt string) (string, error) {
@@ -153,11 +219,37 @@ func (r *Runner) execAgent(ctx context.Context, prompt string) (string, error) {
 	log.Printf("runner: executing %v", args)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Stdin = strings.NewReader(prompt)
-	output, err := cmd.CombinedOutput()
+
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		return "", fmt.Errorf("stdout pipe: %w", err)
+	}
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("agent start: %w", err)
+	}
+	output, _ := io.ReadAll(io.TeeReader(stdout, os.Stdout))
+	if err := cmd.Wait(); err != nil {
 		return "", fmt.Errorf("agent execution: %w\noutput: %s", err, string(output))
 	}
-	return string(output), nil
+	return unwrapAgentOutput(string(output)), nil
+}
+
+// Agent wraps --output-format json in {"type":"result","result":"<inner JSON>"}.
+// Unwrap extracts inner content so parseOutput can parse it.
+func unwrapAgentOutput(raw string) string {
+	var env struct {
+		Type   string `json:"type"`
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+		return raw
+	}
+	if env.Type != "result" || env.Result == "" {
+		return raw
+	}
+	return env.Result
 }
 
 func parseOutput(raw string) (*ToolOutput, error) {
@@ -196,14 +288,7 @@ func mapActionToOutcome(action string) string {
 	}
 }
 
-func (r *Runner) BuildReviewPromptContext(pr db.PullRequest, diff string) string {
-	return fmt.Sprintf(`## PR Information:
-- **Title:** %s
-- **Repository:** %s
-- **Author:** %s
-- **Branch:** %s
-
-## Diff:
-%s
-`, pr.Title, pr.Repo, pr.Author, pr.CommitSHA, diff)
+func BuildPromptContext(pr db.PullRequest) string {
+	link := fmt.Sprintf("https://github.com/%s/pull/%d", pr.Repo, pr.PRNumber)
+	return fmt.Sprintf("Review pull request: %s\nTitle: %s\nAuthor: %s\nRepository: %s\nPR Number: %d\n", link, pr.Title, pr.Author, pr.Repo, pr.PRNumber)
 }

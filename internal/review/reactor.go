@@ -79,7 +79,7 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 			promptPath = "prompts/review_prompt.txt"
 		}
 
-		review, err := r.runner.RunReview(ctx, pr.ID, promptPath)
+		review, err := r.runner.RunReview(ctx, *pr, promptPath)
 		if err != nil {
 			log.Printf("reactor: review failed for PR %s#%d: %v", pr.Repo, pr.PRNumber, err)
 			review = &db.Review{
@@ -115,9 +115,13 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 
 		eventType := EventReviewSuccess
 		msg := ""
-		if review.Outcome == "human_review" {
+		switch review.Outcome {
+		case db.ReviewOutcomeHumanReview:
 			eventType = EventHumanReviewNeeded
 			msg = "human review required"
+		case db.ReviewOutcomeToolFailed:
+			eventType = EventReviewFail
+			msg = "tool returned unrecognizable output"
 		}
 		r.emit(ReviewEvent{Type: eventType, PR: *pr, Review: review, Message: msg})
 	}
