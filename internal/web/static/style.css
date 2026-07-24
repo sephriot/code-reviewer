@@ -104,6 +104,16 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   color: var(--text-muted);
 }
 
+.gh-link {
+  margin-left: auto;
+  color: var(--text-muted);
+  line-height: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.gh-link:hover { opacity: 1; color: var(--text); }
+
 .pr-title a {
   color: var(--text);
   text-decoration: none;
