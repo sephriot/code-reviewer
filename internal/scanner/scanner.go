@@ -99,6 +99,13 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 	}
 
 	if existing != nil && existing.CommitSHA == details.CommitSHA {
+		hasReviewed, err := s.gh.HasUserReviewed(ctx, pr.Owner, pr.Repo, pr.Number)
+		if err != nil {
+			return false, err
+		}
+		if hasReviewed {
+			s.db.SetPRNeedsReview(existing.ID, false)
+		}
 		return false, nil
 	}
 
