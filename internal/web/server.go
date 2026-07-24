@@ -436,14 +436,6 @@ func (s *Server) apiAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 	since := time.Now().AddDate(0, 0, -days)
 
-	outcomes := []string{
-		db.ReviewOutcomeApproveWithoutComments,
-		db.ReviewOutcomeApproveWithComments,
-		db.ReviewOutcomeChangesRequested,
-		db.ReviewOutcomeHumanReview,
-		db.ReviewOutcomeToolFailed,
-	}
-
 	result := map[string]interface{}{
 		"period": period,
 		"group":  groupBy,
@@ -451,12 +443,23 @@ func (s *Server) apiAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if groupBy == "outcome" || groupBy == "" {
+		outcomes := []string{
+			db.ReviewOutcomeApproveWithoutComments,
+			db.ReviewOutcomeApproveWithComments,
+			db.ReviewOutcomeChangesRequested,
+			db.ReviewOutcomeHumanReview,
+			db.ReviewOutcomeToolFailed,
+		}
 		counts := map[string]int{}
 		for _, o := range outcomes {
 			count, _ := s.d.CountReviewsByOutcomeSince(o, since)
 			counts[o] = count
 		}
+		total, _ := s.d.CountReviewsSince(since)
+		published, _ := s.d.CountPublishedReviewsSince(since)
 		result["data"] = counts
+		result["total"] = total
+		result["published"] = published
 	}
 
 	s.respondJSON(w, result)

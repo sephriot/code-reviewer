@@ -536,3 +536,15 @@ func (d *DB) CountReviewsByRepoSince(repo string, since time.Time) (int, error) 
 	err := d.QueryRow("SELECT COUNT(*) FROM reviews r JOIN pull_requests p ON r.pull_request_id = p.id WHERE p.repo = ? AND r.created_at >= ? AND r.deleted_at IS NULL", repo, since.Format("2006-01-02 15:04:05")).Scan(&count)
 	return count, err
 }
+
+func (d *DB) CountReviewsSince(since time.Time) (int, error) {
+	var count int
+	err := d.QueryRow("SELECT COUNT(*) FROM reviews WHERE created_at >= ? AND deleted_at IS NULL", since.Format("2006-01-02 15:04:05")).Scan(&count)
+	return count, err
+}
+
+func (d *DB) CountPublishedReviewsSince(since time.Time) (int, error) {
+	var count int
+	err := d.QueryRow("SELECT COUNT(*) FROM reviews WHERE published = 1 AND created_at >= ? AND deleted_at IS NULL", since.Format("2006-01-02 15:04:05")).Scan(&count)
+	return count, err
+}

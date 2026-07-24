@@ -29,7 +29,8 @@ async function loadAnalytics() {
     return;
   }
 
-  let html = '<table class="analytics-table"><thead><tr><th>Outcome</th><th>Count</th></tr></thead><tbody>';
+  let html = '<div class="analytics-summary"><div class="summary-card"><strong>Reviews Done</strong><span class="summary-value">' + data.total + '</span></div><div class="summary-card"><strong>Published</strong><span class="summary-value">' + data.published + '</span></div></div>';
+  html += '<table class="analytics-table"><thead><tr><th>Outcome</th><th>Count</th></tr></thead><tbody>';
   for (const [outcome, count] of Object.entries(data.data)) {
     html += '<tr><td>' + outcome + '</td><td>' + count + '</td></tr>';
   }

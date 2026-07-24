@@ -232,6 +232,36 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   font-weight: 500;
 }
 
+.analytics-summary {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.summary-card {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  text-align: center;
+}
+
+.summary-card strong {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.25rem;
+}
+
+.summary-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
 .approve_without_comments { background: #d4edda; color: #155724; }
 .approve_with_comments { background: #d4edda; color: #155724; }
 .changes_requested { background: #ffeeba; color: #856404; }
