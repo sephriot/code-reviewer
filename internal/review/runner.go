@@ -17,15 +17,22 @@ import (
 )
 
 type ToolOutput struct {
-	Action   string `json:"action"`
-	Comment  string `json:"comment"`
-	Summary  string `json:"summary"`
-	Reason   string `json:"reason"`
-	Comments []struct {
-		File    string `json:"file"`
-		Line    int    `json:"line"`
-		Message string `json:"message"`
-	} `json:"comments"`
+	Action   string          `json:"action"`
+	Comment  string          `json:"comment"`
+	Summary  string          `json:"summary"`
+	Reason   string          `json:"reason"`
+	Comments []ToolComment   `json:"comments"`
+}
+
+type ToolComment struct {
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Message string `json:"message"`
+}
+
+type ReviewResult struct {
+	Review   *db.Review
+	Comments []ToolComment
 }
 
 type Runner struct {
@@ -67,7 +74,7 @@ Quality Thresholds:
 
 For inline comments, the "line" field must be the actual line number in the new version of the file.`
 
-func (r *Runner) RunReview(ctx context.Context, pr db.PullRequest, promptPath string) (*db.Review, error) {
+func (r *Runner) RunReview(ctx context.Context, pr db.PullRequest, promptPath string) (*ReviewResult, error) {
 	prompt, err := os.ReadFile(promptPath)
 	if err != nil {
 		return nil, fmt.Errorf("read prompt file %s: %w", promptPath, err)
@@ -94,7 +101,7 @@ func (r *Runner) RunReview(ctx context.Context, pr db.PullRequest, promptPath st
 		GeneralComment: toolOut.Comment,
 	}
 
-	return review, nil
+	return &ReviewResult{Review: review, Comments: toolOut.Comments}, nil
 }
 
 func (r *Runner) executeTool(ctx context.Context, prompt string) (string, error) {

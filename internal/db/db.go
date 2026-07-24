@@ -111,6 +111,7 @@ func migrate(db *sql.DB) error {
 		file TEXT NOT NULL DEFAULT '',
 		line INTEGER NOT NULL DEFAULT 0,
 		message TEXT NOT NULL DEFAULT '',
+		code_snippet TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT (datetime('now')),
 		updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 		deleted_at TEXT
@@ -127,6 +128,8 @@ func migrate(db *sql.DB) error {
 	if n, _ := res.RowsAffected(); n > 0 {
 		log.Printf("db: reset %d orphaned in_progress review_requests to pending", n)
 	}
+
+	db.Exec("ALTER TABLE review_comments ADD COLUMN code_snippet TEXT NOT NULL DEFAULT ''")
 	return nil
 }
 
@@ -246,6 +249,15 @@ func (d *DB) ListPRsNeedingReview() ([]PullRequest, error) {
 	return scanPRs(rows)
 }
 
+func (d *DB) ListClosedPRs() ([]PullRequest, error) {
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at FROM pull_requests WHERE deleted_at IS NULL AND state != 'open' ORDER BY updated_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPRs(rows)
+}
+
 func (d *DB) SetPRNeedsReview(id int64, needs bool) error {
 	_, err := d.Exec("UPDATE pull_requests SET needs_review = ?, updated_at = datetime('now') WHERE id = ?", boolToInt(needs), id)
 	return err
@@ -320,7 +332,7 @@ func (d *DB) UpdateReviewRequestStatus(id int64, status string) error {
 }
 
 func (d *DB) ListReviewRequests() ([]ReviewRequest, error) {
-	rows, err := d.Query("SELECT id, pull_request_id, status, created_at, updated_at, deleted_at FROM review_requests WHERE deleted_at IS NULL ORDER BY created_at DESC")
+	rows, err := d.Query("SELECT id, pull_request_id, status, created_at, updated_at, deleted_at FROM review_requests WHERE deleted_at IS NULL AND status != 'done' ORDER BY created_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -393,6 +405,17 @@ func (d *DB) GetReviewByRequestID(requestID int64) (*Review, error) {
 	return &r, nil
 }
 
+func (d *DB) GetLatestReviewByPR(prID int64) (*Review, error) {
+	r, err := d.scanReview(d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE pull_request_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1", prID).Scan)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 func (d *DB) ListReviewsForPR(prID int64) ([]Review, error) {
 	rows, err := d.Query("SELECT id, pull_request_id, review_request_id, outcome, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE pull_request_id = ? AND deleted_at IS NULL ORDER BY created_at DESC", prID)
 	if err != nil {
@@ -424,9 +447,35 @@ func (d *DB) PublishReview(id int64) error {
 	return err
 }
 
+func (d *DB) ListPublishedReviews() ([]PublishedReviewView, error) {
+	rows, err := d.Query("SELECT r.id, r.pull_request_id, r.review_request_id, r.outcome, r.summary, r.general_comment, r.published, r.created_at, r.updated_at, r.deleted_at, p.repo, p.pr_number, p.title, p.author FROM reviews r JOIN pull_requests p ON r.pull_request_id = p.id WHERE r.published = 1 AND r.deleted_at IS NULL ORDER BY r.created_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var views []PublishedReviewView
+	for rows.Next() {
+		var v PublishedReviewView
+		var createdAt scanTime
+		var updatedAt scanTime
+		var deletedAt nullScanTime
+		err := rows.Scan(&v.ID, &v.PullRequestID, &v.ReviewRequestID, &v.Outcome, &v.Summary, &v.GeneralComment, &v.Published, &createdAt, &updatedAt, &deletedAt, &v.Repo, &v.PRNumber, &v.PRTitle, &v.PRAuthor)
+		if err != nil {
+			return nil, err
+		}
+		v.CreatedAt = time.Time(createdAt)
+		v.UpdatedAt = time.Time(updatedAt)
+		if deletedAt.Valid {
+			v.DeletedAt = &deletedAt.Time
+		}
+		views = append(views, v)
+	}
+	return views, rows.Err()
+}
+
 func (d *DB) AddReviewComment(c ReviewComment) (int64, error) {
-	res, err := d.Exec("INSERT INTO review_comments (review_id, file, line, message) VALUES (?, ?, ?, ?)",
-		c.ReviewID, c.File, c.Line, c.Message)
+	res, err := d.Exec("INSERT INTO review_comments (review_id, file, line, message, code_snippet) VALUES (?, ?, ?, ?, ?)",
+		c.ReviewID, c.File, c.Line, c.Message, c.CodeSnippet)
 	if err != nil {
 		return 0, err
 	}
@@ -434,7 +483,7 @@ func (d *DB) AddReviewComment(c ReviewComment) (int64, error) {
 }
 
 func (d *DB) ListReviewComments(reviewID int64) ([]ReviewComment, error) {
-	rows, err := d.Query("SELECT id, review_id, file, line, message, created_at, updated_at, deleted_at FROM review_comments WHERE review_id = ? AND deleted_at IS NULL ORDER BY created_at ASC", reviewID)
+	rows, err := d.Query("SELECT id, review_id, file, line, message, code_snippet, created_at, updated_at, deleted_at FROM review_comments WHERE review_id = ? AND deleted_at IS NULL ORDER BY created_at ASC", reviewID)
 	if err != nil {
 		return nil, err
 	}
@@ -445,7 +494,7 @@ func (d *DB) ListReviewComments(reviewID int64) ([]ReviewComment, error) {
 		var createdAt scanTime
 		var updatedAt scanTime
 		var deletedAt nullScanTime
-		err := rows.Scan(&c.ID, &c.ReviewID, &c.File, &c.Line, &c.Message, &createdAt, &updatedAt, &deletedAt)
+		err := rows.Scan(&c.ID, &c.ReviewID, &c.File, &c.Line, &c.Message, &c.CodeSnippet, &createdAt, &updatedAt, &deletedAt)
 		if err != nil {
 			return nil, err
 		}

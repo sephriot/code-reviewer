@@ -1,17 +1,22 @@
 id: K-000015
-title: Multiple prompt templates available for different review styles
+title: project structure and package roles
 type: note
 confidence: high
-summary: 'The prompts/ directory contains multiple review prompt templates: review_prompt.txt (default), exemplary_review_prompt.md, fast_review_prompt.md, world_class_review_prompt.md, and adaptive_review_prompt.md. The active prompt is selected via PROMPT_FILE env var or --prompt CLI flag. Prompts instruct the LLM to return structured JSON with action, comment, summary, reason, and inline comments fields.'
+summary: 'Go code-reviewer has 7 internal packages: config, db, github, review, notify, scanner, web.'
+details: |-
+  Package roles:
+  - cmd/code-reviewer/main.go — entry point, wires all components, starts scanner/reactor tickers
+  - internal/config/ — loads env vars, optional YAML, CLI flags. Precedence: env > yaml > flags
+  - internal/db/ — SQLite via modernc.org (no CGO). Auto-migrates schema on startup. 4 tables: pull_requests, review_requests, reviews, review_comments. All soft-delete.
+  - internal/github/ — go-github v68 REST client. Token auth via oauth2. Methods: ListAssignedPRs, ListOwnPRs, GetPRDetails, HasUserReviewed, SubmitReview, CreateReviewComment
+  - internal/review/runner.go — os/exec of CLAUDE/CODEX/AGENT. Reads prompt file. Embeds output format JSON schema. Parses JSON output. Maps actions to outcomes. 15min configurable timeout.
+  - internal/review/reactor.go — processes review_requests sequentially. Emits events (start/success/fail/human_review_needed).
+  - internal/notify/ — macOS say TTS + sound file playback (afplay) + browser notification stubs. Templatable messages with {repo}, {title}, {author}, {pr_number}.
+  - internal/scanner/ — periodic scan. Fetches assigned + own PRs (if enabled). Deduplicates. Applies repo/author regex filters. Checks drafts. Detects new commits. Creates review_requests. Signals reactor.
+  - internal/web/ — Go templates (dashboard, pr_detail, analytics, filtered). SSE real-time events. REST API for publish/request/analytics. Static CSS/JS embedded via go:embed.
 tags:
-- prompts
-- templates
-- llm
-- configuration
+- architecture
 sources:
-- prompts/review_prompt.txt
-- prompts/exemplary_review_prompt.md
-- prompts/fast_review_prompt.md
-- prompts/world_class_review_prompt.md
-- prompts/adaptive_review_prompt.md
-updated_at: 2026-02-13
+- AGENTS.md
+- README.md
+updated_at: 2026-07-24

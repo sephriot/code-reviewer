@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/sephriot/code-reviewer/internal/config"
@@ -80,14 +81,14 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 			promptPath = "prompts/review_prompt.txt"
 		}
 
-		review, err := r.runner.RunReview(ctx, *pr, promptPath)
+	result, err := r.runner.RunReview(ctx, *pr, promptPath)
 		if err != nil {
 			log.Printf("reactor: review failed for PR %s#%d: %v", pr.Repo, pr.PRNumber, err)
-			review = &db.Review{
-				PullRequestID:  pr.ID,
+			review := &db.Review{
+				PullRequestID:   pr.ID,
 				ReviewRequestID: rr.ID,
-				Outcome:        "tool_failed",
-				Summary:        err.Error(),
+				Outcome:         "tool_failed",
+				Summary:         err.Error(),
 			}
 			reviewID, dbErr := r.db.CreateReview(*review)
 			if dbErr != nil {
@@ -99,6 +100,7 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 			continue
 		}
 
+		review := result.Review
 		review.ReviewRequestID = rr.ID
 		reviewID, err := r.db.CreateReview(*review)
 		if err != nil {
@@ -107,6 +109,28 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 			continue
 		}
 		review.ID = reviewID
+
+		parts := strings.Split(pr.Repo, "/")
+		for _, tc := range result.Comments {
+			snippet := ""
+			if len(parts) == 2 && pr.CommitSHA != "" {
+				if s, err := r.gh.GetFileContent(ctx, parts[0], parts[1], pr.CommitSHA, tc.File, tc.Line, 3); err == nil {
+					snippet = s
+				} else {
+					log.Printf("reactor: failed to fetch snippet for %s: %v", tc.File, err)
+				}
+			}
+			_, cerr := r.db.AddReviewComment(db.ReviewComment{
+				ReviewID:    review.ID,
+				File:        tc.File,
+				Line:        tc.Line,
+				Message:     tc.Message,
+				CodeSnippet: snippet,
+			})
+			if cerr != nil {
+				log.Printf("reactor: failed to save comment: %v", cerr)
+			}
+		}
 
 		if err := r.db.SetPRNeedsReview(pr.ID, false); err != nil {
 			log.Printf("reactor: failed to mark PR as reviewed: %v", err)

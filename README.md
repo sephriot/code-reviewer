@@ -32,8 +32,11 @@ See `.env.example` for all options.
 | `--port` | `WEB_PORT` | `8000` | Web UI port |
 | `--host` | `WEB_HOST` | `127.0.0.1` | Web UI host |
 | `--log` | `LOG_LEVEL` | `INFO` | Log level |
+| `--log-file` | `LOG_FILE` | `data/code-reviewer.log` | Application and review-tool log file; empty disables file logging |
 
-Key env vars: `GITHUB_TOKEN`, `GITHUB_USERNAME`, `REVIEW_TOOL` (CLAUDE/CODEX/AGENT), `REVIEW_TIMEOUT` (seconds), `POLL_INTERVAL` (seconds), `PROMPT_FILE`, `REPOSITORIES`, `PR_AUTHORS`.
+Key env vars: `GITHUB_TOKEN`, `GITHUB_USERNAME`, `REVIEW_TOOL` (CLAUDE/CODEX/AGENT), `REVIEW_AGENT_ARGV` (JSON Agent command override), `REVIEW_TIMEOUT` (seconds), `POLL_INTERVAL` (seconds), `PROMPT_FILE`, `REPOSITORIES`, `PR_AUTHORS`.
+
+Agent defaults to `agent --print --output-format json --trust`. To explicitly allow headless tool calls, configure `REVIEW_AGENT_ARGV` with the desired CLI permission flag, for example `--force` or `--yolo`. The default remains approval-protected.
 
 ## Architecture
 

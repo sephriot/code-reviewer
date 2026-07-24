@@ -1,22 +1,11 @@
 id: K-000020
-title: TTS placeholder templates leak on generic notification and startup sound paths
+title: Runner subprocess observability
 type: gotcha
 confidence: high
-summary: '`SoundNotifier._play_sound_config` only applies `SoundFileConfig.apply_template(...)` when a caller supplies `context`. The fix is two-part: `play_notification(context=...)` must receive PR metadata on PR-aware callers, and startup sound self-tests must use synthetic demo PR metadata instead of calling templated TTS sounds with no context. This prevents raw `{repo}` / `{pr_number}` tokens from being spoken aloud.'
-tags:
-- sound
-- tts
-- template
-- notification
-- startup
-- bug
-- fix
+summary: Review-tool subprocesses keep detailed stream logs while emitting concise terminal status lines.
+details: 'Claude uses stream-json with partial messages; Agent uses stream-json with partial output. Both runners log command start, PID, stream lines, completion duration, result size, failures, and child stderr. The final result event is required and surfaced instead of being silently discarded. LOG_FILE configures an append-only log file while stderr remains visible. Terminal stdout is deliberately concise: only started/completed/failed status lines are emitted; detailed stream content stays in the log.'
 sources:
-- src/code_reviewer/sound_notifier.py
-- src/code_reviewer/github_monitor.py
-- src/code_reviewer/web_server.py
-- src/code_reviewer/main.py
-- tests/test_sound_notifier.py
-links:
-- K-000017
-updated_at: 2026-04-03
+- internal/review/runner.go
+- cmd/code-reviewer/main.go
+- internal/config/config.go
+updated_at: 2026-07-24

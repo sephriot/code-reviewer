@@ -1,0 +1,47 @@
+{{define "content"}}
+<h1>History</h1>
+
+<section class="pr-list">
+  <h2>Closed PRs</h2>
+  {{range .PRs}}
+  <div class="pr-card" data-pr-id="{{.ID}}">
+    <div class="pr-header">
+      <span class="pr-repo">{{.Repo}}</span>
+      <span class="pr-number">#{{.PRNumber}}</span>
+    </div>
+    <div class="pr-title">
+      <a href="/pr/{{.ID}}">{{.Title}}</a>
+    </div>
+    <div class="pr-meta">
+      <span>{{.Author}}</span>
+      <span class="pr-status {{.State}}">{{.State}}</span>
+    </div>
+  </div>
+  {{else}}
+  <p class="empty">No closed pull requests.</p>
+  {{end}}
+</section>
+
+<section class="published-reviews">
+  <h2>Published Reviews</h2>
+  {{range .Published}}
+  <div class="review-card outcome-{{.Outcome}}">
+    <div class="review-header">
+      <strong>{{.Repo}} #{{.PRNumber}}</strong>
+      <span class="outcome-badge {{.Outcome}}">{{.Outcome}}</span>
+      <small>{{.CreatedAt | formatTime}}</small>
+    </div>
+    <div class="review-meta">{{.PRTitle}} by {{.PRAuthor}}</div>
+    <div class="review-summary">{{.Summary}}</div>
+    {{if .GeneralComment}}
+    <div class="review-comment">
+      <strong>Review comment:</strong>
+      <pre>{{.GeneralComment}}</pre>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="empty">No published reviews yet.</p>
+  {{end}}
+</section>
+{{end}}

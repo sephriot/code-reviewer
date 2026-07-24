@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -13,43 +14,45 @@ import (
 )
 
 type Config struct {
-	GithubToken   string        `yaml:"github_token"`
-	GithubUsername string       `yaml:"github_username"`
-	ReviewTool    string        `yaml:"review_tool"`
-	ClaudeModel   string        `yaml:"claude_model"`
-	ReviewEffort  string        `yaml:"review_effort"`
-	ReviewTimeout time.Duration `yaml:"review_timeout"`
-	ReviewPromptPath string     `yaml:"review_prompt_path"`
-	PollInterval  time.Duration `yaml:"poll_interval"`
-	DBPath        string        `yaml:"db_path"`
-	LogLevel      string        `yaml:"log_level"`
-	DryRun        bool          `yaml:"dry_run"`
-	ShowThinking  bool          `yaml:"show_thinking"`
-	AtlasEnabled  bool          `yaml:"atlas_enabled"`
-	WebEnabled    bool          `yaml:"web_enabled"`
-	WebHost       string        `yaml:"web_host"`
-	WebPort       int           `yaml:"web_port"`
+	GithubToken      string        `yaml:"github_token"`
+	GithubUsername   string        `yaml:"github_username"`
+	ReviewTool       string        `yaml:"review_tool"`
+	ClaudeModel      string        `yaml:"claude_model"`
+	ReviewAgentArgv  []string      `yaml:"review_agent_argv"`
+	ReviewEffort     string        `yaml:"review_effort"`
+	ReviewTimeout    time.Duration `yaml:"review_timeout"`
+	ReviewPromptPath string        `yaml:"review_prompt_path"`
+	PollInterval     time.Duration `yaml:"poll_interval"`
+	DBPath           string        `yaml:"db_path"`
+	LogLevel         string        `yaml:"log_level"`
+	LogFile          string        `yaml:"log_file"`
+	DryRun           bool          `yaml:"dry_run"`
+	ShowThinking     bool          `yaml:"show_thinking"`
+	AtlasEnabled     bool          `yaml:"atlas_enabled"`
+	WebEnabled       bool          `yaml:"web_enabled"`
+	WebHost          string        `yaml:"web_host"`
+	WebPort          int           `yaml:"web_port"`
 
-	Repositories    []string `yaml:"repositories"`
-	PRAuthors       []string `yaml:"pr_authors"`
+	Repositories []string `yaml:"repositories"`
+	PRAuthors    []string `yaml:"pr_authors"`
 
-	SoundEnabled               bool   `yaml:"sound_enabled"`
-	StartupSoundsEnabled       bool   `yaml:"startup_sounds_enabled"`
-	SpeechRate                 int    `yaml:"speech_rate"`
-	SoundFile                  string `yaml:"sound_file"`
-	ApprovalSoundEnabled       bool   `yaml:"approval_sound_enabled"`
-	ApprovalSoundFile          string `yaml:"approval_sound_file"`
-	TimeoutSoundEnabled        bool   `yaml:"timeout_sound_enabled"`
-	TimeoutSoundFile           string `yaml:"timeout_sound_file"`
-	HumanReviewSoundEnabled    bool   `yaml:"human_review_sound_enabled"`
-	HumanReviewSoundFile       string `yaml:"human_review_sound_file"`
-	ReviewStartedSoundEnabled  bool   `yaml:"review_started_sound_enabled"`
-	ReviewStartedSoundFile     string `yaml:"review_started_sound_file"`
-	MergedOrClosedSoundEnabled bool   `yaml:"merged_or_closed_sound_enabled"`
-	MergedOrClosedSoundFile    string `yaml:"merged_or_closed_sound_file"`
-	OwnPRReadySoundEnabled     bool   `yaml:"own_pr_ready_sound_enabled"`
-	OwnPRReadySoundFile        string `yaml:"own_pr_ready_sound_file"`
-	OwnPRNeedsAttentionSoundEnabled bool `yaml:"own_pr_needs_attention_sound_enabled"`
+	SoundEnabled                    bool   `yaml:"sound_enabled"`
+	StartupSoundsEnabled            bool   `yaml:"startup_sounds_enabled"`
+	SpeechRate                      int    `yaml:"speech_rate"`
+	SoundFile                       string `yaml:"sound_file"`
+	ApprovalSoundEnabled            bool   `yaml:"approval_sound_enabled"`
+	ApprovalSoundFile               string `yaml:"approval_sound_file"`
+	TimeoutSoundEnabled             bool   `yaml:"timeout_sound_enabled"`
+	TimeoutSoundFile                string `yaml:"timeout_sound_file"`
+	HumanReviewSoundEnabled         bool   `yaml:"human_review_sound_enabled"`
+	HumanReviewSoundFile            string `yaml:"human_review_sound_file"`
+	ReviewStartedSoundEnabled       bool   `yaml:"review_started_sound_enabled"`
+	ReviewStartedSoundFile          string `yaml:"review_started_sound_file"`
+	MergedOrClosedSoundEnabled      bool   `yaml:"merged_or_closed_sound_enabled"`
+	MergedOrClosedSoundFile         string `yaml:"merged_or_closed_sound_file"`
+	OwnPRReadySoundEnabled          bool   `yaml:"own_pr_ready_sound_enabled"`
+	OwnPRReadySoundFile             string `yaml:"own_pr_ready_sound_file"`
+	OwnPRNeedsAttentionSoundEnabled bool   `yaml:"own_pr_needs_attention_sound_enabled"`
 	OwnPRNeedsAttentionSoundFile    string `yaml:"own_pr_needs_attention_sound_file"`
 
 	OwnPRMode string `yaml:"own_pr_mode"`
@@ -82,33 +85,38 @@ func compilePatterns(patterns []string) []*regexp.Regexp {
 func Load() (*Config, error) {
 	cfg := defaultConfig()
 	cfg.loadYAML()
-	cfg.loadEnv()
-	cfg.loadFlags()
+	if err := cfg.loadEnv(); err != nil {
+		return nil, err
+	}
+	if err := cfg.loadFlags(); err != nil {
+		return nil, err
+	}
 	return cfg, cfg.validate()
 }
 
 func defaultConfig() *Config {
 	return &Config{
-		ReviewTool:    "CLAUDE",
-		ReviewTimeout: 15 * time.Minute,
-		PollInterval:  1 * time.Minute,
-		DBPath:        "data/reviews.db",
-		LogLevel:      "INFO",
-		WebEnabled:    true,
-		WebHost:       "127.0.0.1",
-		WebPort:       8000,
-		SpeechRate:    200,
-		SoundEnabled:  true,
+		ReviewTool:           "CLAUDE",
+		ReviewTimeout:        15 * time.Minute,
+		PollInterval:         1 * time.Minute,
+		DBPath:               "data/reviews.db",
+		LogLevel:             "INFO",
+		LogFile:              "data/code-reviewer.log",
+		WebEnabled:           true,
+		WebHost:              "127.0.0.1",
+		WebPort:              8000,
+		SpeechRate:           200,
+		SoundEnabled:         true,
 		StartupSoundsEnabled: true,
 
-		ApprovalSoundEnabled:           true,
-		TimeoutSoundEnabled:            true,
-		HumanReviewSoundEnabled:        true,
-		ReviewStartedSoundEnabled:      true,
-		MergedOrClosedSoundEnabled:     true,
-		OwnPRReadySoundEnabled:         true,
+		ApprovalSoundEnabled:            true,
+		TimeoutSoundEnabled:             true,
+		HumanReviewSoundEnabled:         true,
+		ReviewStartedSoundEnabled:       true,
+		MergedOrClosedSoundEnabled:      true,
+		OwnPRReadySoundEnabled:          true,
 		OwnPRNeedsAttentionSoundEnabled: true,
-		OwnPRMode:                      "off",
+		OwnPRMode:                       "off",
 	}
 }
 
@@ -124,7 +132,7 @@ func (c *Config) loadYAML() {
 	_ = yaml.Unmarshal(data, c)
 }
 
-func (c *Config) loadEnv() {
+func (c *Config) loadEnv() error {
 	if v, ok := os.LookupEnv("GITHUB_TOKEN"); ok {
 		c.GithubToken = v
 	}
@@ -136,6 +144,13 @@ func (c *Config) loadEnv() {
 	}
 	if v, ok := os.LookupEnv("CLAUDE_MODEL"); ok {
 		c.ClaudeModel = v
+	}
+	if v, ok := os.LookupEnv("REVIEW_AGENT_ARGV"); ok {
+		argv, err := parseAgentArgv(v)
+		if err != nil {
+			return err
+		}
+		c.ReviewAgentArgv = argv
 	}
 	if v, ok := os.LookupEnv("REVIEW_EFFORT"); ok {
 		c.ReviewEffort = v
@@ -158,6 +173,9 @@ func (c *Config) loadEnv() {
 	}
 	if v, ok := os.LookupEnv("LOG_LEVEL"); ok {
 		c.LogLevel = v
+	}
+	if v, ok := os.LookupEnv("LOG_FILE"); ok {
+		c.LogFile = v
 	}
 	if v, ok := os.LookupEnv("DRY_RUN"); ok {
 		c.DryRun = v == "true"
@@ -244,13 +262,16 @@ func (c *Config) loadEnv() {
 	if v, ok := os.LookupEnv("OWN_PR_MODE"); ok {
 		c.OwnPRMode = v
 	}
+	return nil
 }
 
-func (c *Config) loadFlags() {
+func (c *Config) loadFlags() error {
 	configPath := flag.String("config", "", "path to YAML config file")
 	port := flag.Int("port", 0, "web server port")
 	host := flag.String("host", "", "web server host")
 	logLevel := flag.String("log", "", "log level (DEBUG, INFO, WARN, ERROR)")
+	logFile := flag.String("log-file", "", "path to application log file (empty disables file logging)")
+	reviewAgentArgv := flag.String("review-agent-argv", "", "JSON array overriding the Agent CLI command")
 	flag.Parse()
 
 	if *configPath != "" {
@@ -268,6 +289,28 @@ func (c *Config) loadFlags() {
 	if *logLevel != "" {
 		c.LogLevel = *logLevel
 	}
+	if *logFile != "" {
+		c.LogFile = *logFile
+	}
+	if *reviewAgentArgv != "" {
+		argv, err := parseAgentArgv(*reviewAgentArgv)
+		if err != nil {
+			return err
+		}
+		c.ReviewAgentArgv = argv
+	}
+	return nil
+}
+
+func parseAgentArgv(value string) ([]string, error) {
+	var argv []string
+	if err := json.Unmarshal([]byte(value), &argv); err != nil {
+		return nil, fmt.Errorf("REVIEW_AGENT_ARGV must be a JSON array of strings: %w", err)
+	}
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("REVIEW_AGENT_ARGV cannot be empty")
+	}
+	return argv, nil
 }
 
 func (c *Config) validate() error {
@@ -282,6 +325,9 @@ func (c *Config) validate() error {
 	}
 	if c.ReviewTimeout <= 0 {
 		return fmt.Errorf("REVIEW_TIMEOUT must be positive")
+	}
+	if c.ReviewAgentArgv != nil && len(c.ReviewAgentArgv) == 0 {
+		return fmt.Errorf("REVIEW_AGENT_ARGV cannot be empty")
 	}
 	if c.WebPort < 1 || c.WebPort > 65535 {
 		return fmt.Errorf("WEB_PORT must be between 1 and 65535")

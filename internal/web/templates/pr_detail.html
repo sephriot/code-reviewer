@@ -13,24 +13,29 @@
   </div>
 
   <section class="reviews">
-    <h2>Reviews</h2>
+    <h2>Pending Reviews</h2>
     {{range .Reviews}}
+    {{if not .Published}}
     <div class="review-card outcome-{{.Outcome}}">
       <div class="review-header">
         <span class="outcome-badge {{.Outcome}}">{{.Outcome}}</span>
         <small>{{.CreatedAt | formatTime}}</small>
-        {{if .Published}}<span class="badge published">published</span>{{end}}
       </div>
       <div class="review-summary">{{.Summary}}</div>
-      {{if not .Published}}
+      {{if .GeneralComment}}
+      <div class="review-comment">
+        <strong>Review comment:</strong>
+        <pre>{{.GeneralComment}}</pre>
+      </div>
+      {{end}}
       <div class="review-actions">
         <button onclick="publishReview({{.ID}})" class="btn btn-sm">Publish Full Review</button>
         <button onclick="publishComments({{.ID}})" class="btn btn-sm">Publish Comments Only</button>
       </div>
-      {{end}}
     </div>
+    {{end}}
     {{else}}
-    <p class="empty">No reviews yet.</p>
+    <p class="empty">No pending reviews.</p>
     {{end}}
   </section>
 
@@ -40,6 +45,9 @@
     <div class="comment" data-comment-id="{{.ID}}">
       <code>{{.File}}:{{.Line}}</code>
       <p>{{.Message}}</p>
+      {{if .CodeSnippet}}
+      <pre class="code-snippet"><code>{{.CodeSnippet}}</code></pre>
+      {{end}}
       <button onclick="deleteComment({{.ID}})" class="btn btn-sm btn-danger">Delete</button>
     </div>
     {{else}}

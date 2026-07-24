@@ -212,8 +212,14 @@ func (s *Server) historyPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	published, err := s.d.ListPublishedReviews()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	s.render(w, "history.html", map[string]interface{}{
-		"PRs": prs,
+		"PRs":       prs,
+		"Published": published,
 	})
 }
 
