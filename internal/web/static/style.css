@@ -320,6 +320,13 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   border-radius: var(--radius);
 }
 
+.file-link {
+  text-decoration: none;
+  color: var(--primary);
+}
+
+.file-link:hover { text-decoration: underline; }
+
 .actions {
   margin-bottom: 1rem;
 }

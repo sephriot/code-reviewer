@@ -32,7 +32,7 @@
         <strong>Inline comments:</strong>
         {{range $rv.Comments}}
         <div class="comment" data-comment-id="{{.ID}}">
-          <code>{{.File}}:{{.Line}}</code>
+          <a href="https://github.com/{{$.PR.Repo}}/blob/{{$.PR.CommitSHA}}/{{.File}}#L{{.Line}}" target="_blank" class="file-link"><code>{{.File}}:{{.Line}}</code></a>
           <textarea class="comment-input" data-comment-id="{{.ID}}" onchange="saveInlineComment(this)">{{.Message}}</textarea>
           {{if .CodeSnippet}}
           <pre class="code-snippet"><code>{{.CodeSnippet}}</code></pre>
