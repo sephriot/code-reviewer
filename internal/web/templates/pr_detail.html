@@ -14,44 +14,43 @@
 
   <section class="reviews">
     <h2>Pending Reviews</h2>
-    {{range .Reviews}}
-    {{if not .Published}}
-    <div class="review-card outcome-{{.Outcome}}">
+    {{range $i, $rv := .Reviews}}
+    <div class="review-card outcome-{{$rv.Review.Outcome}}">
       <div class="review-header">
-        <span class="outcome-badge {{.Outcome}}">{{.Outcome}}</span>
-        <small>{{.CreatedAt | formatTime}}</small>
+        <span class="outcome-badge {{$rv.Review.Outcome}}">{{$rv.Review.Outcome}}</span>
+        <small>{{$rv.Review.CreatedAt | formatTime}}</small>
       </div>
-      <div class="review-summary">{{.Summary}}</div>
-      {{if .GeneralComment}}
+      <div class="review-summary">{{$rv.Review.Summary}}</div>
+      {{if $rv.Review.GeneralComment}}
       <div class="review-comment">
         <strong>Review comment:</strong>
-        <textarea class="review-comment-input" data-review-id="{{.ID}}" onchange="saveGeneralComment(this)">{{.GeneralComment}}</textarea>
+        <textarea class="review-comment-input" data-review-id="{{$rv.Review.ID}}" onchange="saveGeneralComment(this)">{{$rv.Review.GeneralComment}}</textarea>
       </div>
       {{end}}
-      <div class="review-actions">
-        <button onclick="publishReview({{.ID}})" class="btn btn-sm">Publish Full Review</button>
-        <button onclick="publishComments({{.ID}})" class="btn btn-sm">Publish Comments Only</button>
+      {{if $rv.Comments}}
+      <div class="inline-comments">
+        <strong>Inline comments:</strong>
+        {{range $rv.Comments}}
+        <div class="comment" data-comment-id="{{.ID}}">
+          <code>{{.File}}:{{.Line}}</code>
+          <textarea class="comment-input" data-comment-id="{{.ID}}" onchange="saveInlineComment(this)">{{.Message}}</textarea>
+          {{if .CodeSnippet}}
+          <pre class="code-snippet"><code>{{.CodeSnippet}}</code></pre>
+          {{end}}
+          <button onclick="deleteInlineComment({{.ID}})" class="btn btn-sm btn-danger">Delete</button>
+        </div>
+        {{end}}
       </div>
+      {{end}}
+      {{if eq $i 0}}
+      <div class="review-actions">
+        <button onclick="publishReview({{$rv.Review.ID}})" class="btn btn-sm">Publish Full Review</button>
+        <button onclick="publishComments({{$rv.Review.ID}})" class="btn btn-sm">Publish Comments Only</button>
+      </div>
+      {{end}}
     </div>
-    {{end}}
     {{else}}
     <p class="empty">No pending reviews.</p>
-    {{end}}
-  </section>
-
-  <section class="comments">
-    <h2>Inline Comments</h2>
-    {{range .Comments}}
-    <div class="comment" data-comment-id="{{.ID}}">
-      <code>{{.File}}:{{.Line}}</code>
-      <textarea class="comment-input" data-comment-id="{{.ID}}" onchange="saveInlineComment(this)">{{.Message}}</textarea>
-      {{if .CodeSnippet}}
-      <pre class="code-snippet"><code>{{.CodeSnippet}}</code></pre>
-      {{end}}
-      <button onclick="deleteInlineComment({{.ID}})" class="btn btn-sm btn-danger">Delete</button>
-    </div>
-    {{else}}
-    <p class="empty">No inline comments.</p>
     {{end}}
   </section>
 </div>

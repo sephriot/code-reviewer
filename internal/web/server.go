@@ -191,19 +191,25 @@ func (s *Server) prDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var comments []db.ReviewComment
-	if len(reviews) > 0 {
-		comments, err = s.d.ListReviewComments(reviews[0].ID)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
+	type reviewWithComments struct {
+		Review   db.Review
+		Comments []db.ReviewComment
+	}
+
+	var reviewList []reviewWithComments
+	nonPublished := 0
+	for _, r := range reviews {
+		if r.Published {
+			continue
 		}
+		comments, _ := s.d.ListReviewComments(r.ID)
+		reviewList = append(reviewList, reviewWithComments{Review: r, Comments: comments})
+		nonPublished++
 	}
 
 	s.render(w, "pr_detail.html", map[string]interface{}{
 		"PR":       pr,
-		"Reviews":  reviews,
-		"Comments": comments,
+		"Reviews":  reviewList,
 	})
 }
 

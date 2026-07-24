@@ -308,6 +308,18 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   border-color: var(--primary);
 }
 
+.inline-comments {
+  margin-top: 0.75rem;
+}
+
+.inline-comments .comment {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
 .actions {
   margin-bottom: 1rem;
 }
