@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -116,7 +117,17 @@ func migrate(db *sql.DB) error {
 	);
 	`
 	_, err := db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+	res, err := db.Exec("UPDATE review_requests SET status = 'pending', updated_at = datetime('now') WHERE status = 'in_progress'")
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("db: reset %d orphaned in_progress review_requests to pending", n)
+	}
+	return nil
 }
 
 func scanPR(row *sql.Row) (PullRequest, error) {

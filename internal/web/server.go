@@ -105,7 +105,6 @@ func (s *Server) Serve(ctx context.Context) error {
 		srv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("web: listening on %s", addr)
 	return srv.ListenAndServe()
 }
 

@@ -82,25 +82,33 @@ func run(ctx context.Context) error {
 		}()
 	})
 
+	log.Printf("scan: next run in %v", cfg.PollInterval)
 	scanTicker := time.NewTicker(cfg.PollInterval)
 	defer scanTicker.Stop()
 
-	reactorTicker := time.NewTicker(1 * time.Minute)
+	reactorInterval := 1 * time.Minute
+	log.Printf("reactor: next run in %v", reactorInterval)
+	reactorTicker := time.NewTicker(reactorInterval)
 	defer reactorTicker.Stop()
 
+	log.Println("scan: initial run starting")
 	go func() {
 		if err := sc.Scan(ctx); err != nil {
 			log.Printf("scan: initial scan error: %v", err)
 		}
+		log.Printf("scan: done, next run in %v", cfg.PollInterval)
 	}()
 
+	log.Println("reactor: initial run starting")
 	go func() {
 		if err := reactor.ProcessQueue(ctx); err != nil {
 			log.Printf("reactor: initial queue error: %v", err)
 		}
+		log.Printf("reactor: done, next run in %v", reactorInterval)
 	}()
 
 	if cfg.WebEnabled {
+		log.Printf("web: listening on %s:%d", cfg.WebHost, cfg.WebPort)
 		go func() {
 			if err := webServer.Serve(ctx); err != nil {
 				log.Printf("web: server error: %v", err)
@@ -113,16 +121,20 @@ func run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-scanTicker.C:
+			log.Println("scan: run starting")
 			go func() {
 				if err := sc.Scan(ctx); err != nil {
 					log.Printf("scan: error: %v", err)
 				}
+				log.Printf("scan: done, next run in %v", cfg.PollInterval)
 			}()
 		case <-reactorTicker.C:
+			log.Println("reactor: run starting")
 			go func() {
 				if err := reactor.ProcessQueue(ctx); err != nil {
 					log.Printf("reactor: queue error: %v", err)
 				}
+				log.Printf("reactor: done, next run in %v", reactorInterval)
 			}()
 		}
 	}
