@@ -138,7 +138,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prs, err := s.d.ListPRsNeedingReview()
+	prs, err := s.d.ListOpenPRs()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return

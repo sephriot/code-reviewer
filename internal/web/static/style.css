@@ -149,6 +149,11 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   color: #721c24;
 }
 
+.reviewed {
+  background: #e2e3e5;
+  color: #6c757d;
+}
+
 .published {
   background: #d4edda;
   color: #155724;

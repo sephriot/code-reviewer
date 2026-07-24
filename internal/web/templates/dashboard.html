@@ -18,7 +18,7 @@
       <span>{{.Author}}</span>
       <span class="pr-status {{.State}}">{{.State}}</span>
       {{$outcome := index $.OutcomeMap .ID}}{{if $outcome}}<span class="outcome-badge {{$outcome}}">{{$outcome}}</span>{{end}}
-      {{if .NeedsReview}}<span class="badge needs-review">needs review</span>{{end}}
+      {{if .NeedsReview}}<span class="badge needs-review">needs review</span>{{else}}<span class="badge reviewed">reviewed</span>{{end}}
       {{if .IsOutdated}}<span class="badge outdated">outdated</span>{{end}}
     </div>
   </div>
