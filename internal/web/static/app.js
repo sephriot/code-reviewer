@@ -39,7 +39,11 @@ function handleEvent(event) {
   const title = 'Code Reviewer';
 
   if (Notification && Notification.permission === 'granted') {
-    new Notification(title, { body: msg });
+    const n = new Notification(title, { body: msg });
+    const prURL = event.PR ? '/pr/' + event.PR.id : null;
+    if (prURL) {
+      n.onclick = function() { window.open(prURL, '_blank'); this.close(); };
+    }
   }
 
   const toast = document.createElement('div');
