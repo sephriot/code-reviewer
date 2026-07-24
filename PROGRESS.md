@@ -1,89 +1,31 @@
 # Implementation Progress
 
-## Phase 1 — Foundation
+> Status: All components implemented (10 commits on `version2`).
+> Next: testing, session persistence, review comment edit/delete, chart rendering, own PR review polish.
 
-- [ ] **1. Go module + scaffold**
-  - `go mod init`, main.go, package structure
-  - dirs: `cmd/`, `internal/config/`, `internal/db/`, `internal/github/`, `internal/review/`, `internal/notify/`, `internal/web/`, `internal/scanner/`
-- [ ] **2. Config layer**
-  - Env vars via envconfig or viper
-  - YAML config file (optional, path via `--config` flag)
-  - Precedence: env > yaml > flags
-  - Struct: `Config{ GithubToken, Username, PollInterval, ReviewTimeout, ReviewTool, ReviewPromptPath, DBPath, WebHost, WebPort, Filters, Notifications, OwnPRMode, DryRun, LogLevel, ShowThinking, AtlasEnabled }`
-- [ ] **3. DB schema + models**
-  - SQLite via `modernc.org/sqlite` (pure Go, no CGO)
-  - Tables: `pull_requests`, `review_requests`, `reviews`, `review_comments`
-  - Soft-delete pattern (created_at, updated_at, deleted_at)
-  - Migration on startup (auto-create tables)
-- [ ] **4. GitHub client**
-  - REST API (simpler than GraphQL for this use case)
-  - List PRs assigned to user
-  - List PRs by author (own PRs mode)
-  - Get PR details, check draft status, check existing reviews
-  - Submit PR review (full + inline comments)
-  - Rate limit handling → toast notification
+## ✅ Phase 1 — Foundation
 
-## Phase 2 — Core Loops
+- [x] **1. Go module + scaffold** (`bc7bcbc`)
+- [x] **2. Config layer** (`2e3900b`)
+- [x] **3. DB schema + models** (`ef2fd85`)
+- [x] **4. GitHub client** (`4947885`)
 
-- [ ] **5. Scanning loop**
-  - Periodic ticker (configurable interval)
-  - Fetch open PRs from GitHub
-  - Reconcile with local DB (new, updated, closed)
-  - Track PR by repo + commit SHA combo
-  - Skip drafts unless enabled
-  - Apply repo/author filters (regex + comma-separated)
-  - Log filtered PRs
-  - Insert review_requests for new/changed PRs
-  - Signal reaction loop
-- [ ] **6. Review tool runner**
-  - Shell execution of configured tool (agent/codex/claude)
-  - Read review prompt from configured path
-  - Read output format prompt from embedded Go string
-  - Timeout (configurable, default 15 min)
-  - Parse JSON output → action + comments
-  - Handle failures (parse error, timeout, non-zero exit)
-  - Map output to outcomes: approve_without_comments, approve_with_comments, human_review, tool_failed
-- [ ] **7. Reaction loop**
-  - Periodic ticker + on-demand trigger from scan
-  - Process review_requests one by one (sequential queue)
-  - Call review tool runner for each
-  - Store result in reviews table
-  - Emit notifications on start/finish/success/fail
-  - Skip if PR was closed/merged meanwhile
+## ✅ Phase 2 — Core Loops
 
-## Phase 3 — UI & Notifications
+- [x] **5. Scanning loop** (`7497676`)
+- [x] **6. Review tool runner** (`fa0494b`)
+- [x] **7. Reaction loop** (`50e67bf`)
 
-- [ ] **8. Web UI**
-  - Go templates + htmx or simple JS for dynamic updates
-  - Routes:
-    - `/` — dashboard (open PRs, queued reviews)
-    - `/pr/{id}` — PR detail (review content, comments, publish)
-    - `/analytics` — charts
-    - `/filtered` — filtered-out PRs (manual request review)
-    - `/api/*` — JSON endpoints for real-time updates
-  - SSE for real-time status updates (simpler than websockets)
-  - Minimalistic CSS, lightweight design
-  - Browser notification permission on first visit
-- [ ] **9. Notifications**
-  - TTS via macOS `say` command
-  - Browser notifications via Notification API
-  - Templatable messages with {repo}, {title}, {author}, {pr_number}
-  - Events: review_start, review_success, review_fail, human_review_needed
+## ✅ Phase 3 — UI & Notifications
 
-## Phase 4 — Polish
+- [x] **8. Web UI** (`56c7853`)
+- [x] **9. Notifications** (`5ef8b56`)
 
-- [ ] **10. Prompts embedding**
-  - Embed output_format.md via Go `//go:embed`
-  - User-configured review prompt path
-- [ ] **11. Analytics page**
-  - Time range selector (7d, 30d, quarter, year, all)
-  - Group by result, author, repository
-  - Bar/line charts (simple SVG or canvas)
-- [ ] **12. Wire everything**
-  - `main.go` ties all components together
-  - Graceful shutdown
-  - Startup: both loops begin
-  - Error handling: UI errors → toast, backend errors → log
+## ✅ Phase 4 — Polish
+
+- [x] **10. Prompts embedding** (output format embedded in `internal/review/runner.go`)
+- [x] **11. Analytics page** (table, period selector, outcome breakdown)
+- [x] **12. Wire everything** (`f9878e1`)
 
 ---
 
