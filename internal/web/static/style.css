@@ -286,7 +286,7 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   margin-top: 0.5rem;
 }
 
-.review-comment pre, .code-snippet {
+.review-comment pre {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 0.875rem;
@@ -380,6 +380,29 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   font-weight: 600;
 }
 
+.rate-badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.rate-good {
+  background: #d8f3dc;
+  color: #1b4332;
+}
+
+.rate-warning {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.rate-danger {
+  background: #f8d7da;
+  color: #842029;
+}
+
 .subtitle {
   color: var(--text-muted);
   font-size: 0.9rem;
@@ -459,4 +482,102 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   opacity: 0.45;
   pointer-events: none;
   cursor: default;
+}
+
+
+.chart-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: var(--text);
+}
+
+.chart-wrap {
+  position: relative;
+  height: 360px;
+}
+
+#trends-chart {
+  width: 100%;
+  height: 100%;
+}
+
+
+.comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.published-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: #d8f3dc;
+  color: #1b4332;
+}
+
+.comment-published {
+  opacity: 0.85;
+}
+
+.comment-published .comment-input {
+  background: var(--bg-secondary, #f6f8fa);
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.code-snippet {
+  white-space: normal;
+  word-break: normal;
+  font-size: 0.875rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0;
+  overflow-x: auto;
+  margin-top: 0.5rem;
+}
+
+.snippet-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.snippet-ln {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+  padding: 0 0.75rem;
+  color: var(--text-muted);
+  user-select: none;
+  vertical-align: top;
+  border-right: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.snippet-code {
+  padding: 0 0.75rem;
+  vertical-align: top;
+}
+
+.snippet-code pre {
+  margin: 0;
+  white-space: pre;
+  font: inherit;
+}
+
+.snippet-target .snippet-ln,
+.snippet-target .snippet-code {
+  background: #fff8c5;
+}
+
+.snippet-target .snippet-ln {
+  font-weight: 600;
+  color: #9a6700;
 }

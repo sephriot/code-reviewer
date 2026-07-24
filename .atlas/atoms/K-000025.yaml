@@ -1,0 +1,36 @@
+id: K-000025
+title: Analytics trends chart via Chart.js stacked bars
+type: decision
+confidence: high
+summary: Extend /api/analytics with zero-filled day/week outcome trends; render Chart.js stacked bars on /analytics.
+details: |-
+  ## Decision
+  Trends-focused analytics: keep summary cards + outcome table; add stacked bar of reviews by outcome over time.
+
+  ## Approach
+  - Extend existing GET /api/analytics (no separate /trends endpoint).
+  - DB: ReviewsByOutcomeOverTime + FillTrendBuckets (day for 7d/30d, week for quarter/year/all).
+  - Week keys match SQLite strftime('%Y-%W'); sqliteYearWeek verified against SQLite in tests.
+  - UI: Chart.js 4 CDN stacked bar; empty total shows message.
+
+  ## Why not
+  - Full v1 parity (repos/authors/doughnut) deferred.
+  - Custom SVG rejected (more code, weaker UX).
+
+  ## Related
+  - [K-000018] Web UI templates + no SPA
+  - [K-000017] Outcome constants
+tags:
+- analytics
+- charts
+- web
+- ui
+sources:
+- internal/db/analytics.go
+- internal/web/templates/analytics.html
+- internal/web/server.go
+links:
+- K-000018
+- K-000017
+- K-000027
+updated_at: 2026-07-24

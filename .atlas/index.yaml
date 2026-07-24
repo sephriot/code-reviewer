@@ -1,4 +1,4 @@
-next_id: 25
+next_id: 30
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -237,3 +237,73 @@ entries:
   - internal/db/db.go
   links:
   - K-000023
+- id: K-000025
+  title: Analytics trends chart via Chart.js stacked bars
+  type: decision
+  confidence: high
+  tags:
+  - analytics
+  - charts
+  - web
+  - ui
+  sources:
+  - internal/db/analytics.go
+  - internal/web/templates/analytics.html
+  - internal/web/server.go
+  links:
+  - K-000018
+  - K-000017
+  - K-000027
+- id: K-000026
+  title: Legacy reviews.db → go-reviewer.db migration
+  type: recipe
+  confidence: high
+  tags:
+  - migration
+  - database
+  - legacy
+  sources:
+  - internal/migrate/migrate.go
+  - cmd/migrate-legacy/main.go
+  - docs/superpowers/specs/2026-07-24-legacy-db-migration-design.md
+  links:
+  - K-000016
+  - K-000002
+- id: K-000027
+  title: Chart.js blank chart when canvas height too small for legend
+  type: gotcha
+  confidence: high
+  tags:
+  - analytics
+  - charts
+  - chartjs
+  - web
+  sources:
+  - internal/web/templates/analytics.html
+  - internal/web/static/style.css
+- id: K-000028
+  title: Analytics top PR authors table (v1-rich)
+  type: decision
+  confidence: high
+  tags:
+  - analytics
+  - web
+  - authors
+  sources:
+  - internal/db/analytics.go
+  - internal/web/templates/analytics.html
+  links:
+  - K-000025
+- id: K-000029
+  title: Per-inline-comment publish + snippet line gutters
+  type: decision
+  confidence: high
+  tags:
+  - pending-reviews
+  - publish
+  - snippet
+  - ui
+  sources:
+  - internal/web/templates/pr_detail.html
+  - internal/web/server.go
+  - internal/db/db.go

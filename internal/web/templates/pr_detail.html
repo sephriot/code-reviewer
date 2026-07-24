@@ -31,14 +31,20 @@
       <div class="inline-comments">
         <strong>Inline comments:</strong>
         {{range $rv.Comments}}
-        <div class="comment" data-comment-id="{{.ID}}">
-          <a href="https://github.com/{{$.PR.Repo}}/blob/{{$.PR.CommitSHA}}/{{.File}}#L{{.Line}}" target="_blank" class="file-link"><code>{{.File}}:{{.Line}}</code></a>
-          <textarea class="comment-input" data-comment-id="{{.ID}}" onchange="saveInlineComment(this)">{{.Message}}</textarea>
+        <div class="comment{{if .Published}} comment-published{{end}}" data-comment-id="{{.ID}}">
+          <div class="comment-meta">
+            <a href="https://github.com/{{$.PR.Repo}}/blob/{{$.PR.CommitSHA}}/{{.File}}#L{{.Line}}" target="_blank" class="file-link"><code>{{.File}}:{{.Line}}</code></a>
+            {{if .Published}}<span class="published-badge">Published</span>{{end}}
+          </div>
+          <textarea class="comment-input" data-comment-id="{{.ID}}" {{if .Published}}disabled{{else}}onchange="saveInlineComment(this)"{{end}}>{{.Message}}</textarea>
           <div class="comment-toolbar">
             <button class="btn btn-sm" onclick="toggleSnippet(this, '{{$.PR.Repo}}', '{{$.PR.CommitSHA}}', '{{.File}}', {{.Line}})"><svg viewBox="0 0 16 16" width="12" height="12" style="vertical-align:middle;margin-right:3px"><path fill="currentColor" d="M4.72 3.22a.75.75 0 011.06 1.06L2.06 8l3.72 3.72a.75.75 0 11-1.06 1.06L.47 8.53a.75.75 0 010-1.06l4.25-4.25zm6.56 0a.75.75 0 10-1.06 1.06L13.94 8l-3.72 3.72a.75.75 0 101.06 1.06l4.25-4.25a.75.75 0 000-1.06l-4.25-4.25z"/></svg> Snippet</button>
+            {{if not .Published}}
+            <button class="btn btn-sm" onclick="confirmAction('Publish this inline comment to GitHub?', function() { publishInlineComment({{.ID}}) })">Publish</button>
             <button class="btn btn-sm btn-danger" onclick="confirmAction('Delete this inline comment?', function() { deleteInlineComment({{.ID}}) })"><svg viewBox="0 0 16 16" width="12" height="12" style="vertical-align:middle;margin-right:3px"><path fill="currentColor" d="M5.75 2h4.5a.75.75 0 01.75.75V3h-6v-.25A.75.75 0 015.75 2zM3.5 3.5h9a.5.5 0 010 1H12v7a2 2 0 01-2 2H6a2 2 0 01-2-2V4.5h-.5a.5.5 0 010-1zM11 4.5H5v7a1 1 0 001 1h4a1 1 0 001-1v-7z"/></svg> Delete</button>
+            {{end}}
           </div>
-          <pre class="code-snippet" style="display:none"><code></code></pre>
+          <div class="code-snippet" style="display:none"></div>
         </div>
         {{end}}
       </div>
@@ -93,6 +99,10 @@ async function publishComments(id) {
   await fetch('/api/review/' + id + '/publish-comments', {method: 'POST'});
   location.reload();
 }
+async function publishInlineComment(id) {
+  await fetch('/api/inline-comment/' + id + '/publish', {method: 'POST'});
+  location.reload();
+}
 async function requestReview(prId) {
   await fetch('/api/pr/' + prId + '/review', {method: 'POST'});
   location.href = '/';
@@ -117,23 +127,45 @@ async function saveInlineComment(el) {
     body: JSON.stringify({message: el.value})
   });
 }
+function renderSnippet(container, content, startLine, targetLine) {
+  const lines = (content || '').split('\n');
+  let html = '<table class="snippet-table"><tbody>';
+  for (let i = 0; i < lines.length; i++) {
+    const n = startLine + i;
+    const cls = n === targetLine ? ' class="snippet-target"' : '';
+    const num = '<td class="snippet-ln">' + n + '</td>';
+    const code = '<td class="snippet-code"><pre>' + escapeHtml(lines[i]) + '</pre></td>';
+    html += '<tr' + cls + '>' + num + code + '</tr>';
+  }
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 async function toggleSnippet(el, repo, sha, file, line) {
-  const pre = el.closest('.comment').querySelector('.code-snippet');
-  if (pre.style.display !== 'none') {
-    pre.style.display = 'none';
+  const box = el.closest('.comment').querySelector('.code-snippet');
+  if (box.style.display !== 'none') {
+    box.style.display = 'none';
     el.dataset.active = '';
     return;
   }
-  if (pre.dataset.loaded) {
-    pre.style.display = 'block';
+  if (box.dataset.loaded) {
+    box.style.display = 'block';
     el.dataset.active = '1';
     return;
   }
   const res = await fetch('/api/snippet?repo=' + encodeURIComponent(repo) + '&sha=' + encodeURIComponent(sha) + '&file=' + encodeURIComponent(file) + '&line=' + line);
   const data = await res.json();
-  pre.querySelector('code').textContent = data.content;
-  pre.style.display = 'block';
-  pre.dataset.loaded = '1';
+  renderSnippet(box, data.content, data.start_line || 1, data.target_line || line);
+  box.style.display = 'block';
+  box.dataset.loaded = '1';
   el.dataset.active = '1';
 }
 </script>

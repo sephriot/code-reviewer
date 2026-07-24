@@ -1,0 +1,25 @@
+id: K-000027
+title: Chart.js blank chart when canvas height too small for legend
+type: gotcha
+confidence: high
+summary: Fixed-height canvas (e.g. height=120) + bottom legend can yield chartArea.height=0 on first paint; period change recreates taller and looks like a load bug.
+details: |-
+  ## Symptom
+  Analytics opens with Last Month selected; summary/table populate but the trends chart looks blank until the period is changed.
+
+  ## Cause
+  Chart.js created the chart on a canvas with HTML `height="120"`. With `responsive: true`, default `maintainAspectRatio: true`, and a bottom legend, layout left `chartArea.height === 0`. Bars had no drawable area. Destroy/recreate on period change recalculated a taller canvas, so bars appeared.
+
+  ## Fix
+  - Wrap canvas in `.chart-wrap { position: relative; height: 360px; }`
+  - Set `maintainAspectRatio: false`
+  - Do not pin a tiny HTML height on the canvas
+tags:
+- analytics
+- charts
+- chartjs
+- web
+sources:
+- internal/web/templates/analytics.html
+- internal/web/static/style.css
+updated_at: 2026-07-24

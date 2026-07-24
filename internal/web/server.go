@@ -401,7 +401,7 @@ func (s *Server) apiReview(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiInlineComment(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/inline-comment/"), "/")
-	if len(parts) < 1 {
+	if len(parts) < 1 || parts[0] == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -409,6 +409,15 @@ func (s *Server) apiInlineComment(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		http.NotFound(w, r)
+		return
+	}
+
+	if len(parts) >= 2 && parts[1] == "publish" {
+		if r.Method != "POST" {
+			http.Error(w, "method not allowed", 405)
+			return
+		}
+		s.publishInlineComment(w, id)
 		return
 	}
 
@@ -437,6 +446,52 @@ func (s *Server) apiInlineComment(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) publishInlineComment(w http.ResponseWriter, commentID int64) {
+	c, err := s.d.GetReviewComment(commentID)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if c == nil {
+		http.Error(w, "comment not found", 404)
+		return
+	}
+	if c.Published {
+		s.respondJSON(w, map[string]string{"status": "already_published"})
+		return
+	}
+
+	rv, err := s.d.GetReview(c.ReviewID)
+	if err != nil || rv == nil {
+		http.Error(w, "review not found", 404)
+		return
+	}
+	pr, err := s.d.GetPR(rv.PullRequestID)
+	if err != nil || pr == nil {
+		http.Error(w, "PR not found", 404)
+		return
+	}
+	parts := strings.Split(pr.Repo, "/")
+	if len(parts) < 2 {
+		http.Error(w, "invalid repo", 500)
+		return
+	}
+
+	if err := s.gh.CreateReviewComment(context.Background(), parts[0], parts[1], pr.PRNumber, gh.ReviewComment{
+		File:    c.File,
+		Line:    c.Line,
+		Message: c.Message,
+	}); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := s.d.PublishReviewComment(c.ID); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	s.respondJSON(w, map[string]string{"status": "published"})
+}
+
 func (s *Server) publishReview(w http.ResponseWriter, rv *db.Review) {
 	pr, err := s.d.GetPR(rv.PullRequestID)
 	if err != nil || pr == nil {
@@ -451,8 +506,13 @@ func (s *Server) publishReview(w http.ResponseWriter, rv *db.Review) {
 	}
 
 	comments, _ := s.d.ListReviewComments(rv.ID)
+	var unpublished []db.ReviewComment
 	var ghComments []gh.ReviewComment
 	for _, c := range comments {
+		if c.Published {
+			continue
+		}
+		unpublished = append(unpublished, c)
 		ghComments = append(ghComments, gh.ReviewComment{
 			File:    c.File,
 			Line:    c.Line,
@@ -470,6 +530,11 @@ func (s *Server) publishReview(w http.ResponseWriter, rv *db.Review) {
 		return
 	}
 
+	for _, c := range unpublished {
+		if err := s.d.PublishReviewComment(c.ID); err != nil {
+			log.Printf("web: failed to mark comment %d published: %v", c.ID, err)
+		}
+	}
 	s.d.PublishReview(rv.ID)
 	s.respondJSON(w, map[string]string{"status": "published"})
 }
@@ -489,6 +554,9 @@ func (s *Server) publishReviewComments(w http.ResponseWriter, rv *db.Review) {
 
 	comments, _ := s.d.ListReviewComments(rv.ID)
 	for _, c := range comments {
+		if c.Published {
+			continue
+		}
 		err := s.gh.CreateReviewComment(context.Background(), parts[0], parts[1], pr.PRNumber, gh.ReviewComment{
 			File:    c.File,
 			Line:    c.Line,
@@ -496,6 +564,10 @@ func (s *Server) publishReviewComments(w http.ResponseWriter, rv *db.Review) {
 		})
 		if err != nil {
 			log.Printf("web: failed to post comment: %v", err)
+			continue
+		}
+		if err := s.d.PublishReviewComment(c.ID); err != nil {
+			log.Printf("web: failed to mark comment %d published: %v", c.ID, err)
 		}
 	}
 	s.respondJSON(w, map[string]string{"status": "comments_published"})
@@ -545,6 +617,25 @@ func (s *Server) apiAnalytics(w http.ResponseWriter, r *http.Request) {
 		result["data"] = counts
 		result["total"] = total
 		result["published"] = published
+
+		bucket := db.TrendBucketDay
+		switch period {
+		case "quarter", "year", "all":
+			bucket = db.TrendBucketWeek
+		}
+		rows, err := s.d.ReviewsByOutcomeOverTime(since, bucket)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		result["trends"] = db.FillTrendBuckets(since, time.Now(), bucket, rows)
+
+		authors, err := s.d.ReviewsByAuthorStats(since, 15)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		result["authors"] = authors
 	}
 
 	s.respondJSON(w, result)
@@ -573,11 +664,15 @@ func (s *Server) apiSnippet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := s.gh.GetFileContent(r.Context(), parts[0], parts[1], sha, file, line, 5)
+	content, startLine, err := s.gh.GetFileContent(r.Context(), parts[0], parts[1], sha, file, line, 5)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 
-	s.respondJSON(w, map[string]string{"content": content})
+	s.respondJSON(w, map[string]any{
+		"content":     content,
+		"start_line":  startLine,
+		"target_line": line,
+	})
 }

@@ -34,7 +34,7 @@
 - [ ] **Review comment edit/delete API** — `server.go` has a stub DELETE handler returning 501. Need edit endpoint too. `db.go` has `UpdateReviewComment`/`DeleteReviewComment` ready.
 - [ ] **Own PR mode review flow** — Scanner fetches own PRs but the reactor needs to handle them distinctly (e.g. different outcome treatment, notification).
 - [ ] **Session / context passing across reviews** — When retrying review of same PR, the tool should receive previous review context so it doesn't repeat itself. No mechanism yet.
-- [ ] **Visual analytics charts** — Table view works. SVG/Canvas chart rendering not implemented.
+- [x] **Visual analytics charts** — Stacked Chart.js trends by outcome over time (period day/week bucketing).
 - [ ] **Filtered PRs visibility** — Scanner skips filtered PRs before storing. Need to store them in DB with a `filtered_out` flag so the `/filtered` page can show them.
 - [ ] **Test suite** — No tests yet. Go table-driven tests for each package.
 - [ ] **Review prompt context builder** — `Runner.BuildReviewPromptContext` exists but is never called. The actual PR diff/Cli context needs to be passed to the review tool.

@@ -111,6 +111,7 @@ func migrate(db *sql.DB) error {
 		file TEXT NOT NULL DEFAULT '',
 		line INTEGER NOT NULL DEFAULT 0,
 		message TEXT NOT NULL DEFAULT '',
+		published INTEGER NOT NULL DEFAULT 0,
 		created_at TEXT NOT NULL DEFAULT (datetime('now')),
 		updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 		deleted_at TEXT
@@ -123,6 +124,7 @@ func migrate(db *sql.DB) error {
 	// add columns if missing (idempotent)
 	db.Exec("ALTER TABLE reviews ADD COLUMN commit_sha TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE pull_requests ADD COLUMN filtered_reason TEXT")
+	db.Exec("ALTER TABLE review_comments ADD COLUMN published INTEGER NOT NULL DEFAULT 0")
 	// Closed/merged was briefly mis-tagged as filtered_reason='state'; clear it.
 	if res, err := db.Exec("UPDATE pull_requests SET filtered_reason = NULL WHERE filtered_reason = 'state'"); err != nil {
 		return err
@@ -491,25 +493,16 @@ func (d *DB) GetLatestReviewByPR(prID int64) (*Review, error) {
 }
 
 func (d *DB) ListReviewsForPR(prID int64) ([]Review, error) {
-	rows, err := d.Query("SELECT id, pull_request_id, review_request_id, outcome, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE pull_request_id = ? AND deleted_at IS NULL ORDER BY created_at DESC", prID)
+	rows, err := d.Query("SELECT id, pull_request_id, review_request_id, outcome, commit_sha, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE pull_request_id = ? AND deleted_at IS NULL ORDER BY created_at DESC", prID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var reviews []Review
 	for rows.Next() {
-		var r Review
-		var createdAt scanTime
-		var updatedAt scanTime
-		var deletedAt nullScanTime
-		err := rows.Scan(&r.ID, &r.PullRequestID, &r.ReviewRequestID, &r.Outcome, &r.Summary, &r.GeneralComment, &r.Published, &createdAt, &updatedAt, &deletedAt)
+		r, err := d.scanReview(rows.Scan)
 		if err != nil {
 			return nil, err
-		}
-		r.CreatedAt = time.Time(createdAt)
-		r.UpdatedAt = time.Time(updatedAt)
-		if deletedAt.Valid {
-			r.DeletedAt = &deletedAt.Time
 		}
 		reviews = append(reviews, r)
 	}
@@ -557,7 +550,7 @@ func (d *DB) AddReviewComment(c ReviewComment) (int64, error) {
 }
 
 func (d *DB) ListReviewComments(reviewID int64) ([]ReviewComment, error) {
-	rows, err := d.Query("SELECT id, review_id, file, line, message, created_at, updated_at, deleted_at FROM review_comments WHERE review_id = ? AND deleted_at IS NULL ORDER BY created_at ASC", reviewID)
+	rows, err := d.Query("SELECT id, review_id, file, line, message, published, created_at, updated_at, deleted_at FROM review_comments WHERE review_id = ? AND deleted_at IS NULL ORDER BY created_at ASC", reviewID)
 	if err != nil {
 		return nil, err
 	}
@@ -565,13 +558,15 @@ func (d *DB) ListReviewComments(reviewID int64) ([]ReviewComment, error) {
 	var comments []ReviewComment
 	for rows.Next() {
 		var c ReviewComment
+		var published int
 		var createdAt scanTime
 		var updatedAt scanTime
 		var deletedAt nullScanTime
-		err := rows.Scan(&c.ID, &c.ReviewID, &c.File, &c.Line, &c.Message, &createdAt, &updatedAt, &deletedAt)
+		err := rows.Scan(&c.ID, &c.ReviewID, &c.File, &c.Line, &c.Message, &published, &createdAt, &updatedAt, &deletedAt)
 		if err != nil {
 			return nil, err
 		}
+		c.Published = published != 0
 		c.CreatedAt = time.Time(createdAt)
 		c.UpdatedAt = time.Time(updatedAt)
 		if deletedAt.Valid {
@@ -580,6 +575,36 @@ func (d *DB) ListReviewComments(reviewID int64) ([]ReviewComment, error) {
 		comments = append(comments, c)
 	}
 	return comments, rows.Err()
+}
+
+func (d *DB) GetReviewComment(id int64) (*ReviewComment, error) {
+	var c ReviewComment
+	var published int
+	var createdAt scanTime
+	var updatedAt scanTime
+	var deletedAt nullScanTime
+	err := d.QueryRow(
+		"SELECT id, review_id, file, line, message, published, created_at, updated_at, deleted_at FROM review_comments WHERE id = ? AND deleted_at IS NULL",
+		id,
+	).Scan(&c.ID, &c.ReviewID, &c.File, &c.Line, &c.Message, &published, &createdAt, &updatedAt, &deletedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.Published = published != 0
+	c.CreatedAt = time.Time(createdAt)
+	c.UpdatedAt = time.Time(updatedAt)
+	if deletedAt.Valid {
+		c.DeletedAt = &deletedAt.Time
+	}
+	return &c, nil
+}
+
+func (d *DB) PublishReviewComment(id int64) error {
+	_, err := d.Exec("UPDATE review_comments SET published = 1, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL", id)
+	return err
 }
 
 func (d *DB) DeleteReviewComment(id int64) error {

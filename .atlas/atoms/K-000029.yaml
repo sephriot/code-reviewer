@@ -1,0 +1,26 @@
+id: K-000029
+title: Per-inline-comment publish + snippet line gutters
+type: decision
+confidence: high
+summary: Pending reviews can publish one inline comment; review_comments.published tracks state; snippets show GitHub-style line numbers.
+details: |-
+  ## Decision
+  - Add `review_comments.published` (migrate ALTER + CREATE default 0).
+  - `POST /api/inline-comment/{id}/publish` posts via CreateReviewComment then marks published.
+  - Published comments are view-only in PR detail UI (badge, disabled textarea, no edit/delete/publish).
+  - Bulk Publish Full Review / Publish Comments Only skip already-published comments and mark newly posted ones published.
+  - `/api/snippet` returns `content`, `start_line`, `target_line`; UI renders gutter table with target-line highlight.
+  - `GetFileContent` now returns `(content, startLine, error)` so start_line matches clamp logic.
+
+  ## Spec
+  docs/superpowers/specs/2026-07-24-pending-comment-publish-snippets-design.md
+tags:
+- pending-reviews
+- publish
+- snippet
+- ui
+sources:
+- internal/web/templates/pr_detail.html
+- internal/web/server.go
+- internal/db/db.go
+updated_at: 2026-07-24

@@ -218,15 +218,15 @@ func parseRepoURL(url string) (string, string) {
 	return "", ""
 }
 
-func (c *Client) GetFileContent(ctx context.Context, owner, repo, commitSHA, path string, line int, contextLines int) (string, error) {
+func (c *Client) GetFileContent(ctx context.Context, owner, repo, commitSHA, path string, line int, contextLines int) (content string, startLine int, err error) {
 	opts := &github.RepositoryContentGetOptions{Ref: commitSHA}
-	content, _, _, err := c.Repositories.GetContents(ctx, owner, repo, path, opts)
+	fileContent, _, _, err := c.Repositories.GetContents(ctx, owner, repo, path, opts)
 	if err != nil {
-		return "", fmt.Errorf("get %s/%s/%s @ %s: %w", owner, repo, path, commitSHA, err)
+		return "", 0, fmt.Errorf("get %s/%s/%s @ %s: %w", owner, repo, path, commitSHA, err)
 	}
-	decoded, err := content.GetContent()
+	decoded, err := fileContent.GetContent()
 	if err != nil {
-		return "", fmt.Errorf("decode %s/%s/%s: %w", owner, repo, path, err)
+		return "", 0, fmt.Errorf("decode %s/%s/%s: %w", owner, repo, path, err)
 	}
 	lines := strings.Split(decoded, "\n")
 	start := line - contextLines - 1
@@ -237,5 +237,5 @@ func (c *Client) GetFileContent(ctx context.Context, owner, repo, commitSHA, pat
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(lines[start:end], "\n"), nil
+	return strings.Join(lines[start:end], "\n"), start + 1, nil
 }

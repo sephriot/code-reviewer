@@ -13,29 +13,168 @@
   </label>
 </div>
 
-<div id="analytics-chart" class="chart-container">
-  <p class="empty">Select a period to view analytics.</p>
+<div id="analytics-summary" class="analytics-summary"></div>
+
+<div class="chart-container">
+  <div class="chart-title">Reviews by outcome over time</div>
+  <div class="chart-wrap">
+    <canvas id="trends-chart"></canvas>
+  </div>
+  <p id="trends-empty" class="empty" hidden>No reviews in this period.</p>
 </div>
 
+<div id="analytics-table" class="chart-container"></div>
+
+<div class="chart-container">
+  <div class="chart-title">Top PR Authors</div>
+  <table class="analytics-table">
+    <thead>
+      <tr>
+        <th>Author</th>
+        <th>PRs Reviewed</th>
+        <th>Approval Rate</th>
+        <th>Human Review %</th>
+        <th>Change Request %</th>
+        <th>Avg Comments</th>
+      </tr>
+    </thead>
+    <tbody id="authors-table-body">
+      <tr><td colspan="6" class="empty">Loading...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
+const OUTCOMES = [
+  'approve_without_comments',
+  'approve_with_comments',
+  'changes_requested',
+  'human_review',
+  'tool_failed',
+  'reviewed_externally',
+];
+
+const OUTCOME_COLORS = {
+  approve_without_comments: '#2ec4b6',
+  approve_with_comments: '#4361ee',
+  changes_requested: '#ff9f1c',
+  human_review: '#e9c46a',
+  tool_failed: '#e71d36',
+  reviewed_externally: '#4cc9f0',
+};
+
+const OUTCOME_LABELS = {
+  approve_without_comments: 'Approve (no comments)',
+  approve_with_comments: 'Approve (with comments)',
+  changes_requested: 'Changes requested',
+  human_review: 'Human review',
+  tool_failed: 'Tool failed',
+  reviewed_externally: 'Reviewed externally',
+};
+
+let trendsChart = null;
+
 async function loadAnalytics() {
   const period = document.getElementById('period').value;
   const res = await fetch('/api/analytics?period=' + period + '&group=outcome');
   const data = await res.json();
 
-  const container = document.getElementById('analytics-chart');
+  const summary = document.getElementById('analytics-summary');
+  summary.innerHTML =
+    '<div class="summary-card"><strong>Reviews Done</strong><span class="summary-value">' + (data.total || 0) + '</span></div>' +
+    '<div class="summary-card"><strong>Published</strong><span class="summary-value">' + (data.published || 0) + '</span></div>';
+
+  const tableEl = document.getElementById('analytics-table');
   if (!data.data) {
-    container.innerHTML = '<p class="empty">No data.</p>';
+    tableEl.innerHTML = '<p class="empty">No data.</p>';
+  } else {
+    let html = '<table class="analytics-table"><thead><tr><th>Outcome</th><th>Count</th></tr></thead><tbody>';
+    for (const [outcome, count] of Object.entries(data.data)) {
+      html += '<tr><td>' + (OUTCOME_LABELS[outcome] || outcome) + '</td><td>' + count + '</td></tr>';
+    }
+    html += '</tbody></table>';
+    tableEl.innerHTML = html;
+  }
+
+  renderTrendsChart(data.trends || [], data.total || 0);
+  renderAuthorsTable(data.authors || []);
+}
+
+function rateBadgeClass(rate, kind) {
+  if (kind === 'approval') {
+    if (rate >= 70) return 'rate-good';
+    if (rate >= 40) return 'rate-warning';
+    return 'rate-danger';
+  }
+  // human review: lower is better
+  if (rate <= 10) return 'rate-good';
+  if (rate <= 25) return 'rate-warning';
+  return 'rate-danger';
+}
+
+function renderAuthorsTable(authors) {
+  const tbody = document.getElementById('authors-table-body');
+  if (!authors.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No data available</td></tr>';
+    return;
+  }
+  tbody.innerHTML = authors.map(a => {
+    const approvalClass = rateBadgeClass(a.approval_rate || 0, 'approval');
+    const humanClass = rateBadgeClass(a.human_review_rate || 0, 'human');
+    return '<tr>' +
+      '<td><strong>@' + a.author + '</strong></td>' +
+      '<td>' + a.total_reviews + '</td>' +
+      '<td><span class="rate-badge ' + approvalClass + '">' + (a.approval_rate || 0) + '%</span></td>' +
+      '<td><span class="rate-badge ' + humanClass + '">' + (a.human_review_rate || 0) + '%</span></td>' +
+      '<td>' + (a.change_request_rate || 0) + '%</td>' +
+      '<td>' + (a.avg_inline_comments || 0) + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+function renderTrendsChart(trends, total) {
+  const canvas = document.getElementById('trends-chart');
+  const wrap = canvas.parentElement;
+  const empty = document.getElementById('trends-empty');
+
+  if (trendsChart) {
+    trendsChart.destroy();
+    trendsChart = null;
+  }
+
+  if (!total) {
+    wrap.hidden = true;
+    empty.hidden = false;
     return;
   }
 
-  let html = '<div class="analytics-summary"><div class="summary-card"><strong>Reviews Done</strong><span class="summary-value">' + data.total + '</span></div><div class="summary-card"><strong>Published</strong><span class="summary-value">' + data.published + '</span></div></div>';
-  html += '<table class="analytics-table"><thead><tr><th>Outcome</th><th>Count</th></tr></thead><tbody>';
-  for (const [outcome, count] of Object.entries(data.data)) {
-    html += '<tr><td>' + outcome + '</td><td>' + count + '</td></tr>';
-  }
-  html += '</tbody></table>';
-  container.innerHTML = html;
+  wrap.hidden = false;
+  empty.hidden = true;
+
+  const labels = trends.map(t => t.date || t.week);
+  const datasets = OUTCOMES.map(outcome => ({
+    label: OUTCOME_LABELS[outcome] || outcome,
+    data: trends.map(t => (t.outcomes && t.outcomes[outcome]) || 0),
+    backgroundColor: OUTCOME_COLORS[outcome],
+    stack: 'outcomes',
+  }));
+
+  trendsChart = new Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { stacked: true },
+        y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
+      },
+      plugins: {
+        legend: { position: 'bottom' },
+      },
+    },
+  });
 }
 
 loadAnalytics();

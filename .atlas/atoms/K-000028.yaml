@@ -1,0 +1,32 @@
+id: K-000028
+title: Analytics top PR authors table (v1-rich)
+type: decision
+confidence: high
+summary: Extend /api/analytics with period-scoped ReviewsByAuthorStats; Top PR Authors table with rates and avg comments.
+details: |-
+  ## Decision
+  Restore v1-rich Top PR Authors on /analytics (counts + approval/human/changes rates + avg inline comments).
+
+  ## Approach
+  - DB: ReviewsByAuthorStats(since, limit) joins reviews→pull_requests, AVG of non-deleted review_comments per review.
+  - Rates computed in Go to 1 decimal; approval = approve_with + approve_without.
+  - Extend GET /api/analytics with authors (limit 15); no separate /authors endpoint.
+  - UI: table below outcome breakdown; rate-badge thresholds match v1.
+
+  ## Why not
+  - Separate /api/analytics/authors (extra round-trip).
+  - Count-only table (user chose v1-rich).
+
+  ## Related
+  - [K-000025] trends deferred author tables
+  - v1 272dbe1 / 31b98c0 period filter on author stats
+tags:
+- analytics
+- web
+- authors
+sources:
+- internal/db/analytics.go
+- internal/web/templates/analytics.html
+links:
+- K-000025
+updated_at: 2026-07-24
