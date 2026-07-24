@@ -8,6 +8,44 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+type scanTime time.Time
+
+func (t *scanTime) Scan(value interface{}) error {
+	if value == nil {
+		*t = scanTime(time.Time{})
+		return nil
+	}
+	var s string
+	switch v := value.(type) {
+	case string:
+		s = v
+	case []byte:
+		s = string(v)
+	default:
+		return fmt.Errorf("cannot scan %T into scanTime", value)
+	}
+	parsed, err := time.Parse("2006-01-02 15:04:05", s)
+	if err != nil {
+		return err
+	}
+	*t = scanTime(parsed)
+	return nil
+}
+
+type nullScanTime struct {
+	Time  time.Time
+	Valid bool
+}
+
+func (t *nullScanTime) Scan(value interface{}) error {
+	if value == nil {
+		t.Valid = false
+		return nil
+	}
+	t.Valid = true
+	return (*scanTime)(&t.Time).Scan(value)
+}
+
 type DB struct {
 	*sql.DB
 }
@@ -86,18 +124,21 @@ func scanPR(row *sql.Row) (PullRequest, error) {
 	var draft int
 	var needsReview int
 	var outdated int
-	var deletedAt sql.NullString
+	var createdAt scanTime
+	var updatedAt scanTime
+	var deletedAt nullScanTime
 	err := row.Scan(
 		&pr.ID, &pr.Repo, &pr.PRNumber, &pr.Title, &pr.Author,
 		&pr.CommitSHA, &draft, &pr.State, &needsReview, &outdated,
-		&pr.CreatedAt, &pr.UpdatedAt, &deletedAt,
+		&createdAt, &updatedAt, &deletedAt,
 	)
 	pr.Draft = draft == 1
 	pr.NeedsReview = needsReview == 1
 	pr.IsOutdated = outdated == 1
+	pr.CreatedAt = time.Time(createdAt)
+	pr.UpdatedAt = time.Time(updatedAt)
 	if deletedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", deletedAt.String)
-		pr.DeletedAt = &t
+		pr.DeletedAt = &deletedAt.Time
 	}
 	return pr, err
 }
@@ -109,11 +150,13 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		var draft int
 		var needsReview int
 		var outdated int
-		var deletedAt sql.NullString
+		var createdAt scanTime
+		var updatedAt scanTime
+		var deletedAt nullScanTime
 		err := rows.Scan(
 			&pr.ID, &pr.Repo, &pr.PRNumber, &pr.Title, &pr.Author,
 			&pr.CommitSHA, &draft, &pr.State, &needsReview, &outdated,
-			&pr.CreatedAt, &pr.UpdatedAt, &deletedAt,
+			&createdAt, &updatedAt, &deletedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -121,9 +164,10 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		pr.Draft = draft == 1
 		pr.NeedsReview = needsReview == 1
 		pr.IsOutdated = outdated == 1
+		pr.CreatedAt = time.Time(createdAt)
+		pr.UpdatedAt = time.Time(updatedAt)
 		if deletedAt.Valid {
-			t, _ := time.Parse("2006-01-02 15:04:05", deletedAt.String)
-			pr.DeletedAt = &t
+			pr.DeletedAt = &deletedAt.Time
 		}
 		prs = append(prs, pr)
 	}
@@ -230,17 +274,20 @@ func (d *DB) CreateReviewRequest(prID int64) (int64, error) {
 func (d *DB) GetNextPendingReviewRequest() (*ReviewRequest, error) {
 	row := d.QueryRow("SELECT id, pull_request_id, status, created_at, updated_at, deleted_at FROM review_requests WHERE status = 'pending' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1")
 	var rr ReviewRequest
-	var deletedAt sql.NullString
-	err := row.Scan(&rr.ID, &rr.PullRequestID, &rr.Status, &rr.CreatedAt, &rr.UpdatedAt, &deletedAt)
+	var createdAt scanTime
+	var updatedAt scanTime
+	var deletedAt nullScanTime
+	err := row.Scan(&rr.ID, &rr.PullRequestID, &rr.Status, &createdAt, &updatedAt, &deletedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	rr.CreatedAt = time.Time(createdAt)
+	rr.UpdatedAt = time.Time(updatedAt)
 	if deletedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", deletedAt.String)
-		rr.DeletedAt = &t
+		rr.DeletedAt = &deletedAt.Time
 	}
 	return &rr, nil
 }
@@ -259,14 +306,17 @@ func (d *DB) ListReviewRequests() ([]ReviewRequest, error) {
 	var rrs []ReviewRequest
 	for rows.Next() {
 		var rr ReviewRequest
-		var deletedAt sql.NullString
-		err := rows.Scan(&rr.ID, &rr.PullRequestID, &rr.Status, &rr.CreatedAt, &rr.UpdatedAt, &deletedAt)
+		var createdAt scanTime
+		var updatedAt scanTime
+		var deletedAt nullScanTime
+		err := rows.Scan(&rr.ID, &rr.PullRequestID, &rr.Status, &createdAt, &updatedAt, &deletedAt)
 		if err != nil {
 			return nil, err
 		}
+		rr.CreatedAt = time.Time(createdAt)
+		rr.UpdatedAt = time.Time(updatedAt)
 		if deletedAt.Valid {
-			t, _ := time.Parse("2006-01-02 15:04:05", deletedAt.String)
-			rr.DeletedAt = &t
+			rr.DeletedAt = &deletedAt.Time
 		}
 		rrs = append(rrs, rr)
 	}
@@ -282,38 +332,41 @@ func (d *DB) CreateReview(r Review) (int64, error) {
 	return res.LastInsertId()
 }
 
-func (d *DB) GetReview(id int64) (*Review, error) {
-	row := d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE id = ? AND deleted_at IS NULL", id)
+func (d *DB) scanReview(scanner func(dest ...interface{}) error) (Review, error) {
 	var r Review
-	var deletedAt sql.NullString
-	err := row.Scan(&r.ID, &r.PullRequestID, &r.ReviewRequestID, &r.Outcome, &r.Summary, &r.GeneralComment, &r.Published, &r.CreatedAt, &r.UpdatedAt, &deletedAt)
+	var createdAt scanTime
+	var updatedAt scanTime
+	var deletedAt nullScanTime
+	err := scanner(&r.ID, &r.PullRequestID, &r.ReviewRequestID, &r.Outcome, &r.Summary, &r.GeneralComment, &r.Published, &createdAt, &updatedAt, &deletedAt)
+	if err != nil {
+		return r, err
+	}
+	r.CreatedAt = time.Time(createdAt)
+	r.UpdatedAt = time.Time(updatedAt)
+	if deletedAt.Valid {
+		r.DeletedAt = &deletedAt.Time
+	}
+	return r, nil
+}
+
+func (d *DB) GetReview(id int64) (*Review, error) {
+	r, err := d.scanReview(d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE id = ? AND deleted_at IS NULL", id).Scan)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
-	}
-	if deletedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", deletedAt.String)
-		r.DeletedAt = &t
 	}
 	return &r, nil
 }
 
 func (d *DB) GetReviewByRequestID(requestID int64) (*Review, error) {
-	row := d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE review_request_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1", requestID)
-	var r Review
-	var deletedAt sql.NullString
-	err := row.Scan(&r.ID, &r.PullRequestID, &r.ReviewRequestID, &r.Outcome, &r.Summary, &r.GeneralComment, &r.Published, &r.CreatedAt, &r.UpdatedAt, &deletedAt)
+	r, err := d.scanReview(d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE review_request_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1", requestID).Scan)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
-	}
-	if deletedAt.Valid {
-		t, _ := time.Parse("2006-01-02 15:04:05", deletedAt.String)
-		r.DeletedAt = &t
 	}
 	return &r, nil
 }
@@ -327,14 +380,17 @@ func (d *DB) ListReviewsForPR(prID int64) ([]Review, error) {
 	var reviews []Review
 	for rows.Next() {
 		var r Review
-		var deletedAt sql.NullString
-		err := rows.Scan(&r.ID, &r.PullRequestID, &r.ReviewRequestID, &r.Outcome, &r.Summary, &r.GeneralComment, &r.Published, &r.CreatedAt, &r.UpdatedAt, &deletedAt)
+		var createdAt scanTime
+		var updatedAt scanTime
+		var deletedAt nullScanTime
+		err := rows.Scan(&r.ID, &r.PullRequestID, &r.ReviewRequestID, &r.Outcome, &r.Summary, &r.GeneralComment, &r.Published, &createdAt, &updatedAt, &deletedAt)
 		if err != nil {
 			return nil, err
 		}
+		r.CreatedAt = time.Time(createdAt)
+		r.UpdatedAt = time.Time(updatedAt)
 		if deletedAt.Valid {
-			t, _ := time.Parse("2006-01-02 15:04:05", deletedAt.String)
-			r.DeletedAt = &t
+			r.DeletedAt = &deletedAt.Time
 		}
 		reviews = append(reviews, r)
 	}
@@ -364,14 +420,17 @@ func (d *DB) ListReviewComments(reviewID int64) ([]ReviewComment, error) {
 	var comments []ReviewComment
 	for rows.Next() {
 		var c ReviewComment
-		var deletedAt sql.NullString
-		err := rows.Scan(&c.ID, &c.ReviewID, &c.File, &c.Line, &c.Message, &c.CreatedAt, &c.UpdatedAt, &deletedAt)
+		var createdAt scanTime
+		var updatedAt scanTime
+		var deletedAt nullScanTime
+		err := rows.Scan(&c.ID, &c.ReviewID, &c.File, &c.Line, &c.Message, &createdAt, &updatedAt, &deletedAt)
 		if err != nil {
 			return nil, err
 		}
+		c.CreatedAt = time.Time(createdAt)
+		c.UpdatedAt = time.Time(updatedAt)
 		if deletedAt.Valid {
-			t, _ := time.Parse("2006-01-02 15:04:05", deletedAt.String)
-			c.DeletedAt = &t
+			c.DeletedAt = &deletedAt.Time
 		}
 		comments = append(comments, c)
 	}
