@@ -34,9 +34,8 @@
         <div class="comment" data-comment-id="{{.ID}}">
           <a href="https://github.com/{{$.PR.Repo}}/blob/{{$.PR.CommitSHA}}/{{.File}}#L{{.Line}}" target="_blank" class="file-link"><code>{{.File}}:{{.Line}}</code></a>
           <textarea class="comment-input" data-comment-id="{{.ID}}" onchange="saveInlineComment(this)">{{.Message}}</textarea>
-          {{if .CodeSnippet}}
-          <pre class="code-snippet"><code>{{.CodeSnippet}}</code></pre>
-          {{end}}
+          <button class="btn btn-sm snippet-btn" onclick="toggleSnippet(this, '{{$.PR.Repo}}', '{{$.PR.CommitSHA}}', '{{.File}}', {{.Line}})">Show snippet</button>
+          <pre class="code-snippet" style="display:none"><code></code></pre>
           <button onclick="deleteInlineComment({{.ID}})" class="btn btn-sm btn-danger">Delete</button>
         </div>
         {{end}}
@@ -87,6 +86,26 @@ async function saveInlineComment(el) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({message: el.value})
   });
+}
+async function toggleSnippet(el, repo, sha, file, line) {
+  const pre = el.nextElementSibling;
+  if (pre.style.display !== 'none') {
+    pre.style.display = 'none';
+    el.textContent = 'Show snippet';
+    return;
+  }
+  if (pre.dataset.loaded) {
+    pre.style.display = 'block';
+    el.textContent = 'Hide snippet';
+    return;
+  }
+  el.textContent = 'Loading...';
+  const res = await fetch('/api/snippet?repo=' + encodeURIComponent(repo) + '&sha=' + encodeURIComponent(sha) + '&file=' + encodeURIComponent(file) + '&line=' + line);
+  const data = await res.json();
+  pre.querySelector('code').textContent = data.content;
+  pre.style.display = 'block';
+  pre.dataset.loaded = '1';
+  el.textContent = 'Hide snippet';
 }
 </script>
 {{end}}

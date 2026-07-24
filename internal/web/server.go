@@ -92,6 +92,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.HandleFunc("/api/pr/", s.apiPR)
 	mux.HandleFunc("/api/review/", s.apiReview)
 	mux.HandleFunc("/api/inline-comment/", s.apiInlineComment)
+	mux.HandleFunc("/api/snippet", s.apiSnippet)
 	mux.HandleFunc("/api/analytics", s.apiAnalytics)
 
 	staticFS, _ := fs.Sub(content, "static")
@@ -521,4 +522,36 @@ func (s *Server) apiAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.respondJSON(w, result)
+}
+
+func (s *Server) apiSnippet(w http.ResponseWriter, r *http.Request) {
+	repo := r.URL.Query().Get("repo")
+	sha := r.URL.Query().Get("sha")
+	file := r.URL.Query().Get("file")
+	lineStr := r.URL.Query().Get("line")
+
+	if repo == "" || sha == "" || file == "" || lineStr == "" {
+		http.Error(w, "missing params", 400)
+		return
+	}
+
+	line, err := strconv.Atoi(lineStr)
+	if err != nil {
+		http.Error(w, "invalid line", 400)
+		return
+	}
+
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 {
+		http.Error(w, "invalid repo", 400)
+		return
+	}
+
+	content, err := s.gh.GetFileContent(r.Context(), parts[0], parts[1], sha, file, line, 5)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	s.respondJSON(w, map[string]string{"content": content})
 }

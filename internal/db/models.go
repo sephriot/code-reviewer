@@ -41,15 +41,14 @@ type Review struct {
 }
 
 type ReviewComment struct {
-	ID          int64      `json:"id"`
-	ReviewID    int64      `json:"review_id"`
-	File        string     `json:"file"`
-	Line        int        `json:"line"`
-	Message     string     `json:"message"`
-	CodeSnippet string     `json:"code_snippet"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	ID        int64      `json:"id"`
+	ReviewID  int64      `json:"review_id"`
+	File      string     `json:"file"`
+	Line      int        `json:"line"`
+	Message   string     `json:"message"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 type PublishedReviewView struct {

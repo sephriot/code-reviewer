@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"log"
-	"strings"
 	"sync"
 
 	"github.com/sephriot/code-reviewer/internal/config"
@@ -110,22 +109,12 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 		}
 		review.ID = reviewID
 
-		parts := strings.Split(pr.Repo, "/")
 		for _, tc := range result.Comments {
-			snippet := ""
-			if len(parts) == 2 && pr.CommitSHA != "" {
-				if s, err := r.gh.GetFileContent(ctx, parts[0], parts[1], pr.CommitSHA, tc.File, tc.Line, 3); err == nil {
-					snippet = s
-				} else {
-					log.Printf("reactor: failed to fetch snippet for %s: %v", tc.File, err)
-				}
-			}
 			_, cerr := r.db.AddReviewComment(db.ReviewComment{
-				ReviewID:    review.ID,
-				File:        tc.File,
-				Line:        tc.Line,
-				Message:     tc.Message,
-				CodeSnippet: snippet,
+				ReviewID: review.ID,
+				File:     tc.File,
+				Line:     tc.Line,
+				Message:  tc.Message,
 			})
 			if cerr != nil {
 				log.Printf("reactor: failed to save comment: %v", cerr)

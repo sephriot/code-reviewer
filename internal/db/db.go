@@ -111,7 +111,6 @@ func migrate(db *sql.DB) error {
 		file TEXT NOT NULL DEFAULT '',
 		line INTEGER NOT NULL DEFAULT 0,
 		message TEXT NOT NULL DEFAULT '',
-		code_snippet TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT (datetime('now')),
 		updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 		deleted_at TEXT
@@ -129,7 +128,6 @@ func migrate(db *sql.DB) error {
 		log.Printf("db: reset %d orphaned in_progress review_requests to pending", n)
 	}
 
-	db.Exec("ALTER TABLE review_comments ADD COLUMN code_snippet TEXT NOT NULL DEFAULT ''")
 	return nil
 }
 
@@ -474,8 +472,8 @@ func (d *DB) ListPublishedReviews() ([]PublishedReviewView, error) {
 }
 
 func (d *DB) AddReviewComment(c ReviewComment) (int64, error) {
-	res, err := d.Exec("INSERT INTO review_comments (review_id, file, line, message, code_snippet) VALUES (?, ?, ?, ?, ?)",
-		c.ReviewID, c.File, c.Line, c.Message, c.CodeSnippet)
+	res, err := d.Exec("INSERT INTO review_comments (review_id, file, line, message) VALUES (?, ?, ?, ?)",
+		c.ReviewID, c.File, c.Line, c.Message)
 	if err != nil {
 		return 0, err
 	}
@@ -483,7 +481,7 @@ func (d *DB) AddReviewComment(c ReviewComment) (int64, error) {
 }
 
 func (d *DB) ListReviewComments(reviewID int64) ([]ReviewComment, error) {
-	rows, err := d.Query("SELECT id, review_id, file, line, message, code_snippet, created_at, updated_at, deleted_at FROM review_comments WHERE review_id = ? AND deleted_at IS NULL ORDER BY created_at ASC", reviewID)
+	rows, err := d.Query("SELECT id, review_id, file, line, message, created_at, updated_at, deleted_at FROM review_comments WHERE review_id = ? AND deleted_at IS NULL ORDER BY created_at ASC", reviewID)
 	if err != nil {
 		return nil, err
 	}
@@ -494,7 +492,7 @@ func (d *DB) ListReviewComments(reviewID int64) ([]ReviewComment, error) {
 		var createdAt scanTime
 		var updatedAt scanTime
 		var deletedAt nullScanTime
-		err := rows.Scan(&c.ID, &c.ReviewID, &c.File, &c.Line, &c.Message, &c.CodeSnippet, &createdAt, &updatedAt, &deletedAt)
+		err := rows.Scan(&c.ID, &c.ReviewID, &c.File, &c.Line, &c.Message, &createdAt, &updatedAt, &deletedAt)
 		if err != nil {
 			return nil, err
 		}
