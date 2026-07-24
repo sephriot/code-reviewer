@@ -224,6 +224,7 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
 
 .approve_without_comments { background: #d4edda; color: #155724; }
 .approve_with_comments { background: #d4edda; color: #155724; }
+.changes_requested { background: #ffeeba; color: #856404; }
 .human_review { background: #fff3cd; color: #856404; }
 .tool_failed { background: #f8d7da; color: #721c24; }
 

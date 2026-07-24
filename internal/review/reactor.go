@@ -31,6 +31,7 @@ const (
 	EventReviewSuccess      = "review_success"
 	EventReviewFail         = "review_fail"
 	EventHumanReviewNeeded  = "human_review_needed"
+	EventChangesRequested   = "changes_requested"
 )
 
 func NewReactor(cfg *config.Config, d *db.DB, gh *gh.Client, runner *Runner, onEvent func(ReviewEvent)) *Reactor {
@@ -119,6 +120,9 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 		case db.ReviewOutcomeHumanReview:
 			eventType = EventHumanReviewNeeded
 			msg = "human review required"
+		case db.ReviewOutcomeChangesRequested:
+			eventType = EventChangesRequested
+			msg = "changes requested"
 		case db.ReviewOutcomeToolFailed:
 			eventType = EventReviewFail
 			msg = "tool returned unrecognizable output"

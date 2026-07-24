@@ -141,6 +141,8 @@ func (c *Client) SubmitReview(ctx context.Context, owner, repo string, number in
 	switch submission.Outcome {
 	case "approve_without_comments", "approve_with_comments":
 		event = "APPROVE"
+	case "changes_requested":
+		event = "REQUEST_CHANGES"
 	case "human_review":
 		event = "COMMENT"
 	case "tool_failed":

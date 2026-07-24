@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/db"
@@ -119,12 +120,12 @@ func (r *Runner) execClaude(ctx context.Context, prompt string) (string, error) 
 		args = append(args, "--model", r.cfg.ClaudeModel)
 	}
 	if r.cfg.ShowThinking {
-		args = append(args, "--output-format", "stream-json", "--verbose")
+		args = append(args, "--output-format", "stream-json", "--include-partial-messages", "--verbose")
 	}
 	log.Printf("runner: executing %v", args)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Stdin = strings.NewReader(prompt)
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = log.Writer()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -133,25 +134,53 @@ func (r *Runner) execClaude(ctx context.Context, prompt string) (string, error) 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("claude start: %w", err)
 	}
+	startedAt := time.Now()
+	log.Printf("runner: claude started (pid=%d)", cmd.Process.Pid)
+	emitRunnerStatus("claude", "started (pid=%d)", cmd.Process.Pid)
 
-	var result string
 	if r.cfg.ShowThinking {
-		result, err = r.readClaudeStreamJSON(stdout)
-	} else {
-		var out []byte
-		out, err = io.ReadAll(io.TeeReader(stdout, os.Stdout))
-		if err == nil {
-			result = string(out)
+		result, err := r.readClaudeStreamJSON(stdout)
+		if err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			log.Printf("runner: claude stream failed after %s: %v", time.Since(startedAt).Round(time.Millisecond), err)
+			emitRunnerStatus("claude", "failed: %v", err)
+			return "", err
 		}
+		if err := cmd.Wait(); err != nil {
+			log.Printf("runner: claude failed after %s: %v", time.Since(startedAt).Round(time.Millisecond), err)
+			emitRunnerStatus("claude", "failed: %v", err)
+			return "", fmt.Errorf("claude execution: %w\noutput: %s", err, result)
+		}
+		log.Printf("runner: claude completed in %s (result_bytes=%d)", time.Since(startedAt).Round(time.Millisecond), len(result))
+		emitRunnerStatus("claude", "completed in %s (result_bytes=%d)", time.Since(startedAt).Round(time.Millisecond), len(result))
+		return result, nil
 	}
-	if err != nil {
-		cmd.Process.Kill()
-		return "", err
+
+	var buf strings.Builder
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		logRunnerOutput("claude", line)
+		buf.WriteString(line)
+		buf.WriteByte('\n')
+	}
+	if err := scanner.Err(); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		log.Printf("runner: claude stdout failed after %s: %v", time.Since(startedAt).Round(time.Millisecond), err)
+		emitRunnerStatus("claude", "stdout failed: %v", err)
+		return "", fmt.Errorf("claude stdout read: %w", err)
 	}
 	if err := cmd.Wait(); err != nil {
-		return "", fmt.Errorf("claude execution: %w\noutput: %s", err, result)
+		log.Printf("runner: claude failed after %s: %v", time.Since(startedAt).Round(time.Millisecond), err)
+		emitRunnerStatus("claude", "failed: %v", err)
+		return "", fmt.Errorf("claude execution: %w\noutput: %s", err, buf.String())
 	}
-	return result, nil
+	log.Printf("runner: claude completed in %s (output_bytes=%d)", time.Since(startedAt).Round(time.Millisecond), buf.Len())
+	emitRunnerStatus("claude", "completed in %s (output_bytes=%d)", time.Since(startedAt).Round(time.Millisecond), buf.Len())
+	return buf.String(), nil
 }
 
 // claudeStreamEvent matches a single --output-format stream-json line.
@@ -165,10 +194,19 @@ type claudeStreamEvent struct {
 			Text     string `json:"text,omitempty"`
 		} `json:"content"`
 	} `json:"message,omitempty"`
+	Event *struct {
+		Type  string `json:"type"`
+		Delta *struct {
+			Type     string `json:"type"`
+			Text     string `json:"text,omitempty"`
+			Thinking string `json:"thinking,omitempty"`
+		} `json:"delta,omitempty"`
+	} `json:"event,omitempty"`
 }
 
 func (r *Runner) readClaudeStreamJSON(stdout io.Reader) (string, error) {
 	var resultText string
+	emittedText := false
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 	for scanner.Scan() {
@@ -176,6 +214,7 @@ func (r *Runner) readClaudeStreamJSON(stdout io.Reader) (string, error) {
 		if line == "" {
 			continue
 		}
+		log.Printf("runner: claude stream: %s", line)
 		var ev claudeStreamEvent
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			continue
@@ -194,17 +233,40 @@ func (r *Runner) readClaudeStreamJSON(stdout io.Reader) (string, error) {
 						}
 					}
 				case "text":
-					if b.Text != "" {
-						os.Stdout.WriteString(b.Text)
+					if b.Text != "" && !emittedText {
+						logRunnerOutput("claude", b.Text)
+						emittedText = true
 					}
+				}
+			}
+		case "stream_event":
+			if ev.Event == nil || ev.Event.Delta == nil {
+				continue
+			}
+			switch ev.Event.Delta.Type {
+			case "thinking_delta":
+				if ev.Event.Delta.Thinking != "" {
+					log.Printf("runner: claude thinking: %s", ev.Event.Delta.Thinking)
+				}
+			case "text_delta":
+				if ev.Event.Delta.Text != "" {
+					logRunnerOutput("claude", ev.Event.Delta.Text)
+					emittedText = true
 				}
 			}
 		case "result":
 			resultText = ev.Result
+			log.Printf("runner: claude result received (result_bytes=%d)", len(resultText))
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("stream read: %w", err)
+	}
+	if resultText == "" {
+		return "", fmt.Errorf("stream ended without a result event")
+	}
+	if !emittedText {
+		logRunnerOutput("claude", resultText)
 	}
 	return resultText, nil
 }
@@ -214,8 +276,46 @@ func (r *Runner) execCodex(ctx context.Context, prompt string) (string, error) {
 	return "", fmt.Errorf("CODEX tool not yet implemented")
 }
 
-func (r *Runner) execAgent(ctx context.Context, prompt string) (string, error) {
+func (r *Runner) agentArgs() []string {
 	args := []string{"agent", "--print", "--output-format", "json", "--trust"}
+	if len(r.cfg.ReviewAgentArgv) > 0 {
+		args = append([]string(nil), r.cfg.ReviewAgentArgv...)
+	}
+	if r.cfg.ShowThinking {
+		args = setOutputFormat(args, "stream-json")
+		args = removeArg(args, "--stream-partial-output")
+	}
+	return args
+}
+
+func setOutputFormat(args []string, format string) []string {
+	for i, arg := range args {
+		if arg == "--output-format" {
+			if i+1 < len(args) {
+				args[i+1] = format
+			}
+			return args
+		}
+		if strings.HasPrefix(arg, "--output-format=") {
+			args[i] = "--output-format=" + format
+			return args
+		}
+	}
+	return append(args, "--output-format", format)
+}
+
+func removeArg(args []string, target string) []string {
+	filtered := args[:0]
+	for _, arg := range args {
+		if arg != target {
+			filtered = append(filtered, arg)
+		}
+	}
+	return filtered
+}
+
+func (r *Runner) execAgent(ctx context.Context, prompt string) (string, error) {
+	args := r.agentArgs()
 	log.Printf("runner: executing %v", args)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Stdin = strings.NewReader(prompt)
@@ -224,19 +324,95 @@ func (r *Runner) execAgent(ctx context.Context, prompt string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("stdout pipe: %w", err)
 	}
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = log.Writer()
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("agent start: %w", err)
 	}
-	output, _ := io.ReadAll(io.TeeReader(stdout, os.Stdout))
-	if err := cmd.Wait(); err != nil {
-		return "", fmt.Errorf("agent execution: %w\noutput: %s", err, string(output))
+	startedAt := time.Now()
+	log.Printf("runner: agent started (pid=%d)", cmd.Process.Pid)
+	emitRunnerStatus("agent", "started (pid=%d)", cmd.Process.Pid)
+	result, err := readAgentStreamJSON(stdout)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		log.Printf("runner: agent stream failed after %s: %v", time.Since(startedAt).Round(time.Millisecond), err)
+		emitRunnerStatus("agent", "failed: %v", err)
+		return "", err
 	}
-	return unwrapAgentOutput(string(output)), nil
+	if err := cmd.Wait(); err != nil {
+		log.Printf("runner: agent failed after %s: %v", time.Since(startedAt).Round(time.Millisecond), err)
+		emitRunnerStatus("agent", "failed: %v", err)
+		return "", fmt.Errorf("agent execution: %w\noutput: %s", err, result)
+	}
+	log.Printf("runner: agent completed in %s (result_bytes=%d)", time.Since(startedAt).Round(time.Millisecond), len(result))
+	emitRunnerStatus("agent", "completed in %s (result_bytes=%d)", time.Since(startedAt).Round(time.Millisecond), len(result))
+	return unwrapAgentOutput(result), nil
 }
 
-// Agent wraps --output-format json in {"type":"result","result":"<inner JSON>"}.
+func readAgentStreamJSON(stdout io.Reader) (string, error) {
+	var resultText string
+	var raw strings.Builder
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		raw.WriteString(line)
+		raw.WriteByte('\n')
+
+		var ev claudeStreamEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			log.Printf("runner: agent emitted non-JSON output (%d bytes)", len(line))
+			continue
+		}
+		if isAgentToolEvent(ev.Type) {
+			continue
+		}
+		log.Printf("runner: agent stream: %s", line)
+		if ev.Type == "result" {
+			resultText = ev.Result
+			log.Printf("runner: agent result received (result_bytes=%d)", len(resultText))
+			continue
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("stream read: %w", err)
+	}
+	if resultText != "" {
+		return resultText, nil
+	}
+	if raw.Len() == 0 {
+		return "", fmt.Errorf("stream ended without output")
+	}
+	return raw.String(), nil
+}
+
+func isAgentToolEvent(eventType string) bool {
+	switch eventType {
+	case "tool_call", "tool_result", "tool_use", "tool_use_result":
+		return true
+	default:
+		return false
+	}
+}
+
+func logRunnerOutput(tool, output string) {
+	if output == "" {
+		return
+	}
+	log.Printf("runner: %s output: %s", tool, output)
+}
+
+func emitRunnerStatus(tool, format string, args ...any) {
+	message := fmt.Sprintf(format, args...)
+	_, _ = fmt.Fprintf(os.Stdout, "runner: %s %s\n", tool, message)
+}
+
+// Agent's stream-json result event wraps the review JSON in
+// {"type":"result","result":"<inner JSON>"}.
 // Unwrap extracts inner content so parseOutput can parse it.
 func unwrapAgentOutput(raw string) string {
 	var env struct {
@@ -280,7 +456,7 @@ func mapActionToOutcome(action string) string {
 	case "approve_with_comment":
 		return db.ReviewOutcomeApproveWithComments
 	case "request_changes":
-		return db.ReviewOutcomeApproveWithComments
+		return db.ReviewOutcomeChangesRequested
 	case "requires_human_review":
 		return db.ReviewOutcomeHumanReview
 	default:

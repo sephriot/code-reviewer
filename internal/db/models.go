@@ -54,6 +54,7 @@ type ReviewComment struct {
 const (
 	ReviewOutcomeApproveWithoutComments = "approve_without_comments"
 	ReviewOutcomeApproveWithComments    = "approve_with_comments"
+	ReviewOutcomeChangesRequested       = "changes_requested"
 	ReviewOutcomeHumanReview            = "human_review"
 	ReviewOutcomeToolFailed             = "tool_failed"
 )

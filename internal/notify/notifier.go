@@ -5,13 +5,15 @@ import (
 	"log"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/db"
 )
 
 type Notifier struct {
-	cfg *config.Config
+	cfg   *config.Config
+	sayMu sync.Mutex
 }
 
 func New(cfg *config.Config) *Notifier {
@@ -31,6 +33,11 @@ func (n *Notifier) ReviewApproved(pr db.PullRequest) {
 func (n *Notifier) ReviewFailed(pr db.PullRequest, reason string) {
 	n.playSound(n.cfg.TimeoutSoundEnabled, n.cfg.TimeoutSoundFile, pr, fmt.Sprintf("review failed: %s", reason))
 	n.browserNotify("Review Failed", fmt.Sprintf("PR #%d by %s in %s: %s", pr.PRNumber, pr.Author, pr.Repo, reason))
+}
+
+func (n *Notifier) ReviewChangesRequested(pr db.PullRequest) {
+	n.playSound(n.cfg.HumanReviewSoundEnabled, n.cfg.HumanReviewSoundFile, pr, "changes requested")
+	n.browserNotify("Changes Requested", fmt.Sprintf("PR #%d in %s by %s needs changes", pr.PRNumber, pr.Repo, pr.Author))
 }
 
 func (n *Notifier) HumanReviewNeeded(pr db.PullRequest) {
@@ -78,10 +85,14 @@ func (n *Notifier) playSound(enabled bool, tmpl string, pr db.PullRequest, fallb
 
 func (n *Notifier) say(text string) {
 	text = strings.TrimPrefix(text, "say:")
-	cmd := exec.Command("say", "-r", fmt.Sprintf("%d", n.cfg.SpeechRate), text)
-	if err := cmd.Start(); err != nil {
-		log.Printf("notify: say error: %v", err)
-	}
+	go func() {
+		n.sayMu.Lock()
+		defer n.sayMu.Unlock()
+		cmd := exec.Command("say", "-r", fmt.Sprintf("%d", n.cfg.SpeechRate), text)
+		if err := cmd.Run(); err != nil {
+			log.Printf("notify: say error: %v", err)
+		}
+	}()
 }
 
 func (n *Notifier) browserNotify(title, body string) {

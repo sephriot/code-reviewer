@@ -85,6 +85,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.HandleFunc("/", s.dashboard)
 	mux.HandleFunc("/pr/", s.prDetail)
 	mux.HandleFunc("/analytics", s.analyticsPage)
+	mux.HandleFunc("/history", s.historyPage)
 	mux.HandleFunc("/filtered", s.filteredPRs)
 	mux.HandleFunc("/events", s.sseHandler)
 
@@ -147,9 +148,20 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	prMap := make(map[int64]db.PullRequest)
+	outcomeMap := make(map[int64]string)
+	for _, pr := range prs {
+		prMap[pr.ID] = pr
+		latest, err := s.d.GetLatestReviewByPR(pr.ID)
+		if err == nil && latest != nil {
+			outcomeMap[pr.ID] = latest.Outcome
+		}
+	}
 	s.render(w, "dashboard.html", map[string]interface{}{
-		"PRs":     prs,
-		"Requests": requests,
+		"PRs":        prs,
+		"Requests":   requests,
+		"PRMap":      prMap,
+		"OutcomeMap": outcomeMap,
 	})
 }
 
@@ -191,6 +203,17 @@ func (s *Server) prDetail(w http.ResponseWriter, r *http.Request) {
 		"PR":       pr,
 		"Reviews":  reviews,
 		"Comments": comments,
+	})
+}
+
+func (s *Server) historyPage(w http.ResponseWriter, r *http.Request) {
+	prs, err := s.d.ListClosedPRs()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	s.render(w, "history.html", map[string]interface{}{
+		"PRs": prs,
 	})
 }
 
@@ -410,6 +433,7 @@ func (s *Server) apiAnalytics(w http.ResponseWriter, r *http.Request) {
 	outcomes := []string{
 		db.ReviewOutcomeApproveWithoutComments,
 		db.ReviewOutcomeApproveWithComments,
+		db.ReviewOutcomeChangesRequested,
 		db.ReviewOutcomeHumanReview,
 		db.ReviewOutcomeToolFailed,
 	}

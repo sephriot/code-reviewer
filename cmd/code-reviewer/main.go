@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -40,6 +43,12 @@ func run(ctx context.Context) error {
 		return err
 	}
 
+	closeLogs, err := configureLogging(cfg.LogFile)
+	if err != nil {
+		return err
+	}
+	defer closeLogs()
+
 	log.Printf("starting code-reviewer (log=%s, interval=%v, timeout=%v)", cfg.LogLevel, cfg.PollInterval, cfg.ReviewTimeout)
 
 	database, err := db.Open(cfg.DBPath)
@@ -63,6 +72,8 @@ func run(ctx context.Context) error {
 			notifier.ReviewFailed(pr, event.Message)
 		case review.EventHumanReviewNeeded:
 			notifier.HumanReviewNeeded(pr)
+		case review.EventChangesRequested:
+			notifier.ReviewChangesRequested(pr)
 		}
 	}
 
@@ -138,4 +149,28 @@ func run(ctx context.Context) error {
 			}()
 		}
 	}
+}
+
+func configureLogging(path string) (func(), error) {
+	if path == "" {
+		return func() {}, nil
+	}
+
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create log directory: %w", err)
+		}
+	}
+
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open log file %s: %w", path, err)
+	}
+
+	previous := log.Writer()
+	log.SetOutput(io.MultiWriter(os.Stderr, file))
+	return func() {
+		log.SetOutput(previous)
+		_ = file.Close()
+	}, nil
 }

@@ -16,7 +16,7 @@ This is a standalone app, meant to run on a single computer with exactly 1 user.
 User interacts with the app via Web UI.
 App has 2 loops: 
 1. Scanning loop - periodically executed (e.g. every 1 minute). Go over GitHub and reads open PRs assigned to a given user, stores them locally marking whether PR is still open and whether it still needs review (if the user left a review in GitHub already, it should not be marked as "needs review"). Once scan and reconciliation is done, it stores review_requests in a separate table. Once done, and there are new review_requests, signal reaction loop to start. If a PR gets a new commit it is meant to be reviewed again. Mark the previous record as outdated and record a new one. Each PR should be uniquely identified by commit SHA and repository combination.
-2. Reaction loop - periodically executed (e.g. every 1 minute or on demand). Go over review requests table and executed them one by one, by invoking tools like `agent`, `codex` or `claude`. All of these tools are called via shell command execution. Timeout for a single review is 15 minutes. Once that tool finishes work, it parses the output (either success or error) and assigns the result to the PR. The review can have 4 outcomes, 3 successful ones are - approve_without_comments, approve_with_comments, human_review. The failure scenario - tool execution failed - is the fourth outcome and should be surfaced in the UI. PR reviews are sequential, only one run at a time, so review_requests table is kind of a persistent queue. User is meant to supply (define a path in the config) to review prompt, a prompt used to instruct the tool how to conduct review. Some prompt examples are in @prompts directory.
+2. Reaction loop - periodically executed (e.g. every 1 minute or on demand). Go over review requests table and executed them one by one, by invoking tools like `agent`, `codex` or `claude`. All of these tools are called via shell command execution. Timeout for a single review is 15 minutes. Once that tool finishes work, it parses the output (either success or error) and assigns the result to the PR. The review can have 5 outcomes, 4 successful ones are - approve_without_comments, approve_with_comments, changes_requested, human_review. The failure scenario - tool execution failed - is the fifth outcome and should be surfaced in the UI. PR reviews are sequential, only one run at a time, so review_requests table is kind of a persistent queue. User is meant to supply (define a path in the config) to review prompt, a prompt used to instruct the tool how to conduct review. Some prompt examples are in @prompts directory.
 There should be two notification flavours (configurable) emitted, a TTS notification via `say` tool from macOS (app will be used on mac exclusively) and/or a browser notification. 
 Say notifications should be templatable, user should be able to define what exactly is being played upon notification.
 Notifications should be emitted upon following events:
@@ -51,7 +51,7 @@ Dimensions:
 - time
 - repository
 - author
-- Review status (fail / success with no comments / success with comments / human review required).
+- Review status (fail / success with no comments / success with comments / changes requested / human review required).
 
 Default chart period - last 30 days.
 Other options:
