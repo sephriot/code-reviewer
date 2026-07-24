@@ -1,0 +1,18 @@
+id: K-000026
+title: Legacy reviews.db → go-reviewer.db migration
+type: recipe
+confidence: high
+summary: 'One-shot migrator imports pr_reviews + pending_approvals from reviews.db into go-reviewer.db. Dedup by (repo, pr, commit_sha); empty SHAs get synthetic legacy:nosha: markers. Skips own_prs/eye-markers/queue. Idempotent. Prefer edited_* and inline_comments JSON for review_comments.'
+details: 'One-shot migrator imports pr_reviews + pending_approvals from reviews.db into go-reviewer.db. Dedup by (repo, pr, commit_sha); empty SHAs get synthetic legacy:nosha: markers. Skips own_prs/eye-markers/queue. Idempotent. Prefer edited_* and inline_comments JSON for review_comments.'
+tags:
+- migration
+- database
+- legacy
+sources:
+- internal/migrate/migrate.go
+- cmd/migrate-legacy/main.go
+- docs/superpowers/specs/2026-07-24-legacy-db-migration-design.md
+links:
+- K-000016
+- K-000002
+updated_at: 2026-07-24
