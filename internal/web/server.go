@@ -234,8 +234,13 @@ func (s *Server) sseHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			data, _ := json.Marshal(event)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				return
+			}
 			flusher.Flush()
+			if ctx.Err() != nil {
+				return
+			}
 		}
 	}
 }

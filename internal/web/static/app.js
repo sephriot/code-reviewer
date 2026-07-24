@@ -1,9 +1,10 @@
-document.addEventListener('DOMContentLoaded', function() {
-  if (Notification && Notification.permission === 'default') {
-    Notification.requestPermission();
-  }
+var evtSource;
 
-  const evtSource = new EventSource('/events');
+function connectSSE() {
+  if (evtSource) {
+    evtSource.close();
+  }
+  evtSource = new EventSource('/events');
   evtSource.onmessage = function(e) {
     try {
       const event = JSON.parse(e.data);
@@ -12,6 +13,25 @@ document.addEventListener('DOMContentLoaded', function() {
       console.error('SSE parse error', err);
     }
   };
+  evtSource.onerror = function() {
+    evtSource.close();
+  };
+}
+
+function disconnectSSE() {
+  if (evtSource) {
+    evtSource.close();
+    evtSource = null;
+  }
+}
+
+window.addEventListener('beforeunload', disconnectSSE);
+
+document.addEventListener('DOMContentLoaded', function() {
+  if (Notification && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+  connectSSE();
 });
 
 function handleEvent(event) {
