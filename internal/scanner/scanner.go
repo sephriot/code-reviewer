@@ -13,15 +13,23 @@ import (
 	"github.com/sephriot/code-reviewer/internal/db"
 )
 
+// githubAPI is the subset of GitHub client methods the scanner needs.
+type githubAPI interface {
+	ListAssignedPRs(ctx context.Context) ([]gh.PRSummary, error)
+	ListOwnPRs(ctx context.Context) ([]gh.PRSummary, error)
+	GetPRDetails(ctx context.Context, owner, repo string, number int) (*gh.PRSummary, error)
+	HasUserReviewed(ctx context.Context, owner, repo string, number int) (bool, error)
+}
+
 type Scanner struct {
 	cfg   *config.Config
-	gh    *gh.Client
+	gh    githubAPI
 	db    *db.DB
 	onNew func()
 }
 
-func New(cfg *config.Config, gh *gh.Client, d *db.DB, onNew func()) *Scanner {
-	return &Scanner{cfg: cfg, gh: gh, db: d, onNew: onNew}
+func New(cfg *config.Config, client *gh.Client, d *db.DB, onNew func()) *Scanner {
+	return &Scanner{cfg: cfg, gh: client, db: d, onNew: onNew}
 }
 
 func (s *Scanner) Scan(ctx context.Context) error {
@@ -63,6 +71,8 @@ func (s *Scanner) Scan(ctx context.Context) error {
 		}
 	}
 
+	s.reconcileStalePRs(ctx, dedup)
+
 	log.Printf("scan: done, %d new review requests", newRequests)
 
 	if newRequests > 0 && s.onNew != nil {
@@ -76,11 +86,33 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 
 	if !matchesFilter(fullName, s.cfg.RepoFilterRegex()) {
 		log.Printf("scan: filtered out repo=%s %s/%s#%d", fullName, pr.Owner, pr.Repo, pr.Number)
-		return false, nil
+		_, err := s.db.UpsertPR(db.PullRequest{
+			Repo:           fullName,
+			PRNumber:       pr.Number,
+			Title:          pr.Title,
+			Author:         pr.Author,
+			CommitSHA:      pr.CommitSHA,
+			Draft:          pr.Draft,
+			State:          openOr(pr.State),
+			NeedsReview:    false,
+			FilteredReason: "repo",
+		})
+		return false, err
 	}
 	if !matchesFilter(pr.Author, s.cfg.AuthorFilterRegex()) {
 		log.Printf("scan: filtered out author=%s %s/%s#%d", pr.Author, pr.Owner, pr.Repo, pr.Number)
-		return false, nil
+		_, err := s.db.UpsertPR(db.PullRequest{
+			Repo:           fullName,
+			PRNumber:       pr.Number,
+			Title:          pr.Title,
+			Author:         pr.Author,
+			CommitSHA:      pr.CommitSHA,
+			Draft:          pr.Draft,
+			State:          openOr(pr.State),
+			NeedsReview:    false,
+			FilteredReason: "author",
+		})
+		return false, err
 	}
 
 	details, err := s.gh.GetPRDetails(ctx, pr.Owner, pr.Repo, pr.Number)
@@ -89,8 +121,35 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 	}
 
 	if details.Draft {
-		log.Printf("scan: skip draft %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
-		return false, nil
+		log.Printf("scan: filtered out draft %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
+		_, err := s.db.UpsertPR(db.PullRequest{
+			Repo:           fullName,
+			PRNumber:       pr.Number,
+			Title:          details.Title,
+			Author:         details.Author,
+			CommitSHA:      details.CommitSHA,
+			Draft:          true,
+			State:          "open",
+			NeedsReview:    false,
+			FilteredReason: "draft",
+		})
+		return false, err
+	}
+
+	if details.State != "open" {
+		log.Printf("scan: closed/merged %s/%s#%d state=%s -> history", pr.Owner, pr.Repo, pr.Number, details.State)
+		_, err := s.db.UpsertPR(db.PullRequest{
+			Repo:           fullName,
+			PRNumber:       pr.Number,
+			Title:          details.Title,
+			Author:         details.Author,
+			CommitSHA:      details.CommitSHA,
+			Draft:          details.Draft,
+			State:          details.State,
+			NeedsReview:    false,
+			FilteredReason: "",
+		})
+		return false, err
 	}
 
 	existing, err := s.db.GetPRByRepoAndNumber(fullName, pr.Number)
@@ -103,11 +162,38 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 		if err != nil {
 			return false, err
 		}
+		needsReview := !hasReviewed
+		// Clear any prior filter reason (e.g. draft→ready same SHA) and sync needs_review.
+		_, err = s.db.UpsertPR(db.PullRequest{
+			Repo:           fullName,
+			PRNumber:       pr.Number,
+			Title:          details.Title,
+			Author:         details.Author,
+			CommitSHA:      details.CommitSHA,
+			Draft:          false,
+			State:          "open",
+			NeedsReview:    needsReview,
+			IsOutdated:     existing.IsOutdated,
+			FilteredReason: "",
+		})
+		if err != nil {
+			return false, err
+		}
 		if hasReviewed {
-			s.db.SetPRNeedsReview(existing.ID, false)
 			log.Printf("scan: %s/%s#%d already reviewed, needs_review=false", pr.Owner, pr.Repo, pr.Number)
+
+			extExists, err := s.db.HasExternalReview(existing.ID, details.CommitSHA)
+			if err != nil {
+				log.Printf("scan: error checking external review for %s/%s#%d: %v", pr.Owner, pr.Repo, pr.Number, err)
+			} else if !extExists {
+				_, err := s.db.CreateExternalReview(existing.ID, details.CommitSHA)
+				if err != nil {
+					log.Printf("scan: error recording external review for %s/%s#%d: %v", pr.Owner, pr.Repo, pr.Number, err)
+				} else {
+					log.Printf("scan: recorded external review for %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
+				}
+			}
 		} else {
-			s.db.SetPRNeedsReview(existing.ID, true)
 			log.Printf("scan: %s/%s#%d not reviewed, needs_review=true", pr.Owner, pr.Repo, pr.Number)
 		}
 		return false, nil
@@ -127,20 +213,32 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 
 	needsReview := !hasReviewed
 	prID, err := s.db.UpsertPR(db.PullRequest{
-		Repo:        fullName,
-		PRNumber:    pr.Number,
-		Title:       details.Title,
-		Author:      details.Author,
-		CommitSHA:   details.CommitSHA,
-		Draft:       details.Draft,
-		State:       "open",
-		NeedsReview: needsReview,
+		Repo:           fullName,
+		PRNumber:       pr.Number,
+		Title:          details.Title,
+		Author:         details.Author,
+		CommitSHA:      details.CommitSHA,
+		Draft:          details.Draft,
+		State:          "open",
+		NeedsReview:    needsReview,
+		FilteredReason: "",
 	})
 	if err != nil {
 		return false, err
 	}
 
 	if !needsReview {
+		extExists, err := s.db.HasExternalReview(prID, details.CommitSHA)
+		if err != nil {
+			log.Printf("scan: error checking external review for %s/%s#%d: %v", pr.Owner, pr.Repo, pr.Number, err)
+		} else if !extExists {
+			_, err := s.db.CreateExternalReview(prID, details.CommitSHA)
+			if err != nil {
+				log.Printf("scan: error recording external review for %s/%s#%d: %v", pr.Owner, pr.Repo, pr.Number, err)
+			} else {
+				log.Printf("scan: recorded external review for %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
+			}
+		}
 		return false, nil
 	}
 
@@ -150,6 +248,51 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 	}
 	log.Printf("scan: review request created for %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
 	return true, nil
+}
+
+func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSummary) {
+	// Include filtered opens so a draft/repo/author discard that merges leaves Filtered.
+	openPRs, err := s.db.ListOpenPRs()
+	if err != nil {
+		log.Printf("scan: error listing open PRs for reconciliation: %v", err)
+		return
+	}
+
+	for _, pr := range openPRs {
+		parts := strings.SplitN(pr.Repo, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.ToLower(fmt.Sprintf("%s/%s#%d", parts[0], parts[1], pr.PRNumber))
+		if _, found := seen[key]; found {
+			continue
+		}
+
+		details, err := s.gh.GetPRDetails(ctx, parts[0], parts[1], pr.PRNumber)
+		if err != nil {
+			log.Printf("scan: reconcile error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
+			continue
+		}
+		if details.State == "open" {
+			continue
+		}
+
+		log.Printf("scan: reconcile %s#%d state %s -> %s (history)", pr.Repo, pr.PRNumber, pr.State, details.State)
+		_, err = s.db.UpsertPR(db.PullRequest{
+			Repo:           pr.Repo,
+			PRNumber:       pr.PRNumber,
+			Title:          details.Title,
+			Author:         details.Author,
+			CommitSHA:      details.CommitSHA,
+			Draft:          details.Draft,
+			State:          details.State,
+			NeedsReview:    false,
+			FilteredReason: "",
+		})
+		if err != nil {
+			log.Printf("scan: reconcile upsert error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
+		}
+	}
 }
 
 func matchesFilter(value string, patterns []*regexp.Regexp) bool {
@@ -166,4 +309,11 @@ func matchesFilter(value string, patterns []*regexp.Regexp) bool {
 
 func prKey(owner, repo string, number int) string {
 	return strings.ToLower(fmt.Sprintf("%s/%s#%d", owner, repo, number))
+}
+
+func openOr(state string) string {
+	if state == "" {
+		return "open"
+	}
+	return state
 }

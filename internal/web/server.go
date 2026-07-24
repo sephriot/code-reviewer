@@ -215,7 +215,7 @@ func (s *Server) prDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) historyPage(w http.ResponseWriter, r *http.Request) {
-	prs, err := s.d.ListClosedPRs()
+	prs, err := s.d.ListHistoryPRs()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -236,7 +236,7 @@ func (s *Server) analyticsPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) filteredPRs(w http.ResponseWriter, r *http.Request) {
-	prs, err := s.d.ListOpenPRs()
+	prs, err := s.d.ListFilteredPRs()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -508,6 +508,7 @@ func (s *Server) apiAnalytics(w http.ResponseWriter, r *http.Request) {
 			db.ReviewOutcomeChangesRequested,
 			db.ReviewOutcomeHumanReview,
 			db.ReviewOutcomeToolFailed,
+			db.ReviewOutcomeReviewedExternally,
 		}
 		counts := map[string]int{}
 		for _, o := range outcomes {

@@ -272,6 +272,7 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
 .changes_requested { background: #ffeeba; color: #856404; }
 .human_review { background: #fff3cd; color: #856404; }
 .tool_failed { background: #f8d7da; color: #721c24; }
+.reviewed_externally { background: #cce5ff; color: #004085; }
 
 .comment code {
   display: block;

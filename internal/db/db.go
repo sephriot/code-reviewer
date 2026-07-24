@@ -120,6 +120,15 @@ func migrate(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	// add columns if missing (idempotent)
+	db.Exec("ALTER TABLE reviews ADD COLUMN commit_sha TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE pull_requests ADD COLUMN filtered_reason TEXT")
+	// Closed/merged was briefly mis-tagged as filtered_reason='state'; clear it.
+	if res, err := db.Exec("UPDATE pull_requests SET filtered_reason = NULL WHERE filtered_reason = 'state'"); err != nil {
+		return err
+	} else if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("db: cleared filtered_reason=state on %d PRs (moved to history)", n)
+	}
 	res, err := db.Exec("UPDATE review_requests SET status = 'pending', updated_at = datetime('now') WHERE status = 'in_progress'")
 	if err != nil {
 		return err
@@ -139,10 +148,11 @@ func scanPR(row *sql.Row) (PullRequest, error) {
 	var createdAt scanTime
 	var updatedAt scanTime
 	var deletedAt nullScanTime
+	var filteredReason *string
 	err := row.Scan(
 		&pr.ID, &pr.Repo, &pr.PRNumber, &pr.Title, &pr.Author,
 		&pr.CommitSHA, &draft, &pr.State, &needsReview, &outdated,
-		&createdAt, &updatedAt, &deletedAt,
+		&createdAt, &updatedAt, &deletedAt, &filteredReason,
 	)
 	pr.Draft = draft == 1
 	pr.NeedsReview = needsReview == 1
@@ -151,6 +161,9 @@ func scanPR(row *sql.Row) (PullRequest, error) {
 	pr.UpdatedAt = time.Time(updatedAt)
 	if deletedAt.Valid {
 		pr.DeletedAt = &deletedAt.Time
+	}
+	if filteredReason != nil {
+		pr.FilteredReason = *filteredReason
 	}
 	return pr, err
 }
@@ -165,10 +178,11 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		var createdAt scanTime
 		var updatedAt scanTime
 		var deletedAt nullScanTime
+		var filteredReason *string
 		err := rows.Scan(
 			&pr.ID, &pr.Repo, &pr.PRNumber, &pr.Title, &pr.Author,
 			&pr.CommitSHA, &draft, &pr.State, &needsReview, &outdated,
-			&createdAt, &updatedAt, &deletedAt,
+			&createdAt, &updatedAt, &deletedAt, &filteredReason,
 		)
 		if err != nil {
 			return nil, err
@@ -181,6 +195,9 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		if deletedAt.Valid {
 			pr.DeletedAt = &deletedAt.Time
 		}
+		if filteredReason != nil {
+			pr.FilteredReason = *filteredReason
+		}
 		prs = append(prs, pr)
 	}
 	return prs, rows.Err()
@@ -190,8 +207,8 @@ func (d *DB) UpsertPR(pr PullRequest) (int64, error) {
 	var existingID int64
 	err := d.QueryRow("SELECT id FROM pull_requests WHERE repo = ? AND pr_number = ? AND deleted_at IS NULL", pr.Repo, pr.PRNumber).Scan(&existingID)
 	if err == sql.ErrNoRows {
-		res, err := d.Exec(`INSERT INTO pull_requests (repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			pr.Repo, pr.PRNumber, pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated))
+		res, err := d.Exec(`INSERT INTO pull_requests (repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, filtered_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			pr.Repo, pr.PRNumber, pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason))
 		if err != nil {
 			return 0, err
 		}
@@ -200,13 +217,13 @@ func (d *DB) UpsertPR(pr PullRequest) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	_, err = d.Exec(`UPDATE pull_requests SET title=?, author=?, commit_sha=?, draft=?, state=?, needs_review=?, is_outdated=?, updated_at=datetime('now') WHERE id=?`,
-		pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), existingID)
+	_, err = d.Exec(`UPDATE pull_requests SET title=?, author=?, commit_sha=?, draft=?, state=?, needs_review=?, is_outdated=?, filtered_reason=?, updated_at=datetime('now') WHERE id=?`,
+		pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), existingID)
 	return existingID, err
 }
 
 func (d *DB) GetPRByRepoAndNumber(repo string, number int) (*PullRequest, error) {
-	row := d.QueryRow("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at FROM pull_requests WHERE repo = ? AND pr_number = ? AND deleted_at IS NULL", repo, number)
+	row := d.QueryRow("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE repo = ? AND pr_number = ? AND deleted_at IS NULL", repo, number)
 	pr, err := scanPR(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -218,7 +235,7 @@ func (d *DB) GetPRByRepoAndNumber(repo string, number int) (*PullRequest, error)
 }
 
 func (d *DB) GetPR(id int64) (*PullRequest, error) {
-	row := d.QueryRow("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at FROM pull_requests WHERE id = ? AND deleted_at IS NULL", id)
+	row := d.QueryRow("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE id = ? AND deleted_at IS NULL", id)
 	pr, err := scanPR(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -230,7 +247,7 @@ func (d *DB) GetPR(id int64) (*PullRequest, error) {
 }
 
 func (d *DB) ListOpenPRs() ([]PullRequest, error) {
-	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at FROM pull_requests WHERE state = 'open' AND deleted_at IS NULL ORDER BY updated_at DESC")
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE state = 'open' AND deleted_at IS NULL ORDER BY updated_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +256,34 @@ func (d *DB) ListOpenPRs() ([]PullRequest, error) {
 }
 
 func (d *DB) ListPRsNeedingReview() ([]PullRequest, error) {
-	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at FROM pull_requests WHERE state = 'open' AND needs_review = 1 AND is_outdated = 0 AND deleted_at IS NULL ORDER BY updated_at ASC")
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE state = 'open' AND needs_review = 1 AND is_outdated = 0 AND filtered_reason IS NULL AND deleted_at IS NULL ORDER BY updated_at ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPRs(rows)
+}
+
+func (d *DB) ListFilteredPRs() ([]PullRequest, error) {
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE state = 'open' AND filtered_reason IS NOT NULL AND deleted_at IS NULL ORDER BY updated_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPRs(rows)
+}
+
+func (d *DB) ListHistoryPRs() ([]PullRequest, error) {
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE deleted_at IS NULL AND (state != 'open' OR (state = 'open' AND needs_review = 0 AND filtered_reason IS NULL)) ORDER BY updated_at DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPRs(rows)
+}
+
+func (d *DB) ListOpenActivePRs() ([]PullRequest, error) {
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE state = 'open' AND filtered_reason IS NULL AND deleted_at IS NULL ORDER BY updated_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -248,12 +292,7 @@ func (d *DB) ListPRsNeedingReview() ([]PullRequest, error) {
 }
 
 func (d *DB) ListClosedPRs() ([]PullRequest, error) {
-	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at FROM pull_requests WHERE deleted_at IS NULL AND state != 'open' ORDER BY updated_at DESC")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanPRs(rows)
+	return d.ListHistoryPRs()
 }
 
 func (d *DB) SetPRNeedsReview(id int64, needs bool) error {
@@ -267,7 +306,7 @@ func (d *DB) MarkPROutdated(id int64) error {
 }
 
 func (d *DB) ClosePR(id int64) error {
-	_, err := d.Exec("UPDATE pull_requests SET state = 'closed', needs_review = 0, updated_at = datetime('now') WHERE id = ?", id)
+	_, err := d.Exec("UPDATE pull_requests SET state = 'closed', needs_review = 0, filtered_reason = NULL, updated_at = datetime('now') WHERE id = ?", id)
 	return err
 }
 
@@ -282,6 +321,13 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func nullableStr(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func (d *DB) CreateReviewRequest(prID int64) (int64, error) {
@@ -377,8 +423,8 @@ func (d *DB) ListReviewRequests() ([]ReviewRequest, error) {
 }
 
 func (d *DB) CreateReview(r Review) (int64, error) {
-	res, err := d.Exec(`INSERT INTO reviews (pull_request_id, review_request_id, outcome, summary, general_comment) VALUES (?, ?, ?, ?, ?)`,
-		r.PullRequestID, r.ReviewRequestID, r.Outcome, r.Summary, r.GeneralComment)
+	res, err := d.Exec(`INSERT INTO reviews (pull_request_id, review_request_id, outcome, commit_sha, summary, general_comment) VALUES (?, ?, ?, ?, ?, ?)`,
+		r.PullRequestID, r.ReviewRequestID, r.Outcome, r.CommitSHA, r.Summary, r.GeneralComment)
 	if err != nil {
 		return 0, err
 	}
@@ -390,7 +436,7 @@ func (d *DB) scanReview(scanner func(dest ...interface{}) error) (Review, error)
 	var createdAt scanTime
 	var updatedAt scanTime
 	var deletedAt nullScanTime
-	err := scanner(&r.ID, &r.PullRequestID, &r.ReviewRequestID, &r.Outcome, &r.Summary, &r.GeneralComment, &r.Published, &createdAt, &updatedAt, &deletedAt)
+	err := scanner(&r.ID, &r.PullRequestID, &r.ReviewRequestID, &r.Outcome, &r.CommitSHA, &r.Summary, &r.GeneralComment, &r.Published, &createdAt, &updatedAt, &deletedAt)
 	if err != nil {
 		return r, err
 	}
@@ -403,7 +449,7 @@ func (d *DB) scanReview(scanner func(dest ...interface{}) error) (Review, error)
 }
 
 func (d *DB) GetReview(id int64) (*Review, error) {
-	r, err := d.scanReview(d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE id = ? AND deleted_at IS NULL", id).Scan)
+	r, err := d.scanReview(d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, commit_sha, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE id = ? AND deleted_at IS NULL", id).Scan)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -414,7 +460,7 @@ func (d *DB) GetReview(id int64) (*Review, error) {
 }
 
 func (d *DB) GetReviewByRequestID(requestID int64) (*Review, error) {
-	r, err := d.scanReview(d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE review_request_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1", requestID).Scan)
+	r, err := d.scanReview(d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, commit_sha, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE review_request_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1", requestID).Scan)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -425,7 +471,7 @@ func (d *DB) GetReviewByRequestID(requestID int64) (*Review, error) {
 }
 
 func (d *DB) GetLatestReviewByPR(prID int64) (*Review, error) {
-	r, err := d.scanReview(d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE pull_request_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1", prID).Scan)
+	r, err := d.scanReview(d.QueryRow("SELECT id, pull_request_id, review_request_id, outcome, commit_sha, summary, general_comment, published, created_at, updated_at, deleted_at FROM reviews WHERE pull_request_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1", prID).Scan)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -571,4 +617,63 @@ func (d *DB) CountPublishedReviewsSince(since time.Time) (int, error) {
 	var count int
 	err := d.QueryRow("SELECT COUNT(*) FROM reviews WHERE published = 1 AND created_at >= ? AND deleted_at IS NULL", since.Format("2006-01-02 15:04:05")).Scan(&count)
 	return count, err
+}
+
+// CreateExternalReview records a review that was performed outside this tool.
+// It creates a synthetic ReviewRequest with status=done and a Review with
+// outcome=reviewed_externally, published=true, linked to that request.
+func (d *DB) CreateExternalReview(prID int64, commitSHA string) (int64, error) {
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	// Insert synthetic review request with status=done
+	res, err := tx.Exec(
+		`INSERT INTO review_requests (pull_request_id, status, created_at, updated_at) VALUES (?, 'done', ?, ?)`,
+		prID, now, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("insert review_request: %w", err)
+	}
+	reqID, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("last insert id review_request: %w", err)
+	}
+
+	// Insert review with outcome=reviewed_externally, published=true
+	res, err = tx.Exec(
+		`INSERT INTO reviews (pull_request_id, review_request_id, outcome, commit_sha, summary, general_comment, published, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+		prID, reqID, ReviewOutcomeReviewedExternally, commitSHA, "Reviewed externally", "", now, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("insert review: %w", err)
+	}
+	reviewID, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("last insert id review: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit transaction: %w", err)
+	}
+
+	return reviewID, nil
+}
+
+// HasExternalReview checks whether a review with outcome=reviewed_externally
+// already exists for the given PR and commit SHA.
+func (d *DB) HasExternalReview(prID int64, commitSHA string) (bool, error) {
+	var count int
+	err := d.QueryRow(
+		`SELECT COUNT(*) FROM reviews WHERE pull_request_id = ? AND commit_sha = ? AND outcome = ? AND deleted_at IS NULL`,
+		prID, commitSHA, ReviewOutcomeReviewedExternally,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check external review: %w", err)
+	}
+	return count > 0, nil
 }

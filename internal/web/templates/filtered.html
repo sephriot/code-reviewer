@@ -1,6 +1,6 @@
 {{define "content"}}
 <h1>Filtered Pull Requests</h1>
-<p class="subtitle">PRs that matched repo/author filters and were skipped by the scanner. You can manually request a review.</p>
+<p class="subtitle">PRs discarded by scanner filters (repo, author, or draft). Closed and merged PRs appear in History.</p>
 
 <section class="pr-list">
   {{range .PRs}}
@@ -15,6 +15,7 @@
     <div class="pr-meta">
       <span>{{.Author}}</span>
       <span class="pr-status {{.State}}">{{.State}}</span>
+      {{if .FilteredReason}}<span class="badge filtered-reason">{{.FilteredReason}}</span>{{end}}
     </div>
     <button onclick="requestReview({{.ID}})" class="btn btn-sm">Request Review</button>
   </div>
