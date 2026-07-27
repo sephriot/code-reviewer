@@ -52,3 +52,21 @@ function handleEvent(event) {
   document.body.appendChild(toast);
   setTimeout(function() { toast.remove(); }, 5000);
 }
+
+async function removeQueueItem(id, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/review-request/' + id, { method: 'DELETE' });
+    if (!res.ok) {
+      const body = await res.text();
+      alert('Failed to remove queue item: ' + (body || res.status));
+      if (btn) btn.disabled = false;
+      return;
+    }
+    const li = btn && btn.closest ? btn.closest('li') : null;
+    if (li) li.remove();
+  } catch (err) {
+    alert('Failed to remove queue item: ' + err);
+    if (btn) btn.disabled = false;
+  }
+}

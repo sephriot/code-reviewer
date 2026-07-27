@@ -1,4 +1,4 @@
-next_id: 30
+next_id: 32
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -132,6 +132,9 @@ entries:
   - design.md
   - internal/config/config.go
   - PROGRESS.md
+  links:
+  - K-000030
+  - K-000031
 - id: K-000015
   title: project structure and package roles
   type: note
@@ -307,3 +310,32 @@ entries:
   - internal/web/templates/pr_detail.html
   - internal/web/server.go
   - internal/db/db.go
+- id: K-000030
+  title: 'Review Queue shows #0 when PR missing from dashboard PRMap'
+  type: gotcha
+  confidence: medium
+  tags:
+  - ui
+  - dashboard
+  - queue
+  sources:
+  - internal/web/templates/dashboard.html
+  - internal/web/server.go
+  links:
+  - K-000012
+  - K-000031
+- id: K-000031
+  title: Review queue remove and in-progress cancel
+  type: decision
+  confidence: high
+  tags:
+  - queue
+  - reactor
+  - ui
+  sources:
+  - internal/review/reactor.go
+  - internal/web/server.go
+  - docs/superpowers/specs/2026-07-27-queue-remove-cancel-design.md
+  links:
+  - K-000012
+  - K-000030

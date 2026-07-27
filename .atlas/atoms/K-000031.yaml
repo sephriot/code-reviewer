@@ -1,0 +1,18 @@
+id: K-000031
+title: Review queue remove and in-progress cancel
+type: decision
+confidence: high
+summary: Soft-delete review_requests to dequeue; cancel active context to interrupt in-progress runs without writing a review row.
+details: Queue items can be soft-deleted via DELETE /api/review-request/{id}. In-progress reviews are interrupted by canceling a per-request context (CommandContext kills the tool). No review history row; needs_review stays true so the scanner may re-queue.
+tags:
+- queue
+- reactor
+- ui
+sources:
+- internal/review/reactor.go
+- internal/web/server.go
+- docs/superpowers/specs/2026-07-27-queue-remove-cancel-design.md
+links:
+- K-000012
+- K-000030
+updated_at: 2026-07-27

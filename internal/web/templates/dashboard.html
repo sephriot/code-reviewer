@@ -32,10 +32,11 @@
   <ul>
   {{range .Requests}}
     {{$pr := index $.PRMap .PullRequestID}}
-    <li class="rr-{{.Status}}">
+    <li class="rr-{{.Status}}" data-rr-id="{{.ID}}">
       <a href="/pr/{{.PullRequestID}}">{{$pr.Repo}}#{{$pr.PRNumber}}</a>
       <span class="status-badge {{.Status}}">{{.Status}}</span>
       <small>{{.CreatedAt | formatTime}}</small>
+      <button type="button" class="btn btn-sm btn-danger queue-remove" onclick="removeQueueItem({{.ID}}, this)" title="{{if eq .Status "in_progress"}}Stop review{{else}}Remove from queue{{end}}">{{if eq .Status "in_progress"}}Stop{{else}}Remove{{end}}</button>
     </li>
   {{else}}
     <li class="empty">No pending reviews.</li>

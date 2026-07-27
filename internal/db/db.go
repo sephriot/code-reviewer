@@ -2,12 +2,15 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+var ErrNotFound = errors.New("not found")
 
 type scanTime time.Time
 
@@ -405,6 +408,46 @@ func (d *DB) ResetStaleReviewRequests(timeout time.Duration) (int64, error) {
 func (d *DB) UpdateReviewRequestStatus(id int64, status string) error {
 	_, err := d.Exec("UPDATE review_requests SET status = ?, updated_at = datetime('now') WHERE id = ?", status, id)
 	return err
+}
+
+func (d *DB) GetReviewRequest(id int64) (*ReviewRequest, error) {
+	row := d.QueryRow("SELECT id, pull_request_id, status, created_at, updated_at, deleted_at FROM review_requests WHERE id = ? AND deleted_at IS NULL", id)
+	var rr ReviewRequest
+	var createdAt scanTime
+	var updatedAt scanTime
+	var deletedAt nullScanTime
+	err := row.Scan(&rr.ID, &rr.PullRequestID, &rr.Status, &createdAt, &updatedAt, &deletedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	rr.CreatedAt = time.Time(createdAt)
+	rr.UpdatedAt = time.Time(updatedAt)
+	if deletedAt.Valid {
+		rr.DeletedAt = &deletedAt.Time
+	}
+	return &rr, nil
+}
+
+func (d *DB) SoftDeleteReviewRequest(id int64) error {
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	res, err := d.Exec(
+		"UPDATE review_requests SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL AND status != 'done'",
+		now, now, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (d *DB) ListReviewRequests() ([]ReviewRequest, error) {

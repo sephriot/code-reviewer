@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -23,11 +24,17 @@ import (
 //go:embed templates/*.html static/*
 var content embed.FS
 
+type QueueCanceller interface {
+	CancelRequest(id int64) error
+}
+
 type Server struct {
 	cfg    *config.Config
 	d      *db.DB
 	gh     *gh.Client
 	runner *review.Runner
+
+	canceller QueueCanceller
 
 	events chan review.ReviewEvent
 	subs   map[chan review.ReviewEvent]struct{}
@@ -45,6 +52,10 @@ func New(cfg *config.Config, d *db.DB, gh *gh.Client, runner *review.Runner) *Se
 	}
 	go s.broadcastLoop()
 	return s
+}
+
+func (s *Server) SetQueueCanceller(c QueueCanceller) {
+	s.canceller = c
 }
 
 func (s *Server) OnEvent(event review.ReviewEvent) {
@@ -91,6 +102,7 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	mux.HandleFunc("/api/pr/", s.apiPR)
 	mux.HandleFunc("/api/review/", s.apiReview)
+	mux.HandleFunc("/api/review-request/", s.apiReviewRequest)
 	mux.HandleFunc("/api/inline-comment/", s.apiInlineComment)
 	mux.HandleFunc("/api/snippet", s.apiSnippet)
 	mux.HandleFunc("/api/analytics", s.apiAnalytics)
@@ -353,6 +365,38 @@ func (s *Server) requestReview(w http.ResponseWriter, r *http.Request, prID int6
 		return
 	}
 	s.respondJSON(w, map[string]interface{}{"review_request_id": rrID})
+}
+
+func (s *Server) apiReviewRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/review-request/")
+	idStr = strings.Trim(idStr, "/")
+	rrID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || rrID <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	if s.canceller == nil {
+		log.Printf("web: cancel request %d: canceller unavailable", rrID)
+		http.Error(w, "queue cancel unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	log.Printf("web: DELETE /api/review-request/%d", rrID)
+	if err := s.canceller.CancelRequest(rrID); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			log.Printf("web: cancel request %d: not found", rrID)
+			http.NotFound(w, r)
+			return
+		}
+		log.Printf("web: cancel request %d failed: %v", rrID, err)
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	log.Printf("web: cancel request %d ok", rrID)
+	s.respondJSON(w, map[string]string{"status": "removed"})
 }
 
 func (s *Server) apiReview(w http.ResponseWriter, r *http.Request) {

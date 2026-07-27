@@ -192,6 +192,8 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
 
 .queue li:last-child { border-bottom: none; }
 
+.queue-remove { margin-left: auto; }
+
 .empty {
   color: var(--text-muted);
   font-style: italic;

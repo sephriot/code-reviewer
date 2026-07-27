@@ -11,4 +11,7 @@ sources:
 - design.md
 - internal/config/config.go
 - PROGRESS.md
-updated_at: 2026-07-24
+links:
+- K-000030
+- K-000031
+updated_at: 2026-07-27
