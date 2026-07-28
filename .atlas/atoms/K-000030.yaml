@@ -1,17 +1,22 @@
 id: K-000030
-title: 'Review Queue shows #0 when PR missing from dashboard PRMap'
+title: 'Review Queue shows #0 when PR missing from dashboard PRMap (fixed)'
 type: gotcha
-confidence: medium
-summary: 'Queue rows whose PR is not in ListPRsNeedingReview render as #0 because PRMap lookup yields a zero PullRequest.'
-details: 'Dashboard Review Queue can show bare #0 when the request PR is missing from PRMap (built only from ListPRsNeedingReview). Zero-value PullRequest renders empty repo and PRNumber 0. Investigate: load PRs for queued request IDs, or join in ListReviewRequests.'
+confidence: high
+summary: 'Fixed: dashboard now GetPRs missing queue IDs into PRMap so filtered/history queued PRs render correctly.'
+details: |-
+  Dashboard Review Queue used to show bare #0 when the request PR was missing from PRMap (built only from ListPRsNeedingReview). Zero-value PullRequest rendered empty repo and PRNumber 0 — typical for manually queued filtered PRs.
+
+  Fix: after seeding PRMap from needing-review PRs, load any queue PullRequestID still missing via GetPR. Covered by TestDashboardQueueShowsFilteredPR.
 tags:
 - ui
 - dashboard
 - queue
+- bugfix
 sources:
-- internal/web/templates/dashboard.html
 - internal/web/server.go
+- internal/web/templates/dashboard.html
+- internal/web/dashboard_test.go
 links:
 - K-000012
 - K-000031
-updated_at: 2026-07-27
+updated_at: 2026-07-28

@@ -311,16 +311,18 @@ entries:
   - internal/web/server.go
   - internal/db/db.go
 - id: K-000030
-  title: 'Review Queue shows #0 when PR missing from dashboard PRMap'
+  title: 'Review Queue shows #0 when PR missing from dashboard PRMap (fixed)'
   type: gotcha
-  confidence: medium
+  confidence: high
   tags:
   - ui
   - dashboard
   - queue
+  - bugfix
   sources:
-  - internal/web/templates/dashboard.html
   - internal/web/server.go
+  - internal/web/templates/dashboard.html
+  - internal/web/dashboard_test.go
   links:
   - K-000012
   - K-000031

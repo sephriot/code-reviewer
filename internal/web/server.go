@@ -171,6 +171,20 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 			outcomeMap[pr.ID] = latest.Outcome
 		}
 	}
+	// Queue can include filtered/history PRs that are absent from ListPRsNeedingReview.
+	for _, rr := range requests {
+		if _, ok := prMap[rr.PullRequestID]; ok {
+			continue
+		}
+		pr, err := s.d.GetPR(rr.PullRequestID)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		if pr != nil {
+			prMap[pr.ID] = *pr
+		}
+	}
 	s.render(w, "dashboard.html", map[string]interface{}{
 		"PRs":        prs,
 		"Requests":   requests,
