@@ -1,0 +1,17 @@
+id: K-000035
+title: Sort PR lists by GitHub updated_at via gh_updated_at
+type: decision
+confidence: high
+summary: Web UI PR lists sort by COALESCE(gh_updated_at, updated_at) DESC. Scanner stores GitHub UpdatedAt; local updated_at stays for bookkeeping.
+details: Dedicated pull_requests.gh_updated_at column holds GitHub PR updated_at from search issues and GetPRDetails. UpsertPR writes it when non-zero and preserves it when zero. Local updated_at still bumps on scanner upserts and local mutations. Dashboard ListPRsNeedingReview flipped from ASC to DESC using the COALESCE order.
+tags:
+- web
+- sorting
+- db
+sources:
+- internal/db/db.go
+- internal/github/client.go
+- internal/scanner/scanner.go
+links:
+- K-000018
+updated_at: 2026-07-29

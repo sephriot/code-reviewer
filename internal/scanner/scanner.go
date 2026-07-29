@@ -82,7 +82,6 @@ func (s *Scanner) Scan(ctx context.Context) error {
 	return nil
 }
 
-
 // ensureExternalReview records reviewed_externally when GitHub already has our review.
 func (s *Scanner) ensureExternalReview(ctx context.Context, owner, repo string, number int, prID int64, commitSHA string) {
 	hasReviewed, err := s.gh.HasUserReviewed(ctx, owner, repo, number)
@@ -127,6 +126,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			State:          openOr(pr.State),
 			NeedsReview:    false,
 			FilteredReason: "repo",
+			GhUpdatedAt:    pr.UpdatedAt,
 		})
 		if err != nil {
 			return false, err
@@ -146,6 +146,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			State:          openOr(pr.State),
 			NeedsReview:    false,
 			FilteredReason: "author",
+			GhUpdatedAt:    pr.UpdatedAt,
 		})
 		if err != nil {
 			return false, err
@@ -171,6 +172,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			State:          "open",
 			NeedsReview:    false,
 			FilteredReason: "draft",
+			GhUpdatedAt:    details.UpdatedAt,
 		})
 		if err != nil {
 			return false, err
@@ -191,6 +193,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			State:          details.State,
 			NeedsReview:    false,
 			FilteredReason: "",
+			GhUpdatedAt:    details.UpdatedAt,
 		})
 		if err != nil {
 			return false, err
@@ -222,6 +225,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			NeedsReview:    needsReview,
 			IsOutdated:     existing.IsOutdated,
 			FilteredReason: "",
+			GhUpdatedAt:    details.UpdatedAt,
 		})
 		if err != nil {
 			return false, err
@@ -258,6 +262,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 		State:          "open",
 		NeedsReview:    needsReview,
 		FilteredReason: "",
+		GhUpdatedAt:    details.UpdatedAt,
 	})
 	if err != nil {
 		return false, err
@@ -314,6 +319,7 @@ func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSu
 			State:          details.State,
 			NeedsReview:    false,
 			FilteredReason: "",
+			GhUpdatedAt:    details.UpdatedAt,
 		})
 		if err != nil {
 			log.Printf("scan: reconcile upsert error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
@@ -357,6 +363,7 @@ func (s *Scanner) backfillMergedStates(ctx context.Context) {
 			State:          db.PRStateMerged,
 			NeedsReview:    false,
 			FilteredReason: "",
+			GhUpdatedAt:    details.UpdatedAt,
 		})
 		if err != nil {
 			log.Printf("scan: merged backfill upsert error for %s#%d: %v", pr.Repo, pr.PRNumber, err)

@@ -51,7 +51,11 @@ func BuildHistoryFeed(prs []db.PullRequest, published []db.PublishedReviewView) 
 
 	items := make([]HistoryFeedItem, 0, len(prs))
 	for _, pr := range prs {
-		item := HistoryFeedItem{PR: pr, ActivityAt: pr.UpdatedAt}
+		activityAt := pr.UpdatedAt
+		if !pr.GhUpdatedAt.IsZero() {
+			activityAt = pr.GhUpdatedAt
+		}
+		item := HistoryFeedItem{PR: pr, ActivityAt: activityAt}
 		if info, ok := latest[pr.ID]; ok {
 			item.Published = true
 			item.Outcome = info.outcome

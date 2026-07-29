@@ -98,3 +98,23 @@ func TestPaginateFeed(t *testing.T) {
 		t.Errorf("page 0 clamps to 1: meta=%+v first=%d", meta, page[0].PR.ID)
 	}
 }
+
+func TestBuildHistoryFeed_PrefersGhUpdatedAt(t *testing.T) {
+	local := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	gh := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	prs := []db.PullRequest{
+		{ID: 1, Repo: "o/r", PRNumber: 1, Title: "a", Author: "a", State: db.PRStateClosed, UpdatedAt: local, GhUpdatedAt: gh},
+		{ID: 2, Repo: "o/r", PRNumber: 2, Title: "b", Author: "b", State: db.PRStateClosed, UpdatedAt: local},
+	}
+	feed := BuildHistoryFeed(prs, nil)
+	if len(feed) != 2 {
+		t.Fatalf("len=%d", len(feed))
+	}
+	// PR2 local activity is newer than PR1's gh_updated_at
+	if feed[0].PR.ID != 2 || feed[1].PR.ID != 1 {
+		t.Fatalf("order ids=%d,%d want 2,1", feed[0].PR.ID, feed[1].PR.ID)
+	}
+	if !feed[1].ActivityAt.Equal(gh) {
+		t.Fatalf("PR1 ActivityAt=%v want %v", feed[1].ActivityAt, gh)
+	}
+}

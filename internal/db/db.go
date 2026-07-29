@@ -128,6 +128,7 @@ func migrate(db *sql.DB) error {
 	db.Exec("ALTER TABLE reviews ADD COLUMN commit_sha TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE pull_requests ADD COLUMN filtered_reason TEXT")
 	db.Exec("ALTER TABLE review_comments ADD COLUMN published INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE pull_requests ADD COLUMN gh_updated_at TEXT")
 	// Closed/merged was briefly mis-tagged as filtered_reason='state'; clear it.
 	if res, err := db.Exec("UPDATE pull_requests SET filtered_reason = NULL WHERE filtered_reason = 'state'"); err != nil {
 		return err
@@ -154,10 +155,11 @@ func scanPR(row *sql.Row) (PullRequest, error) {
 	var updatedAt scanTime
 	var deletedAt nullScanTime
 	var filteredReason *string
+	var ghUpdatedAt nullScanTime
 	err := row.Scan(
 		&pr.ID, &pr.Repo, &pr.PRNumber, &pr.Title, &pr.Author,
 		&pr.CommitSHA, &draft, &pr.State, &needsReview, &outdated,
-		&createdAt, &updatedAt, &deletedAt, &filteredReason,
+		&createdAt, &updatedAt, &deletedAt, &filteredReason, &ghUpdatedAt,
 	)
 	pr.Draft = draft == 1
 	pr.NeedsReview = needsReview == 1
@@ -169,6 +171,9 @@ func scanPR(row *sql.Row) (PullRequest, error) {
 	}
 	if filteredReason != nil {
 		pr.FilteredReason = *filteredReason
+	}
+	if ghUpdatedAt.Valid {
+		pr.GhUpdatedAt = ghUpdatedAt.Time
 	}
 	return pr, err
 }
@@ -184,10 +189,11 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		var updatedAt scanTime
 		var deletedAt nullScanTime
 		var filteredReason *string
+		var ghUpdatedAt nullScanTime
 		err := rows.Scan(
 			&pr.ID, &pr.Repo, &pr.PRNumber, &pr.Title, &pr.Author,
 			&pr.CommitSHA, &draft, &pr.State, &needsReview, &outdated,
-			&createdAt, &updatedAt, &deletedAt, &filteredReason,
+			&createdAt, &updatedAt, &deletedAt, &filteredReason, &ghUpdatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -203,6 +209,9 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 		if filteredReason != nil {
 			pr.FilteredReason = *filteredReason
 		}
+		if ghUpdatedAt.Valid {
+			pr.GhUpdatedAt = ghUpdatedAt.Time
+		}
 		prs = append(prs, pr)
 	}
 	return prs, rows.Err()
@@ -212,8 +221,8 @@ func (d *DB) UpsertPR(pr PullRequest) (int64, error) {
 	var existingID int64
 	err := d.QueryRow("SELECT id FROM pull_requests WHERE repo = ? AND pr_number = ? AND deleted_at IS NULL", pr.Repo, pr.PRNumber).Scan(&existingID)
 	if err == sql.ErrNoRows {
-		res, err := d.Exec(`INSERT INTO pull_requests (repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, filtered_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			pr.Repo, pr.PRNumber, pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason))
+		res, err := d.Exec(`INSERT INTO pull_requests (repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, filtered_reason, gh_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			pr.Repo, pr.PRNumber, pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), nullableTime(pr.GhUpdatedAt))
 		if err != nil {
 			return 0, err
 		}
@@ -222,13 +231,18 @@ func (d *DB) UpsertPR(pr PullRequest) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	_, err = d.Exec(`UPDATE pull_requests SET title=?, author=?, commit_sha=?, draft=?, state=?, needs_review=?, is_outdated=?, filtered_reason=?, updated_at=datetime('now') WHERE id=?`,
-		pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), existingID)
+	if !pr.GhUpdatedAt.IsZero() {
+		_, err = d.Exec(`UPDATE pull_requests SET title=?, author=?, commit_sha=?, draft=?, state=?, needs_review=?, is_outdated=?, filtered_reason=?, gh_updated_at=?, updated_at=datetime('now') WHERE id=?`,
+			pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), nullableTime(pr.GhUpdatedAt), existingID)
+	} else {
+		_, err = d.Exec(`UPDATE pull_requests SET title=?, author=?, commit_sha=?, draft=?, state=?, needs_review=?, is_outdated=?, filtered_reason=?, updated_at=datetime('now') WHERE id=?`,
+			pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), existingID)
+	}
 	return existingID, err
 }
 
 func (d *DB) GetPRByRepoAndNumber(repo string, number int) (*PullRequest, error) {
-	row := d.QueryRow("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE repo = ? AND pr_number = ? AND deleted_at IS NULL", repo, number)
+	row := d.QueryRow("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason, gh_updated_at FROM pull_requests WHERE repo = ? AND pr_number = ? AND deleted_at IS NULL", repo, number)
 	pr, err := scanPR(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -240,7 +254,7 @@ func (d *DB) GetPRByRepoAndNumber(repo string, number int) (*PullRequest, error)
 }
 
 func (d *DB) GetPR(id int64) (*PullRequest, error) {
-	row := d.QueryRow("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE id = ? AND deleted_at IS NULL", id)
+	row := d.QueryRow("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason, gh_updated_at FROM pull_requests WHERE id = ? AND deleted_at IS NULL", id)
 	pr, err := scanPR(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -252,7 +266,7 @@ func (d *DB) GetPR(id int64) (*PullRequest, error) {
 }
 
 func (d *DB) ListOpenPRs() ([]PullRequest, error) {
-	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE state = 'open' AND deleted_at IS NULL ORDER BY updated_at DESC")
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason, gh_updated_at FROM pull_requests WHERE state = 'open' AND deleted_at IS NULL ORDER BY COALESCE(gh_updated_at, updated_at) DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +275,7 @@ func (d *DB) ListOpenPRs() ([]PullRequest, error) {
 }
 
 func (d *DB) ListPRsNeedingReview() ([]PullRequest, error) {
-	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE state = 'open' AND needs_review = 1 AND is_outdated = 0 AND filtered_reason IS NULL AND deleted_at IS NULL ORDER BY updated_at ASC")
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason, gh_updated_at FROM pull_requests WHERE state = 'open' AND needs_review = 1 AND is_outdated = 0 AND filtered_reason IS NULL AND deleted_at IS NULL ORDER BY COALESCE(gh_updated_at, updated_at) DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +284,7 @@ func (d *DB) ListPRsNeedingReview() ([]PullRequest, error) {
 }
 
 func (d *DB) ListFilteredPRs() ([]PullRequest, error) {
-	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE state = 'open' AND filtered_reason IS NOT NULL AND deleted_at IS NULL ORDER BY updated_at DESC")
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason, gh_updated_at FROM pull_requests WHERE state = 'open' AND filtered_reason IS NOT NULL AND deleted_at IS NULL ORDER BY COALESCE(gh_updated_at, updated_at) DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +293,7 @@ func (d *DB) ListFilteredPRs() ([]PullRequest, error) {
 }
 
 func (d *DB) ListHistoryPRs() ([]PullRequest, error) {
-	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE deleted_at IS NULL AND (state != 'open' OR (state = 'open' AND needs_review = 0 AND filtered_reason IS NULL)) ORDER BY updated_at DESC")
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason, gh_updated_at FROM pull_requests WHERE deleted_at IS NULL AND (state != 'open' OR (state = 'open' AND needs_review = 0 AND filtered_reason IS NULL)) ORDER BY COALESCE(gh_updated_at, updated_at) DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +302,7 @@ func (d *DB) ListHistoryPRs() ([]PullRequest, error) {
 }
 
 func (d *DB) ListOpenActivePRs() ([]PullRequest, error) {
-	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE state = 'open' AND filtered_reason IS NULL AND deleted_at IS NULL ORDER BY updated_at DESC")
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason, gh_updated_at FROM pull_requests WHERE state = 'open' AND filtered_reason IS NULL AND deleted_at IS NULL ORDER BY COALESCE(gh_updated_at, updated_at) DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +311,7 @@ func (d *DB) ListOpenActivePRs() ([]PullRequest, error) {
 }
 
 func (d *DB) ListPRsByState(state string) ([]PullRequest, error) {
-	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason FROM pull_requests WHERE state = ? AND deleted_at IS NULL ORDER BY updated_at DESC", state)
+	rows, err := d.Query("SELECT id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason, gh_updated_at FROM pull_requests WHERE state = ? AND deleted_at IS NULL ORDER BY COALESCE(gh_updated_at, updated_at) DESC", state)
 	if err != nil {
 		return nil, err
 	}
@@ -342,6 +356,13 @@ func nullableStr(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+func nullableTime(t time.Time) interface{} {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format("2006-01-02 15:04:05")
 }
 
 func (d *DB) CreateReviewRequest(prID int64) (int64, error) {

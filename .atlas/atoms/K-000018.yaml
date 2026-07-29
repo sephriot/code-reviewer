@@ -26,4 +26,5 @@ sources:
 - internal/web/server.go
 links:
 - K-000033
+- K-000035
 updated_at: 2026-07-29

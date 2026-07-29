@@ -1,4 +1,4 @@
-next_id: 35
+next_id: 36
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -181,6 +181,7 @@ entries:
   - internal/web/server.go
   links:
   - K-000033
+  - K-000035
 - id: K-000019
   title: SQLite TEXT dates require custom sql.Scanner
   type: gotcha
@@ -399,3 +400,17 @@ entries:
   - internal/db/db.go
   links:
   - K-000030
+- id: K-000035
+  title: Sort PR lists by GitHub updated_at via gh_updated_at
+  type: decision
+  confidence: high
+  tags:
+  - web
+  - sorting
+  - db
+  sources:
+  - internal/db/db.go
+  - internal/github/client.go
+  - internal/scanner/scanner.go
+  links:
+  - K-000018

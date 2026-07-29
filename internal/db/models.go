@@ -14,6 +14,7 @@ type PullRequest struct {
 	NeedsReview    bool       `json:"needs_review"`
 	IsOutdated     bool       `json:"is_outdated"`
 	FilteredReason string     `json:"filtered_reason,omitempty"`
+	GhUpdatedAt    time.Time  `json:"gh_updated_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 	DeletedAt      *time.Time `json:"deleted_at,omitempty"`

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v68/github"
 	"golang.org/x/oauth2"
@@ -19,6 +20,7 @@ type PRSummary struct {
 	CommitSHA string
 	Draft     bool
 	State     string
+	UpdatedAt time.Time
 }
 
 type ReviewSubmission struct {
@@ -97,6 +99,7 @@ func prIssuesToSummaries(issues []*github.Issue) []PRSummary {
 			CommitSHA: "",
 			Draft:     false,
 			State:     "open",
+			UpdatedAt: issue.GetUpdatedAt().Time,
 		})
 	}
 	return summaries
@@ -132,6 +135,7 @@ func (c *Client) GetPRDetails(ctx context.Context, owner, repo string, number in
 		CommitSHA: sha,
 		Draft:     pr.GetDraft(),
 		State:     NormalizePRState(pr.GetState(), pr.GetMerged()),
+		UpdatedAt: pr.GetUpdatedAt().Time,
 	}, nil
 }
 
