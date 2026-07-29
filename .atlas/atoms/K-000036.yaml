@@ -1,0 +1,24 @@
+id: K-000036
+title: PR detail hid reviewed_externally because published reviews were skipped
+type: gotcha
+confidence: high
+summary: PR detail only listed unpublished reviews; LatestOutcome header badge fixes visibility for reviewed_externally.
+details: |-
+  ## Symptom
+  PR detail showed only pending (unpublished) reviews. CreateExternalReview stores published=true, so reviewed_externally never appeared on the page.
+
+  ## Fix
+  Pass LatestOutcome from GetLatestReviewByPR into pr_detail.html meta header. Do not rely on the pending-reviews list for this badge.
+
+  ## Related
+  Filtered/History list cards already use OutcomeMap / BuildHistoryFeed; externally reviewed open PRs leave Dashboard (needs_review=0) and appear on History.
+tags:
+- ui
+- reviewed_externally
+- pr-detail
+sources:
+- internal/web/server.go
+- internal/web/templates/pr_detail.html
+links:
+- K-000034
+updated_at: 2026-07-29

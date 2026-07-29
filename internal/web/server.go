@@ -264,9 +264,15 @@ func (s *Server) prDetail(w http.ResponseWriter, r *http.Request) {
 		nonPublished++
 	}
 
+	var latestOutcome string
+	if latest, err := s.d.GetLatestReviewByPR(pr.ID); err == nil && latest != nil {
+		latestOutcome = latest.Outcome
+	}
+
 	s.render(w, "pr_detail.html", map[string]interface{}{
-		"PR":      pr,
-		"Reviews": reviewList,
+		"PR":            pr,
+		"Reviews":       reviewList,
+		"LatestOutcome": latestOutcome,
 	})
 }
 

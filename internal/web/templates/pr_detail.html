@@ -6,6 +6,7 @@
     <span>Author: {{.PR.Author}}</span>
     <span>Commit: {{.PR.CommitSHA}}</span>
     <span>{{.PR.State}}</span>
+    {{if .LatestOutcome}}<span class="outcome-badge {{.LatestOutcome}}">{{.LatestOutcome}}</span>{{end}}
   </div>
 
   <div class="actions">

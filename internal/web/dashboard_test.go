@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -107,5 +108,79 @@ func TestHistoryShowsReviewedExternallyForOpenPR(t *testing.T) {
 	}
 	if !strings.Contains(body, "reviewed_externally") {
 		t.Fatalf("history missing reviewed_externally badge; body:\n%s", body)
+	}
+}
+
+func TestPRDetailShowsLatestOutcomeWhenPublished(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	prID, err := d.UpsertPR(db.PullRequest{
+		Repo: "org/detail", PRNumber: 9, Title: "externally reviewed", Author: "carol",
+		CommitSHA: "sha9", State: db.PRStateOpen, NeedsReview: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateExternalReview(prID, "sha9"); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(&config.Config{}, d, nil, nil)
+	rr := httptest.NewRecorder()
+	s.prDetail(rr, httptest.NewRequest(http.MethodGet, "/pr/"+strconv.FormatInt(prID, 10), nil))
+
+	body := rr.Body.String()
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rr.Code, body)
+	}
+	if !strings.Contains(body, `class="outcome-badge reviewed_externally"`) {
+		t.Fatalf("PR detail missing reviewed_externally header badge; body:\n%s", body)
+	}
+}
+
+func TestFilteredAndHistoryIncludeGitHubLink(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	_, err = d.UpsertPR(db.PullRequest{
+		Repo: "org/filt", PRNumber: 11, Title: "filtered", Author: "alice",
+		CommitSHA: "s1", State: db.PRStateOpen, NeedsReview: false, FilteredReason: "author",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.UpsertPR(db.PullRequest{
+		Repo: "org/hist", PRNumber: 12, Title: "history", Author: "bob",
+		CommitSHA: "s2", State: db.PRStateMerged, NeedsReview: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(&config.Config{}, d, nil, nil)
+
+	frr := httptest.NewRecorder()
+	s.filteredPRs(frr, httptest.NewRequest(http.MethodGet, "/filtered", nil))
+	fbody := frr.Body.String()
+	if frr.Code != http.StatusOK {
+		t.Fatalf("filtered status %d", frr.Code)
+	}
+	if !strings.Contains(fbody, `class="gh-link"`) || !strings.Contains(fbody, "https://github.com/org/filt/pull/11") {
+		t.Fatalf("filtered missing GitHub link; body:\n%s", fbody)
+	}
+
+	hrr := httptest.NewRecorder()
+	s.historyPage(hrr, httptest.NewRequest(http.MethodGet, "/history", nil))
+	hbody := hrr.Body.String()
+	if hrr.Code != http.StatusOK {
+		t.Fatalf("history status %d", hrr.Code)
+	}
+	if !strings.Contains(hbody, `class="gh-link"`) || !strings.Contains(hbody, "https://github.com/org/hist/pull/12") {
+		t.Fatalf("history missing GitHub link; body:\n%s", hbody)
 	}
 }

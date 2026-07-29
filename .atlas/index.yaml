@@ -1,4 +1,4 @@
-next_id: 36
+next_id: 37
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -400,6 +400,7 @@ entries:
   - internal/db/db.go
   links:
   - K-000030
+  - K-000036
 - id: K-000035
   title: Sort PR lists by GitHub updated_at via gh_updated_at
   type: decision
@@ -414,3 +415,16 @@ entries:
   - internal/scanner/scanner.go
   links:
   - K-000018
+- id: K-000036
+  title: PR detail hid reviewed_externally because published reviews were skipped
+  type: gotcha
+  confidence: high
+  tags:
+  - ui
+  - reviewed_externally
+  - pr-detail
+  sources:
+  - internal/web/server.go
+  - internal/web/templates/pr_detail.html
+  links:
+  - K-000034

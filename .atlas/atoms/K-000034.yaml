@@ -32,4 +32,5 @@ sources:
 - internal/db/db.go
 links:
 - K-000030
+- K-000036
 updated_at: 2026-07-29
