@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"log"
 	"strings"
@@ -150,5 +151,92 @@ func TestReadAgentStreamJSONKeepsAssistantOutputAndHidesToolCalls(t *testing.T) 
 	}
 	if strings.Contains(logs.String(), "secret-command") {
 		t.Fatalf("tool call leaked into logs: %s", logs.String())
+	}
+}
+
+func TestReadAgentStreamJSONErrorsWithoutResult(t *testing.T) {
+	oldWriter := log.Writer()
+	log.SetOutput(io.Discard)
+	t.Cleanup(func() { log.SetOutput(oldWriter) })
+
+	input := strings.Join([]string{
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"halfway through"}]}}`,
+		`{"type":"connection","subtype":"reconnecting","attempt":2,"endpoint_url":"https://agentn.example/"}`,
+		`{"type":"retry","subtype":"starting","attempt":2,"is_resume":true}`,
+		`{"type":"connection","subtype":"reconnected"}`,
+	}, "\n")
+
+	got, err := readAgentStreamJSON(strings.NewReader(input))
+	if err == nil {
+		t.Fatalf("readAgentStreamJSON() error = nil, got %q", got)
+	}
+	msg := err.Error()
+	if strings.Contains(msg, `"type":"connection"`) || strings.Contains(msg, "endpoint_url") {
+		t.Fatalf("error embeds raw stream dump: %s", msg)
+	}
+	if !strings.Contains(msg, "stream ended without a result event") {
+		t.Fatalf("error missing missing-result cause: %s", msg)
+	}
+	if !strings.Contains(msg, "2 reconnect") {
+		t.Fatalf("error missing reconnect count: %s", msg)
+	}
+	if !strings.Contains(msg, "halfway through") {
+		t.Fatalf("error missing last progress: %s", msg)
+	}
+	if len(msg) > 500 {
+		t.Fatalf("error too long (%d bytes): %s", len(msg), msg)
+	}
+}
+
+func TestReadAgentStreamJSONErrorsWithoutResultNoReconnect(t *testing.T) {
+	oldWriter := log.Writer()
+	log.SetOutput(io.Discard)
+	t.Cleanup(func() { log.SetOutput(oldWriter) })
+
+	input := `{"type":"assistant","message":{"content":[{"type":"text","text":"started"}]}}`
+	_, err := readAgentStreamJSON(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("readAgentStreamJSON() error = nil, want error")
+	}
+	msg := err.Error()
+	if msg != "stream ended without a result event. Last progress: started" {
+		t.Fatalf("readAgentStreamJSON() error = %q", msg)
+	}
+}
+
+func TestFormatAgentExecutionFailureKeepsShortOutput(t *testing.T) {
+	err := formatAgentExecutionFailure(fmt.Errorf("exit status 1"), `{"action":"approve_without_comment"}`)
+	want := "agent execution: exit status 1\noutput: {\"action\":\"approve_without_comment\"}"
+	if err.Error() != want {
+		t.Fatalf("formatAgentExecutionFailure() = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestFormatAgentExecutionFailureSummarizesStreamDump(t *testing.T) {
+	dump := strings.Join([]string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Verified the race against reconcileWorkerState"}]}}`,
+		`{"type":"connection","subtype":"reconnecting","attempt":3,"endpoint_url":"https://agentn.global.api5.cursor.sh"}`,
+		`{"type":"retry","subtype":"resuming","attempt":3}`,
+	}, "\n")
+	// Make it clearly large like production dumps.
+	dump = dump + "\n" + strings.Repeat(`{"type":"thinking","subtype":"delta","text":"x"}`+"\n", 50)
+
+	err := formatAgentExecutionFailure(fmt.Errorf("exit status 1"), dump)
+	msg := err.Error()
+	if strings.Contains(msg, `"type":"thinking"`) || strings.Contains(msg, "endpoint_url") {
+		t.Fatalf("error embeds raw stream dump: %s", msg)
+	}
+	if !strings.Contains(msg, "agent execution: exit status 1") {
+		t.Fatalf("missing exec prefix: %s", msg)
+	}
+	if !strings.Contains(msg, "3 reconnect") {
+		t.Fatalf("missing reconnect summary: %s", msg)
+	}
+	if !strings.Contains(msg, "Verified the race") {
+		t.Fatalf("missing last progress: %s", msg)
+	}
+	if len(msg) > 500 {
+		t.Fatalf("error too long (%d bytes): %s", len(msg), msg)
 	}
 }

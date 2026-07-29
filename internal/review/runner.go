@@ -192,9 +192,11 @@ func (r *Runner) execClaude(ctx context.Context, prompt string) (string, error) 
 
 // claudeStreamEvent matches a single --output-format stream-json line.
 type claudeStreamEvent struct {
-	Type    string `json:"type"`
-	Result  string `json:"result,omitempty"`
-	Message *struct {
+	Type     string `json:"type"`
+	Subtype  string `json:"subtype,omitempty"`
+	Attempt  int    `json:"attempt,omitempty"`
+	Result   string `json:"result,omitempty"`
+	Message  *struct {
 		Content []struct {
 			Type     string `json:"type"`
 			Thinking string `json:"thinking,omitempty"`
@@ -350,7 +352,7 @@ func (r *Runner) execAgent(ctx context.Context, prompt string) (string, error) {
 	if err := cmd.Wait(); err != nil {
 		log.Printf("runner: agent failed after %s: %v", time.Since(startedAt).Round(time.Millisecond), err)
 		emitRunnerStatus("agent", "failed: %v", err)
-		return "", fmt.Errorf("agent execution: %w\noutput: %s", err, result)
+		return "", formatAgentExecutionFailure(err, result)
 	}
 	log.Printf("runner: agent completed in %s (result_bytes=%d)", time.Since(startedAt).Round(time.Millisecond), len(result))
 	emitRunnerStatus("agent", "completed in %s (result_bytes=%d)", time.Since(startedAt).Round(time.Millisecond), len(result))
@@ -360,6 +362,7 @@ func (r *Runner) execAgent(ctx context.Context, prompt string) (string, error) {
 func readAgentStreamJSON(stdout io.Reader) (string, error) {
 	var resultText string
 	var raw strings.Builder
+	var meta agentStreamMeta
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 	for scanner.Scan() {
@@ -375,6 +378,7 @@ func readAgentStreamJSON(stdout io.Reader) (string, error) {
 			log.Printf("runner: agent emitted non-JSON output (%d bytes)", len(line))
 			continue
 		}
+		observeAgentStreamEvent(&meta, ev)
 		if isAgentToolEvent(ev.Type) {
 			continue
 		}
@@ -394,7 +398,8 @@ func readAgentStreamJSON(stdout io.Reader) (string, error) {
 	if raw.Len() == 0 {
 		return "", fmt.Errorf("stream ended without output")
 	}
-	return raw.String(), nil
+	log.Printf("runner: agent stream ended without result (%d bytes)", raw.Len())
+	return "", fmt.Errorf("%s", summarizeAgentStreamMeta(meta))
 }
 
 func isAgentToolEvent(eventType string) bool {
@@ -404,6 +409,87 @@ func isAgentToolEvent(eventType string) bool {
 	default:
 		return false
 	}
+}
+
+type agentStreamMeta struct {
+	reconnectAttempts int
+	lastAssistant     string
+}
+
+func observeAgentStreamEvent(meta *agentStreamMeta, ev claudeStreamEvent) {
+	if ev.Type == "connection" && ev.Subtype == "reconnecting" && ev.Attempt > meta.reconnectAttempts {
+		meta.reconnectAttempts = ev.Attempt
+	}
+	if ev.Type != "assistant" || ev.Message == nil {
+		return
+	}
+	var parts []string
+	for _, block := range ev.Message.Content {
+		if block.Type == "text" && block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	if len(parts) > 0 {
+		meta.lastAssistant = strings.Join(parts, " ")
+	}
+}
+
+func summarizeAgentStreamMeta(meta agentStreamMeta) string {
+	msg := "stream ended without a result event"
+	if meta.reconnectAttempts > 0 {
+		msg += fmt.Sprintf("; disconnected after %d reconnect attempt", meta.reconnectAttempts)
+		if meta.reconnectAttempts != 1 {
+			msg += "s"
+		}
+	}
+	if progress := truncateRunes(meta.lastAssistant, 200); progress != "" {
+		msg += ". Last progress: " + progress
+	}
+	return msg
+}
+
+func summarizeAgentStreamDump(raw string) string {
+	var meta agentStreamMeta
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var ev claudeStreamEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			continue
+		}
+		observeAgentStreamEvent(&meta, ev)
+	}
+	return summarizeAgentStreamMeta(meta)
+}
+
+func formatAgentExecutionFailure(err error, output string) error {
+	if looksLikeAgentStreamDump(output) {
+		return fmt.Errorf("agent execution: %w\n%s", err, summarizeAgentStreamDump(output))
+	}
+	return fmt.Errorf("agent execution: %w\noutput: %s", err, truncateRunes(output, 500))
+}
+
+func looksLikeAgentStreamDump(output string) bool {
+	if strings.Count(output, "\n") < 2 {
+		return false
+	}
+	return strings.Contains(output, `"type":"connection"`) ||
+		strings.Contains(output, `"type":"retry"`) ||
+		strings.Contains(output, `"type":"system"`) ||
+		strings.Contains(output, `"type":"thinking"`)
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 || s == "" {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "…"
 }
 
 func logRunnerOutput(tool, output string) {
