@@ -1,0 +1,20 @@
+id: K-000033
+title: Mute notifications checkbox (sound only)
+type: decision
+confidence: high
+summary: In-memory mute overrides sound only; API + dashboard checkbox; survives refresh, not restart.
+details: Dashboard Mute notifications checkbox temporarily suppresses server-side say/afplay via in-memory Notifier flag and GET/POST /api/notifications/mute; browser toasts stay on; resets on process restart.
+tags:
+- notifications
+- web
+- mute
+- sound
+sources:
+- internal/notify/notifier.go
+- internal/web/server.go
+- internal/web/templates/dashboard.html
+- internal/web/static/app.js
+links:
+- K-000018
+- K-000006
+updated_at: 2026-07-29

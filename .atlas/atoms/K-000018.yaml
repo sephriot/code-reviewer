@@ -24,4 +24,6 @@ tags:
 - ui
 sources:
 - internal/web/server.go
-updated_at: 2026-07-24
+links:
+- K-000033
+updated_at: 2026-07-29

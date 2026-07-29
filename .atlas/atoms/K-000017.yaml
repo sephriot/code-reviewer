@@ -21,4 +21,6 @@ tags:
 - review
 sources:
 - internal/review/runner.go
-updated_at: 2026-07-24
+links:
+- K-000032
+updated_at: 2026-07-28

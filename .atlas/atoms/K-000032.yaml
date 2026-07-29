@@ -1,0 +1,17 @@
+id: K-000032
+title: design.md is as-built rebuild guideline
+type: decision
+confidence: high
+summary: design.md retrospectively documents v2 decisions as the blueprint for building a similar tool.
+details: design.md rewritten as retrospective as-built guideline for rebuilding a similar single-user PR review agent. Corrects PR identity to (repo, pr_number), documents SSE, outcome mapping, queue cancel, publish modes, history/analytics, and open gaps. Pointers to docs/superpowers/specs and Atlas for detail.
+tags:
+- design
+- architecture
+- documentation
+sources:
+- design.md
+links:
+- K-000012
+- K-000016
+- K-000017
+updated_at: 2026-07-28

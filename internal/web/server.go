@@ -17,6 +17,7 @@ import (
 
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/db"
+	"github.com/sephriot/code-reviewer/internal/notify"
 	gh "github.com/sephriot/code-reviewer/internal/github"
 	"github.com/sephriot/code-reviewer/internal/review"
 )
@@ -35,6 +36,7 @@ type Server struct {
 	runner *review.Runner
 
 	canceller QueueCanceller
+	notifier  *notify.Notifier
 
 	events chan review.ReviewEvent
 	subs   map[chan review.ReviewEvent]struct{}
@@ -56,6 +58,10 @@ func New(cfg *config.Config, d *db.DB, gh *gh.Client, runner *review.Runner) *Se
 
 func (s *Server) SetQueueCanceller(c QueueCanceller) {
 	s.canceller = c
+}
+
+func (s *Server) SetNotifier(n *notify.Notifier) {
+	s.notifier = n
 }
 
 func (s *Server) OnEvent(event review.ReviewEvent) {
@@ -106,6 +112,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.HandleFunc("/api/inline-comment/", s.apiInlineComment)
 	mux.HandleFunc("/api/snippet", s.apiSnippet)
 	mux.HandleFunc("/api/analytics", s.apiAnalytics)
+	mux.HandleFunc("/api/notifications/mute", s.apiMuteNotifications)
 
 	staticFS, _ := fs.Sub(content, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
@@ -142,6 +149,29 @@ func (s *Server) render(w http.ResponseWriter, name string, data interface{}) {
 func (s *Server) respondJSON(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(data)
+}
+
+func (s *Server) apiMuteNotifications(w http.ResponseWriter, r *http.Request) {
+	if s.notifier == nil {
+		http.Error(w, "mute unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		s.respondJSON(w, map[string]bool{"muted": s.notifier.Muted()})
+	case http.MethodPost:
+		var body struct {
+			Muted *bool `json:"muted"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Muted == nil {
+			http.Error(w, "invalid json: muted bool required", http.StatusBadRequest)
+			return
+		}
+		s.notifier.SetMuted(*body.Muted)
+		s.respondJSON(w, map[string]bool{"muted": s.notifier.Muted()})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {

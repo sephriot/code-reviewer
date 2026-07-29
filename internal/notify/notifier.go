@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/db"
@@ -14,10 +15,22 @@ import (
 type Notifier struct {
 	cfg   *config.Config
 	sayMu sync.Mutex
+	muted atomic.Bool
+
+	// soundHook replaces OS audio in tests. action is "say" or "afplay".
+	soundHook func(action, text string)
 }
 
 func New(cfg *config.Config) *Notifier {
 	return &Notifier{cfg: cfg}
+}
+
+func (n *Notifier) Muted() bool {
+	return n.muted.Load()
+}
+
+func (n *Notifier) SetMuted(m bool) {
+	n.muted.Store(m)
 }
 
 func (n *Notifier) ReviewStarted(pr db.PullRequest) {
@@ -58,7 +71,7 @@ func (n *Notifier) OwnPRNeedsAttention(pr db.PullRequest) {
 }
 
 func (n *Notifier) playSound(enabled bool, tmpl string, pr db.PullRequest, fallback string) {
-	if !enabled || tmpl == "" {
+	if !enabled || tmpl == "" || n.Muted() {
 		return
 	}
 
@@ -77,6 +90,13 @@ func (n *Notifier) playSound(enabled bool, tmpl string, pr db.PullRequest, fallb
 		return
 	}
 
+	if n.Muted() {
+		return
+	}
+	if n.soundHook != nil {
+		n.soundHook("afplay", tmpl)
+		return
+	}
 	cmd := exec.Command("afplay", tmpl)
 	if err := cmd.Start(); err != nil {
 		log.Printf("notify: afplay error: %v", err)
@@ -85,10 +105,24 @@ func (n *Notifier) playSound(enabled bool, tmpl string, pr db.PullRequest, fallb
 
 func (n *Notifier) say(text string) {
 	text = strings.TrimPrefix(text, "say:")
+	if n.soundHook != nil {
+		if n.Muted() {
+			return
+		}
+		n.soundHook("say", text)
+		return
+	}
 	go func() {
 		n.sayMu.Lock()
 		defer n.sayMu.Unlock()
-		cmd := exec.Command("say", "-r", fmt.Sprintf("%d", n.cfg.SpeechRate), text)
+		if n.Muted() {
+			return
+		}
+		rate := 200
+		if n.cfg != nil {
+			rate = n.cfg.SpeechRate
+		}
+		cmd := exec.Command("say", "-r", fmt.Sprintf("%d", rate), text)
 		if err := cmd.Run(); err != nil {
 			log.Printf("notify: say error: %v", err)
 		}

@@ -32,7 +32,48 @@ document.addEventListener('DOMContentLoaded', function() {
     Notification.requestPermission();
   }
   connectSSE();
+  initMuteToggle();
 });
+
+function initMuteToggle() {
+  const el = document.getElementById('mute-notifications');
+  const wrap = document.getElementById('mute-toggle');
+  if (!el || !wrap) return;
+
+  function applyMuteUI(muted) {
+    el.checked = muted;
+    wrap.classList.toggle('is-muted', muted);
+    const label = wrap.querySelector('.mute-toggle-label');
+    if (label) {
+      label.textContent = muted ? (label.dataset.off || 'Muted') : (label.dataset.on || 'Sound on');
+    }
+  }
+
+  fetch('/api/notifications/mute')
+    .then(function(res) { return res.ok ? res.json() : null; })
+    .then(function(data) {
+      if (data && typeof data.muted === 'boolean') {
+        applyMuteUI(data.muted);
+      }
+    })
+    .catch(function() {});
+
+  el.addEventListener('change', function() {
+    const muted = el.checked;
+    applyMuteUI(muted);
+    fetch('/api/notifications/mute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ muted: muted })
+    }).then(function(res) {
+      if (!res.ok) {
+        applyMuteUI(!muted);
+      }
+    }).catch(function() {
+      applyMuteUI(!muted);
+    });
+  });
+}
 
 function handleEvent(event) {
   const msg = event.Message || event.Type;

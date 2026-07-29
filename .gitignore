@@ -4,3 +4,6 @@ prompts
 data
 .claude
 docs/superpowers/
+code-reviewer
+.playwright-mcp
+.state

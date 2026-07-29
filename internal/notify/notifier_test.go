@@ -75,3 +75,39 @@ func TestRenderTemplateEmptyFields(t *testing.T) {
 		t.Errorf("renderTemplate with empty fields = %q, want %q", result, expected)
 	}
 }
+
+func TestMutedDefaultsFalse(t *testing.T) {
+	n := New(nil)
+	if n.Muted() {
+		t.Fatal("expected muted=false by default")
+	}
+}
+
+func TestPlaySoundSkippedWhenMuted(t *testing.T) {
+	n := New(nil)
+	var calls int
+	n.soundHook = func(action, text string) {
+		calls++
+	}
+	n.SetMuted(true)
+	n.playSound(true, "say:hello", db.PullRequest{Title: "t"}, "fallback")
+	if calls != 0 {
+		t.Fatalf("muted playSound called soundHook %d times, want 0", calls)
+	}
+}
+
+func TestPlaySoundRunsWhenUnmuted(t *testing.T) {
+	n := New(nil)
+	var gotAction, gotText string
+	n.soundHook = func(action, text string) {
+		gotAction = action
+		gotText = text
+	}
+	n.playSound(true, "say:hello {title}", db.PullRequest{Title: "PR"}, "fallback")
+	if gotAction != "say" {
+		t.Fatalf("action=%q want say", gotAction)
+	}
+	if gotText != "hello PR" {
+		t.Fatalf("text=%q want %q", gotText, "hello PR")
+	}
+}

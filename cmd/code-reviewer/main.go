@@ -86,6 +86,7 @@ func run(ctx context.Context) error {
 
 	reactor := review.NewReactor(cfg, database, ghClient, runner, eventBridge2)
 	webServer.SetQueueCanceller(reactor)
+	webServer.SetNotifier(notifier)
 	sc := scanner.New(cfg, ghClient, database, func() {
 		go func() {
 			if err := reactor.ProcessQueue(ctx); err != nil {

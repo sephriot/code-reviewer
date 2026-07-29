@@ -43,4 +43,7 @@ func TestDashboardQueueShowsFilteredPR(t *testing.T) {
 	if strings.Contains(body, ">#0</a>") {
 		t.Fatalf("queue rendered #0; body:\n%s", body)
 	}
+	if !strings.Contains(body, `id="mute-notifications"`) {
+		t.Fatalf("dashboard missing mute checkbox; body:\n%s", body)
+	}
 }

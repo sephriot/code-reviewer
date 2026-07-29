@@ -11,4 +11,6 @@ tags:
 sources:
 - internal/api/notification_preferences.go
 - docs/REWRITE_STATUS.md
-updated_at: 2026-07-23
+links:
+- K-000033
+updated_at: 2026-07-29

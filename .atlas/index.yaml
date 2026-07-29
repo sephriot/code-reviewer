@@ -1,4 +1,4 @@
-next_id: 32
+next_id: 34
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -59,6 +59,8 @@ entries:
   sources:
   - internal/api/notification_preferences.go
   - docs/REWRITE_STATUS.md
+  links:
+  - K-000033
 - id: K-000007
   title: Legacy v1 assigned-review request polling (superseded)
   type: decision
@@ -135,6 +137,7 @@ entries:
   links:
   - K-000030
   - K-000031
+  - K-000032
 - id: K-000015
   title: project structure and package roles
   type: note
@@ -154,6 +157,8 @@ entries:
   sources:
   - internal/db/db.go
   - internal/db/models.go
+  links:
+  - K-000032
 - id: K-000017
   title: review tool output contract and outcome mapping
   type: gotcha
@@ -163,6 +168,8 @@ entries:
   - review
   sources:
   - internal/review/runner.go
+  links:
+  - K-000032
 - id: K-000018
   title: Web UI architecture and real-time updates
   type: note
@@ -172,6 +179,8 @@ entries:
   - ui
   sources:
   - internal/web/server.go
+  links:
+  - K-000033
 - id: K-000019
   title: SQLite TEXT dates require custom sql.Scanner
   type: gotcha
@@ -341,3 +350,34 @@ entries:
   links:
   - K-000012
   - K-000030
+- id: K-000032
+  title: design.md is as-built rebuild guideline
+  type: decision
+  confidence: high
+  tags:
+  - design
+  - architecture
+  - documentation
+  sources:
+  - design.md
+  links:
+  - K-000012
+  - K-000016
+  - K-000017
+- id: K-000033
+  title: Mute notifications checkbox (sound only)
+  type: decision
+  confidence: high
+  tags:
+  - notifications
+  - web
+  - mute
+  - sound
+  sources:
+  - internal/notify/notifier.go
+  - internal/web/server.go
+  - internal/web/templates/dashboard.html
+  - internal/web/static/app.js
+  links:
+  - K-000018
+  - K-000006
