@@ -1,0 +1,32 @@
+id: K-000037
+title: Open stale filtered PRs do not get external review backfilled
+type: gotcha
+confidence: high
+summary: Open stale filtered PRs now backfill reviewed_externally during reconciliation.
+details: |-
+  ## Symptom
+  An open PR can remain in Filtered without a `reviewed_externally` outcome after the configured user approves it on GitHub.
+
+  ## Cause
+  The scanner discovers assigned PRs with GitHub's `review-requested:<username>` search. If an external approval removes the review request, the PR can disappear from that input. `reconcileStalePRs` fetches missing PRs only to transition non-open PRs to History; it skips open stale PRs before checking `HasUserReviewed`. The filtered row therefore has no local `reviews` record, and the filtered template correctly renders no outcome badge.
+
+  ## Evidence
+  For `spacelift-io/backend#15725`, the active database contains `filtered_reason=author` and no associated review row. Current scanner logs do not show the PR being processed after it became stale. Relevant code: `internal/scanner/scanner.go` (`ListAssignedPRs`, `reconcileStalePRs`) and `internal/web/server.go`/`internal/web/templates/filtered.html`.
+
+  ## Resolution
+  `reconcileStalePRs` now calls `ensureExternalReview` for open stale PRs after refreshing their details, while leaving the filtered/open row unchanged.
+
+  ## Invariant
+  External review visibility requires both a GitHub review detection pass and a locally stored `reviewed_externally` review; UI rendering alone cannot infer GitHub state.
+tags:
+- scanner
+- reviewed_externally
+- filtered
+- reconciliation
+sources:
+- internal/scanner/scanner.go
+- internal/web/server.go
+- internal/web/templates/filtered.html
+links:
+- K-000034
+updated_at: 2026-07-29

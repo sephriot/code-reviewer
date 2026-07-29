@@ -305,6 +305,7 @@ func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSu
 			continue
 		}
 		if details.State == "open" {
+			s.ensureExternalReview(ctx, parts[0], parts[1], pr.PRNumber, pr.ID, details.CommitSHA)
 			continue
 		}
 

@@ -1,4 +1,4 @@
-next_id: 37
+next_id: 38
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -401,6 +401,7 @@ entries:
   links:
   - K-000030
   - K-000036
+  - K-000037
 - id: K-000035
   title: Sort PR lists by GitHub updated_at via gh_updated_at
   type: decision
@@ -426,5 +427,20 @@ entries:
   sources:
   - internal/web/server.go
   - internal/web/templates/pr_detail.html
+  links:
+  - K-000034
+- id: K-000037
+  title: Open stale filtered PRs do not get external review backfilled
+  type: gotcha
+  confidence: high
+  tags:
+  - scanner
+  - reviewed_externally
+  - filtered
+  - reconciliation
+  sources:
+  - internal/scanner/scanner.go
+  - internal/web/server.go
+  - internal/web/templates/filtered.html
   links:
   - K-000034

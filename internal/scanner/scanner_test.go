@@ -277,6 +277,36 @@ func TestReconcileStale_FilteredThenClosedLeavesFiltered(t *testing.T) {
 	}
 }
 
+func TestReconcileStale_OpenFilteredRecordsExternalWhenReviewed(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 44)
+	sha := "open-recon-ext"
+	fake := &fakeGH{
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 44, Title: "open", Author: "a", CommitSHA: sha, State: "open"},
+		},
+		hasReviewed: map[string]bool{key: true},
+	}
+	s, d := testScanner(t, &config.Config{}, fake)
+	id, err := d.UpsertPR(db.PullRequest{
+		Repo: "spacelift-io/backend", PRNumber: 44, Title: "open", Author: "a",
+		CommitSHA: "", State: "open", FilteredReason: "author", NeedsReview: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.reconcileStalePRs(context.Background(), map[string]gh.PRSummary{})
+
+	pr, err := d.GetPR(id)
+	if err != nil || pr == nil || pr.State != "open" || pr.FilteredReason != "author" {
+		t.Fatalf("want open filtered PR unchanged, got %#v err=%v", pr, err)
+	}
+	latest, err := d.GetLatestReviewByPR(id)
+	if err != nil || latest == nil || latest.Outcome != db.ReviewOutcomeReviewedExternally || latest.CommitSHA != sha {
+		t.Fatalf("want reviewed_externally for refreshed SHA, got %#v err=%v", latest, err)
+	}
+}
+
 func TestBackfillMergedStates_UpgradesClosedToMerged(t *testing.T) {
 	keyMerged := prKey("spacelift-io", "backend", 30)
 	keyClosed := prKey("spacelift-io", "backend", 31)
