@@ -1,0 +1,35 @@
+id: K-000034
+title: reviewed_externally only shows after scanner records it; open-reviewed PRs live on History
+type: gotcha
+confidence: high
+summary: Dashboard drops externally reviewed PRs (needs_review=0 → History). Filter/close paths must call ensureExternalReview or the badge never appears.
+details: |-
+  ## Symptom
+  Approving a PR on GitHub does not show `reviewed_externally` on Dashboard/Filtered; History only sometimes shows it after merge.
+
+  ## Tab model
+  - Dashboard = open + needs_review + unfiltered (`ListPRsNeedingReview`)
+  - History includes open + needs_review=0 (`ListHistoryPRs`)
+  So an externally reviewed open PR leaves Dashboard and belongs on History — by design (see tabs_test mutual exclusivity).
+
+  ## Root causes fixed
+  1. Scanner early-returned on repo/author/draft/closed without `CreateExternalReview`.
+  2. `reconcileStalePRs` closed PRs without recording external review.
+  3. Filtered page had no OutcomeMap / outcome badge.
+
+  ## Fix
+  `ensureExternalReview` / `recordExternalReview` on all reconcile paths; filtered UI renders OutcomeMap like dashboard.
+tags:
+- ui
+- scanner
+- reviewed_externally
+- history
+- filtered
+sources:
+- internal/scanner/scanner.go
+- internal/web/server.go
+- internal/web/templates/filtered.html
+- internal/db/db.go
+links:
+- K-000030
+updated_at: 2026-07-29

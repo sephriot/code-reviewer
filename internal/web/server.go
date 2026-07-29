@@ -323,8 +323,17 @@ func (s *Server) filteredPRs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	outcomeMap := make(map[int64]string)
+	for _, pr := range prs {
+		latest, err := s.d.GetLatestReviewByPR(pr.ID)
+		if err == nil && latest != nil {
+			outcomeMap[pr.ID] = latest.Outcome
+		}
+	}
+
 	s.render(w, "filtered.html", map[string]interface{}{
-		"PRs": prs,
+		"PRs":        prs,
+		"OutcomeMap": outcomeMap,
 	})
 }
 

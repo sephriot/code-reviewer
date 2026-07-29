@@ -1,4 +1,4 @@
-next_id: 34
+next_id: 35
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -335,6 +335,7 @@ entries:
   links:
   - K-000012
   - K-000031
+  - K-000034
 - id: K-000031
   title: Review queue remove and in-progress cancel
   type: decision
@@ -381,3 +382,20 @@ entries:
   links:
   - K-000018
   - K-000006
+- id: K-000034
+  title: reviewed_externally only shows after scanner records it; open-reviewed PRs live on History
+  type: gotcha
+  confidence: high
+  tags:
+  - ui
+  - scanner
+  - reviewed_externally
+  - history
+  - filtered
+  sources:
+  - internal/scanner/scanner.go
+  - internal/web/server.go
+  - internal/web/templates/filtered.html
+  - internal/db/db.go
+  links:
+  - K-000030

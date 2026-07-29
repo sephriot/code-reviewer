@@ -82,12 +82,42 @@ func (s *Scanner) Scan(ctx context.Context) error {
 	return nil
 }
 
+
+// ensureExternalReview records reviewed_externally when GitHub already has our review.
+func (s *Scanner) ensureExternalReview(ctx context.Context, owner, repo string, number int, prID int64, commitSHA string) {
+	hasReviewed, err := s.gh.HasUserReviewed(ctx, owner, repo, number)
+	if err != nil {
+		log.Printf("scan: error checking review status for %s/%s#%d: %v", owner, repo, number, err)
+		return
+	}
+	if !hasReviewed {
+		return
+	}
+	s.recordExternalReview(owner, repo, number, prID, commitSHA)
+}
+
+func (s *Scanner) recordExternalReview(owner, repo string, number int, prID int64, commitSHA string) {
+	extExists, err := s.db.HasExternalReview(prID, commitSHA)
+	if err != nil {
+		log.Printf("scan: error checking external review for %s/%s#%d: %v", owner, repo, number, err)
+		return
+	}
+	if extExists {
+		return
+	}
+	if _, err := s.db.CreateExternalReview(prID, commitSHA); err != nil {
+		log.Printf("scan: error recording external review for %s/%s#%d: %v", owner, repo, number, err)
+		return
+	}
+	log.Printf("scan: recorded external review for %s/%s#%d", owner, repo, number)
+}
+
 func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) {
 	fullName := pr.Owner + "/" + pr.Repo
 
 	if !matchesFilter(fullName, s.cfg.RepoFilterRegex()) {
 		log.Printf("scan: filtered out repo=%s %s/%s#%d", fullName, pr.Owner, pr.Repo, pr.Number)
-		_, err := s.db.UpsertPR(db.PullRequest{
+		prID, err := s.db.UpsertPR(db.PullRequest{
 			Repo:           fullName,
 			PRNumber:       pr.Number,
 			Title:          pr.Title,
@@ -98,11 +128,15 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			NeedsReview:    false,
 			FilteredReason: "repo",
 		})
-		return false, err
+		if err != nil {
+			return false, err
+		}
+		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, pr.CommitSHA)
+		return false, nil
 	}
 	if !matchesFilter(pr.Author, s.cfg.AuthorFilterRegex()) {
 		log.Printf("scan: filtered out author=%s %s/%s#%d", pr.Author, pr.Owner, pr.Repo, pr.Number)
-		_, err := s.db.UpsertPR(db.PullRequest{
+		prID, err := s.db.UpsertPR(db.PullRequest{
 			Repo:           fullName,
 			PRNumber:       pr.Number,
 			Title:          pr.Title,
@@ -113,7 +147,11 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			NeedsReview:    false,
 			FilteredReason: "author",
 		})
-		return false, err
+		if err != nil {
+			return false, err
+		}
+		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, pr.CommitSHA)
+		return false, nil
 	}
 
 	details, err := s.gh.GetPRDetails(ctx, pr.Owner, pr.Repo, pr.Number)
@@ -123,7 +161,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 
 	if details.Draft {
 		log.Printf("scan: filtered out draft %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
-		_, err := s.db.UpsertPR(db.PullRequest{
+		prID, err := s.db.UpsertPR(db.PullRequest{
 			Repo:           fullName,
 			PRNumber:       pr.Number,
 			Title:          details.Title,
@@ -134,12 +172,16 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			NeedsReview:    false,
 			FilteredReason: "draft",
 		})
-		return false, err
+		if err != nil {
+			return false, err
+		}
+		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, details.CommitSHA)
+		return false, nil
 	}
 
 	if details.State != "open" {
 		log.Printf("scan: closed/merged %s/%s#%d state=%s -> history", pr.Owner, pr.Repo, pr.Number, details.State)
-		_, err := s.db.UpsertPR(db.PullRequest{
+		prID, err := s.db.UpsertPR(db.PullRequest{
 			Repo:           fullName,
 			PRNumber:       pr.Number,
 			Title:          details.Title,
@@ -150,7 +192,11 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			NeedsReview:    false,
 			FilteredReason: "",
 		})
-		return false, err
+		if err != nil {
+			return false, err
+		}
+		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, details.CommitSHA)
+		return false, nil
 	}
 
 	existing, err := s.db.GetPRByRepoAndNumber(fullName, pr.Number)
@@ -182,18 +228,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 		}
 		if hasReviewed {
 			log.Printf("scan: %s/%s#%d already reviewed, needs_review=false", pr.Owner, pr.Repo, pr.Number)
-
-			extExists, err := s.db.HasExternalReview(existing.ID, details.CommitSHA)
-			if err != nil {
-				log.Printf("scan: error checking external review for %s/%s#%d: %v", pr.Owner, pr.Repo, pr.Number, err)
-			} else if !extExists {
-				_, err := s.db.CreateExternalReview(existing.ID, details.CommitSHA)
-				if err != nil {
-					log.Printf("scan: error recording external review for %s/%s#%d: %v", pr.Owner, pr.Repo, pr.Number, err)
-				} else {
-					log.Printf("scan: recorded external review for %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
-				}
-			}
+			s.recordExternalReview(pr.Owner, pr.Repo, pr.Number, existing.ID, details.CommitSHA)
 		} else {
 			log.Printf("scan: %s/%s#%d not reviewed, needs_review=true", pr.Owner, pr.Repo, pr.Number)
 		}
@@ -229,17 +264,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 	}
 
 	if !needsReview {
-		extExists, err := s.db.HasExternalReview(prID, details.CommitSHA)
-		if err != nil {
-			log.Printf("scan: error checking external review for %s/%s#%d: %v", pr.Owner, pr.Repo, pr.Number, err)
-		} else if !extExists {
-			_, err := s.db.CreateExternalReview(prID, details.CommitSHA)
-			if err != nil {
-				log.Printf("scan: error recording external review for %s/%s#%d: %v", pr.Owner, pr.Repo, pr.Number, err)
-			} else {
-				log.Printf("scan: recorded external review for %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
-			}
-		}
+		s.recordExternalReview(pr.Owner, pr.Repo, pr.Number, prID, details.CommitSHA)
 		return false, nil
 	}
 
@@ -279,7 +304,7 @@ func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSu
 		}
 
 		log.Printf("scan: reconcile %s#%d state %s -> %s (history)", pr.Repo, pr.PRNumber, pr.State, details.State)
-		_, err = s.db.UpsertPR(db.PullRequest{
+		prID, err := s.db.UpsertPR(db.PullRequest{
 			Repo:           pr.Repo,
 			PRNumber:       pr.PRNumber,
 			Title:          details.Title,
@@ -292,7 +317,9 @@ func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSu
 		})
 		if err != nil {
 			log.Printf("scan: reconcile upsert error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
+			continue
 		}
+		s.ensureExternalReview(ctx, parts[0], parts[1], pr.PRNumber, prID, details.CommitSHA)
 	}
 }
 

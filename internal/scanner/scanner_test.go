@@ -309,3 +309,108 @@ func TestBackfillMergedStates_UpgradesClosedToMerged(t *testing.T) {
 		t.Fatalf("want still closed, got %#v err=%v", closed, err)
 	}
 }
+
+func TestProcessPR_AlreadyReviewedRecordsExternal(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 40)
+	sha := "ext-sha"
+	fake := &fakeGH{
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 40, Title: "t", Author: "a", CommitSHA: sha, State: "open"},
+		},
+		hasReviewed: map[string]bool{key: true},
+	}
+	s, d := testScanner(t, &config.Config{}, fake)
+	_, err := s.processPR(context.Background(), gh.PRSummary{
+		Owner: "spacelift-io", Repo: "backend", Number: 40, Title: "t", Author: "a", CommitSHA: sha, State: "open",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 40)
+	if pr == nil || pr.NeedsReview {
+		t.Fatalf("want reviewed open PR, got %#v", pr)
+	}
+	ok, err := d.HasExternalReview(pr.ID, sha)
+	if err != nil || !ok {
+		t.Fatalf("want external review recorded, ok=%v err=%v", ok, err)
+	}
+	latest, err := d.GetLatestReviewByPR(pr.ID)
+	if err != nil || latest == nil || latest.Outcome != db.ReviewOutcomeReviewedExternally {
+		t.Fatalf("want reviewed_externally, got %#v err=%v", latest, err)
+	}
+}
+
+func TestProcessPR_RepoFilterRecordsExternalWhenReviewed(t *testing.T) {
+	key := prKey("other", "thing", 41)
+	sha := "filt-sha"
+	fake := &fakeGH{
+		hasReviewed: map[string]bool{key: true},
+	}
+	s, d := testScanner(t, &config.Config{Repositories: []string{`^spacelift-io/backend$`}}, fake)
+	_, err := s.processPR(context.Background(), gh.PRSummary{
+		Owner: "other", Repo: "thing", Number: 41, Title: "nope", Author: "a", CommitSHA: sha, State: "open",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, _ := d.GetPRByRepoAndNumber("other/thing", 41)
+	if pr == nil || pr.FilteredReason != "repo" {
+		t.Fatalf("got %#v", pr)
+	}
+	ok, err := d.HasExternalReview(pr.ID, sha)
+	if err != nil || !ok {
+		t.Fatalf("want external review on filtered PR, ok=%v err=%v", ok, err)
+	}
+}
+
+func TestProcessPR_ClosedRecordsExternalWhenReviewed(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 42)
+	sha := "closed-ext"
+	fake := &fakeGH{
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 42, Title: "done", Author: "a", CommitSHA: sha, State: "merged"},
+		},
+		hasReviewed: map[string]bool{key: true},
+	}
+	s, d := testScanner(t, &config.Config{}, fake)
+	_, err := s.processPR(context.Background(), gh.PRSummary{
+		Owner: "spacelift-io", Repo: "backend", Number: 42, Title: "done", Author: "a", CommitSHA: sha,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 42)
+	if pr == nil || pr.State != "merged" {
+		t.Fatalf("got %#v", pr)
+	}
+	ok, err := d.HasExternalReview(pr.ID, sha)
+	if err != nil || !ok {
+		t.Fatalf("want external review on closed/merged PR, ok=%v err=%v", ok, err)
+	}
+}
+
+func TestReconcileStale_ClosedRecordsExternalWhenReviewed(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 43)
+	sha := "recon-ext"
+	fake := &fakeGH{
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 43, Title: "gone", Author: "a", CommitSHA: sha, State: "closed"},
+		},
+		hasReviewed: map[string]bool{key: true},
+	}
+	s, d := testScanner(t, &config.Config{}, fake)
+	id, err := d.UpsertPR(db.PullRequest{
+		Repo: "spacelift-io/backend", PRNumber: 43, Title: "gone", Author: "a",
+		CommitSHA: sha, State: "open", NeedsReview: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.reconcileStalePRs(context.Background(), map[string]gh.PRSummary{})
+
+	ok, err := d.HasExternalReview(id, sha)
+	if err != nil || !ok {
+		t.Fatalf("want external review after reconcile close, ok=%v err=%v", ok, err)
+	}
+}

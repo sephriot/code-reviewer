@@ -15,6 +15,7 @@
     <div class="pr-meta">
       <span>{{.Author}}</span>
       <span class="pr-status {{.State}}">{{.State}}</span>
+      {{$outcome := index $.OutcomeMap .ID}}{{if $outcome}}<span class="outcome-badge {{$outcome}}">{{$outcome}}</span>{{end}}
       {{if .FilteredReason}}<span class="badge filtered-reason">{{.FilteredReason}}</span>{{end}}
     </div>
     <button onclick="requestReview({{.ID}})" class="btn btn-sm">Request Review</button>
