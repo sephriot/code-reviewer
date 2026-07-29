@@ -425,9 +425,12 @@ h2 { font-size: 1.2rem; margin-bottom: 0.75rem; }
   animation: slideIn 0.3s ease;
 }
 
-.toast-review_success { border-left: 3px solid var(--success); }
-.toast-review_fail { border-left: 3px solid var(--danger); }
+.toast-review_success,
+.toast-success { border-left: 3px solid var(--success); }
+.toast-review_fail,
+.toast-error { border-left: 3px solid var(--danger); }
 .toast-human_review_needed { border-left: 3px solid var(--warning); }
+.toast-info { border-left: 3px solid var(--primary); }
 
 @keyframes slideIn {
   from { transform: translateY(1rem); opacity: 0; }

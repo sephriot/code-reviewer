@@ -92,36 +92,47 @@ document.getElementById('confirm-btn').addEventListener('click', function() {
 });
 
 async function publishReview(id) {
-  await fetch('/api/review/' + id + '/publish', {method: 'POST'});
-  location.reload();
+  await runAction('/api/review/' + id + '/publish', {
+    successMessage: 'Review published successfully',
+    reload: true
+  });
 }
 async function publishComments(id) {
-  await fetch('/api/review/' + id + '/publish-comments', {method: 'POST'});
-  location.reload();
+  await runAction('/api/review/' + id + '/publish-comments', {
+    successMessage: 'Comments published successfully',
+    reload: true
+  });
 }
 async function publishInlineComment(id) {
-  await fetch('/api/inline-comment/' + id + '/publish', {method: 'POST'});
-  location.reload();
+  await runAction('/api/inline-comment/' + id + '/publish', {
+    successMessage: 'Comment published successfully',
+    reload: true
+  });
 }
 async function requestReview(prId) {
-  await fetch('/api/pr/' + prId + '/review', {method: 'POST'});
-  location.href = '/';
+  await runAction('/api/pr/' + prId + '/review', {
+    successMessage: 'Review requested',
+    redirect: '/'
+  });
 }
 async function saveGeneralComment(el) {
   const id = el.dataset.reviewId;
-  await fetch('/api/review/' + id + '/general-comment', {
+  await runAction('/api/review/' + id + '/general-comment', {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({comment: el.value})
   });
 }
 async function deleteInlineComment(id) {
-  await fetch('/api/inline-comment/' + id, {method: 'DELETE'});
-  location.reload();
+  await runAction('/api/inline-comment/' + id, {
+    method: 'DELETE',
+    successMessage: 'Comment deleted',
+    reload: true
+  });
 }
 async function saveInlineComment(el) {
   const id = el.dataset.commentId;
-  await fetch('/api/inline-comment/' + id, {
+  await runAction('/api/inline-comment/' + id, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({message: el.value})

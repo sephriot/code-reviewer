@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', function() {
   if (Notification && Notification.permission === 'default') {
     Notification.requestPermission();
   }
+  consumeFlashToast();
   connectSSE();
   initMuteToggle();
 });
@@ -75,6 +76,67 @@ function initMuteToggle() {
   });
 }
 
+function showToast(message, type) {
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-' + (type || 'info');
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(function() { toast.remove(); }, 5000);
+}
+
+function flashToast(message, type) {
+  try {
+    sessionStorage.setItem('cr-toast', JSON.stringify({
+      message: message,
+      type: type || 'info'
+    }));
+  } catch (e) {}
+}
+
+function consumeFlashToast() {
+  try {
+    const raw = sessionStorage.getItem('cr-toast');
+    if (!raw) return;
+    sessionStorage.removeItem('cr-toast');
+    const data = JSON.parse(raw);
+    if (data && data.message) {
+      showToast(data.message, data.type);
+    }
+  } catch (e) {}
+}
+
+async function runAction(url, opts) {
+  opts = opts || {};
+  try {
+    const res = await fetch(url, {
+      method: opts.method || 'POST',
+      headers: opts.headers,
+      body: opts.body
+    });
+    if (!res.ok) {
+      const body = (await res.text()).trim();
+      showToast(body || ('Request failed (' + res.status + ')'), 'error');
+      return false;
+    }
+    if (opts.successMessage) {
+      if (opts.reload || opts.redirect) {
+        flashToast(opts.successMessage, 'success');
+      } else {
+        showToast(opts.successMessage, 'success');
+      }
+    }
+    if (opts.reload) {
+      location.reload();
+    } else if (opts.redirect) {
+      location.href = opts.redirect;
+    }
+    return true;
+  } catch (err) {
+    showToast(String(err.message || err), 'error');
+    return false;
+  }
+}
+
 function handleEvent(event) {
   const msg = event.Message || event.Type;
   const title = 'Code Reviewer';
@@ -87,11 +149,7 @@ function handleEvent(event) {
     }
   }
 
-  const toast = document.createElement('div');
-  toast.className = 'toast toast-' + event.Type;
-  toast.textContent = msg;
-  document.body.appendChild(toast);
-  setTimeout(function() { toast.remove(); }, 5000);
+  showToast(msg, event.Type);
 }
 
 async function removeQueueItem(id, btn) {
