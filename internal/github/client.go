@@ -28,9 +28,10 @@ type ReviewSubmission struct {
 }
 
 type ReviewComment struct {
-	File    string
-	Line    int
-	Message string
+	File     string
+	Line     int
+	Message  string
+	CommitID string
 }
 
 type Client struct {
@@ -197,12 +198,16 @@ func (c *Client) CreatePRComment(ctx context.Context, owner, repo string, number
 }
 
 func (c *Client) CreateReviewComment(ctx context.Context, owner, repo string, number int, comment ReviewComment) error {
+	if comment.CommitID == "" {
+		return fmt.Errorf("create review comment on %s/%s#%d: commit_id is required", owner, repo, number)
+	}
 	body := comment.Message
 	_, _, err := c.PullRequests.CreateComment(ctx, owner, repo, number, &github.PullRequestComment{
-		Body: &body,
-		Path: &comment.File,
-		Line: &comment.Line,
-		Side: github.String("RIGHT"),
+		Body:     &body,
+		Path:     &comment.File,
+		Line:     &comment.Line,
+		Side:     github.String("RIGHT"),
+		CommitID: &comment.CommitID,
 	})
 	if err != nil {
 		return fmt.Errorf("create review comment on %s/%s#%d: %w", owner, repo, number, err)

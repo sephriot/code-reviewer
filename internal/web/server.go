@@ -565,10 +565,15 @@ func (s *Server) publishInlineComment(w http.ResponseWriter, commentID int64) {
 		return
 	}
 
+	commitID := rv.CommitSHA
+	if commitID == "" {
+		commitID = pr.CommitSHA
+	}
 	if err := s.gh.CreateReviewComment(context.Background(), parts[0], parts[1], pr.PRNumber, gh.ReviewComment{
-		File:    c.File,
-		Line:    c.Line,
-		Message: c.Message,
+		File:     c.File,
+		Line:     c.Line,
+		Message:  c.Message,
+		CommitID: commitID,
 	}); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -645,10 +650,15 @@ func (s *Server) publishReviewComments(w http.ResponseWriter, rv *db.Review) {
 		if c.Published {
 			continue
 		}
+		commitID := rv.CommitSHA
+		if commitID == "" {
+			commitID = pr.CommitSHA
+		}
 		err := s.gh.CreateReviewComment(context.Background(), parts[0], parts[1], pr.PRNumber, gh.ReviewComment{
-			File:    c.File,
-			Line:    c.Line,
-			Message: c.Message,
+			File:     c.File,
+			Line:     c.Line,
+			Message:  c.Message,
+			CommitID: commitID,
 		})
 		if err != nil {
 			log.Printf("web: failed to post comment: %v", err)
