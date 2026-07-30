@@ -223,8 +223,8 @@ func TestProcessPR_DraftToReadySameSHAClearsFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created {
-		t.Fatal("same SHA path should not create review request")
+	if !created {
+		t.Fatal("draft→ready should enqueue when queue is empty")
 	}
 	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 10)
 	if pr.FilteredReason != "" {
@@ -521,5 +521,48 @@ func TestProcessPR_NewSHAEnqueuesEvenIfOldCommitReviewed(t *testing.T) {
 	pr, _ := d.GetPR(id)
 	if pr.CommitSHA != "sha-new" || !pr.NeedsReview {
 		t.Fatalf("got %#v", pr)
+	}
+}
+
+func TestProcessPR_SameSHAReenqueuesWhenNeedsReviewAndNoPending(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 99)
+	sha := "same-sha-requeue"
+	fake := &fakeGH{
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 99, Title: "t", Author: "a", CommitSHA: sha, Draft: false, State: "open"},
+		},
+		hasReviewed: map[string]bool{key: false},
+	}
+	s, d := testScanner(t, &config.Config{}, fake)
+	id, err := d.UpsertPR(db.PullRequest{
+		Repo: "spacelift-io/backend", PRNumber: 99, Title: "t", Author: "a",
+		CommitSHA: sha, State: "open", NeedsReview: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := s.processPR(context.Background(), gh.PRSummary{
+		Owner: "spacelift-io", Repo: "backend", Number: 99, Title: "t", Author: "a", CommitSHA: sha,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected review request when needs_review and queue empty")
+	}
+	pending, err := d.GetPendingRequestByPR(id)
+	if err != nil || pending == nil {
+		t.Fatalf("want pending request, got %#v err=%v", pending, err)
+	}
+
+	created, err = s.processPR(context.Background(), gh.PRSummary{
+		Owner: "spacelift-io", Repo: "backend", Number: 99, Title: "t", Author: "a", CommitSHA: sha,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("must not duplicate pending request")
 	}
 }

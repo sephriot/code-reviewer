@@ -214,7 +214,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 		}
 		needsReview := !hasReviewed
 		// Clear any prior filter reason (e.g. draft→ready same SHA) and sync needs_review.
-		_, err = s.db.UpsertPR(db.PullRequest{
+		prID, err := s.db.UpsertPR(db.PullRequest{
 			Repo:           fullName,
 			PRNumber:       pr.Number,
 			Title:          details.Title,
@@ -232,11 +232,22 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 		}
 		if hasReviewed {
 			log.Printf("scan: %s/%s#%d already reviewed, needs_review=false", pr.Owner, pr.Repo, pr.Number)
-			s.recordExternalReview(pr.Owner, pr.Repo, pr.Number, existing.ID, details.CommitSHA)
-		} else {
-			log.Printf("scan: %s/%s#%d not reviewed, needs_review=true", pr.Owner, pr.Repo, pr.Number)
+			s.recordExternalReview(pr.Owner, pr.Repo, pr.Number, prID, details.CommitSHA)
+			return false, nil
 		}
-		return false, nil
+		pending, err := s.db.GetPendingRequestByPR(prID)
+		if err != nil {
+			return false, err
+		}
+		if pending != nil {
+			log.Printf("scan: %s/%s#%d not reviewed, needs_review=true (request already queued)", pr.Owner, pr.Repo, pr.Number)
+			return false, nil
+		}
+		if _, err := s.db.CreateReviewRequest(prID); err != nil {
+			return false, err
+		}
+		log.Printf("scan: review request created for %s/%s#%d (same SHA, queue was empty)", pr.Owner, pr.Repo, pr.Number)
+		return true, nil
 	}
 
 	if existing != nil && existing.CommitSHA != details.CommitSHA {
@@ -273,8 +284,14 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 		return false, nil
 	}
 
-	_, err = s.db.CreateReviewRequest(prID)
+	pending, err := s.db.GetPendingRequestByPR(prID)
 	if err != nil {
+		return false, err
+	}
+	if pending != nil {
+		return false, nil
+	}
+	if _, err = s.db.CreateReviewRequest(prID); err != nil {
 		return false, err
 	}
 	log.Printf("scan: review request created for %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
