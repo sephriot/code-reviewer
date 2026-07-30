@@ -5,12 +5,14 @@ import (
 )
 
 var outcomeLabels = map[string]string{
-	"approve_without_comments": "Approve without comments",
-	"approve_with_comments":    "Approve with comments",
-	"changes_requested":        "Changes requested",
-	"human_review":             "Human review",
-	"tool_failed":              "Tool failed",
-	"reviewed_externally":      "Reviewed externally",
+	"approve_without_comments":     "Approve without comments",
+	"approve_with_comments":        "Approve with comments",
+	"changes_requested":            "Changes requested",
+	"human_review":                 "Human review",
+	"tool_failed":                  "Tool failed",
+	"reviewed_externally":          "Reviewed externally",
+	"approved_externally":          "Approved externally",
+	"changes_requested_externally": "Changes requested externally",
 }
 
 var filterLabels = map[string]string{
