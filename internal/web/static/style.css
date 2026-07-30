@@ -818,6 +818,14 @@ h2 {
   font-size: 0.8rem;
 }
 
+.pr-detail > .pr-header {
+  margin-bottom: 0.35rem;
+}
+
+.pr-detail > .pr-header h1 {
+  margin-bottom: 0;
+}
+
 .pr-detail > .pr-meta {
   margin-bottom: 1rem;
 }

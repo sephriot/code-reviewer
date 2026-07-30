@@ -65,8 +65,8 @@ const OUTCOME_COLORS = {
 };
 
 const OUTCOME_LABELS = {
-  approve_without_comments: 'Approve (no comments)',
-  approve_with_comments: 'Approve (with comments)',
+  approve_without_comments: 'Approve without comments',
+  approve_with_comments: 'Approve with comments',
   changes_requested: 'Changes requested',
   human_review: 'Human review',
   tool_failed: 'Tool failed',
@@ -161,6 +161,8 @@ function renderTrendsChart(trends, total) {
     stack: 'outcomes',
   }));
 
+  const tickColor = '#8b949e';
+  const gridColor = '#30363d';
   trendsChart = new Chart(canvas.getContext('2d'), {
     type: 'bar',
     data: { labels, datasets },
@@ -168,11 +170,23 @@ function renderTrendsChart(trends, total) {
       responsive: true,
       maintainAspectRatio: false,
       scales: {
-        x: { stacked: true },
-        y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
+        x: {
+          stacked: true,
+          ticks: { color: tickColor },
+          grid: { color: gridColor },
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          ticks: { precision: 0, color: tickColor },
+          grid: { color: gridColor },
+        },
       },
       plugins: {
-        legend: { position: 'bottom' },
+        legend: {
+          position: 'bottom',
+          labels: { color: '#e6edf3' },
+        },
       },
     },
   });
