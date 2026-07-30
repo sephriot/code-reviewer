@@ -282,13 +282,13 @@ func TestReconcileStale_OpenFilteredRecordsExternalWhenReviewed(t *testing.T) {
 	sha := "open-recon-ext"
 	fake := &fakeGH{
 		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 44, Title: "open", Author: "a", CommitSHA: sha, State: "open"},
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 44, Title: "open", Author: "bob", CommitSHA: sha, State: "open"},
 		},
 		hasReviewed: map[string]bool{key: true},
 	}
-	s, d := testScanner(t, &config.Config{}, fake)
+	s, d := testScanner(t, &config.Config{PRAuthors: []string{"^alice$"}}, fake)
 	id, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 44, Title: "open", Author: "a",
+		Repo: "spacelift-io/backend", PRNumber: 44, Title: "open", Author: "bob",
 		CommitSHA: "", State: "open", FilteredReason: "author", NeedsReview: false,
 	})
 	if err != nil {
@@ -299,7 +299,10 @@ func TestReconcileStale_OpenFilteredRecordsExternalWhenReviewed(t *testing.T) {
 
 	pr, err := d.GetPR(id)
 	if err != nil || pr == nil || pr.State != "open" || pr.FilteredReason != "author" {
-		t.Fatalf("want open filtered PR unchanged, got %#v err=%v", pr, err)
+		t.Fatalf("want open filtered PR, got %#v err=%v", pr, err)
+	}
+	if pr.CommitSHA != sha {
+		t.Fatalf("want refreshed commit_sha=%s, got %s", sha, pr.CommitSHA)
 	}
 	latest, err := d.GetLatestReviewByPR(id)
 	if err != nil || latest == nil || latest.Outcome != db.ReviewOutcomeReviewedExternally || latest.CommitSHA != sha {
@@ -442,5 +445,42 @@ func TestReconcileStale_ClosedRecordsExternalWhenReviewed(t *testing.T) {
 	ok, err := d.HasExternalReview(id, sha)
 	if err != nil || !ok {
 		t.Fatalf("want external review after reconcile close, ok=%v err=%v", ok, err)
+	}
+}
+
+func TestReconcileStale_OpenUpdatesSHAAndEnqueues(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 15706)
+	oldSHA := "old-commit"
+	newSHA := "new-commit"
+	fake := &fakeGH{
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 15706, Title: "advances", Author: "a", CommitSHA: newSHA, Draft: false, State: "open"},
+		},
+		hasReviewed: map[string]bool{key: false},
+	}
+	s, d := testScanner(t, &config.Config{}, fake)
+	id, err := d.UpsertPR(db.PullRequest{
+		Repo: "spacelift-io/backend", PRNumber: 15706, Title: "advances", Author: "a",
+		CommitSHA: oldSHA, State: "open", NeedsReview: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.reconcileStalePRs(context.Background(), map[string]gh.PRSummary{})
+
+	pr, err := d.GetPR(id)
+	if err != nil || pr == nil {
+		t.Fatalf("get PR: %#v err=%v", pr, err)
+	}
+	if pr.CommitSHA != newSHA {
+		t.Fatalf("want commit_sha=%s, got %s", newSHA, pr.CommitSHA)
+	}
+	if !pr.NeedsReview {
+		t.Fatal("expected needs_review=true")
+	}
+	pending, err := d.GetPendingRequestByPR(id)
+	if err != nil || pending == nil {
+		t.Fatalf("want pending review request, got %#v err=%v", pending, err)
 	}
 }

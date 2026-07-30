@@ -71,7 +71,7 @@ func (s *Scanner) Scan(ctx context.Context) error {
 		}
 	}
 
-	s.reconcileStalePRs(ctx, dedup)
+	newRequests += s.reconcileStalePRs(ctx, dedup)
 	s.backfillMergedStates(ctx)
 
 	log.Printf("scan: done, %d new review requests", newRequests)
@@ -281,14 +281,16 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 	return true, nil
 }
 
-func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSummary) {
-	// Include filtered opens so a draft/repo/author discard that merges leaves Filtered.
+func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSummary) int {
+	// Re-run full processPR for open DB rows missing from the search input
+	// (e.g. review request dismissed) so SHA advances still enqueue.
 	openPRs, err := s.db.ListOpenPRs()
 	if err != nil {
 		log.Printf("scan: error listing open PRs for reconciliation: %v", err)
-		return
+		return 0
 	}
 
+	newRequests := 0
 	for _, pr := range openPRs {
 		parts := strings.SplitN(pr.Repo, "/", 2)
 		if len(parts) != 2 {
@@ -304,30 +306,16 @@ func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSu
 			log.Printf("scan: reconcile error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
 			continue
 		}
-		if details.State == "open" {
-			s.ensureExternalReview(ctx, parts[0], parts[1], pr.PRNumber, pr.ID, details.CommitSHA)
-			continue
-		}
-
-		log.Printf("scan: reconcile %s#%d state %s -> %s (history)", pr.Repo, pr.PRNumber, pr.State, details.State)
-		prID, err := s.db.UpsertPR(db.PullRequest{
-			Repo:           pr.Repo,
-			PRNumber:       pr.PRNumber,
-			Title:          details.Title,
-			Author:         details.Author,
-			CommitSHA:      details.CommitSHA,
-			Draft:          details.Draft,
-			State:          details.State,
-			NeedsReview:    false,
-			FilteredReason: "",
-			GhUpdatedAt:    details.UpdatedAt,
-		})
+		created, err := s.processPR(ctx, *details)
 		if err != nil {
-			log.Printf("scan: reconcile upsert error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
+			log.Printf("scan: reconcile error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
 			continue
 		}
-		s.ensureExternalReview(ctx, parts[0], parts[1], pr.PRNumber, prID, details.CommitSHA)
+		if created {
+			newRequests++
+		}
 	}
+	return newRequests
 }
 
 // backfillMergedStates re-fetches PRs stored as closed and upgrades them to
