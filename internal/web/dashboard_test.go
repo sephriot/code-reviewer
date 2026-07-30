@@ -241,6 +241,45 @@ func TestDashboardUsesExactGitHubReviewIDForProvenance(t *testing.T) {
 	}
 }
 
+func TestPRDetailShowsRequestReviewAfterLocalDraft(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	prID, err := d.UpsertPR(db.PullRequest{
+		Repo: "org/repo", PRNumber: 16, Title: "drafted", Author: "alice",
+		CommitSHA: "sha16", State: db.PRStateOpen, IsAssigned: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID, err := d.CreateReviewRequest(prID, "sha16")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateReview(db.Review{
+		PullRequestID: prID, ReviewRequestID: requestID,
+		Outcome: db.ReviewOutcomeChangesRequested, CommitSHA: "sha16",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateReviewRequestStatus(requestID, db.ReviewRequestStatusDone); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(&config.Config{}, d, nil, nil)
+	recorder := httptest.NewRecorder()
+	server.prDetail(recorder, httptest.NewRequest(http.MethodGet, "/pr/"+strconv.FormatInt(prID, 10), nil))
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", recorder.Code, body)
+	}
+	if !strings.Contains(body, "Request Review") {
+		t.Fatalf("PR detail missing Request Review button; body:\n%s", body)
+	}
+}
+
 func TestManualRetryRequiresDashboardEligibility(t *testing.T) {
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

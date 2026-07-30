@@ -185,6 +185,44 @@ func TestDecideReconciliation(t *testing.T) {
 				FilteredReason: "draft",
 			},
 		},
+		{
+			name: "manual pending preserved after completed local review",
+			in: ReconcileInput{
+				AssignedInSnapshot:      true,
+				SnapshotComplete:        true,
+				State:                   "open",
+				HeadSHA:                 "sha-12",
+				HasCompletedLocalReview: true,
+				Requests: []RequestFact{
+					{ID: 13, CommitSHA: "sha-12", Status: RequestPending},
+				},
+			},
+			want: ReconcileDecision{
+				Placement:  PlacementDashboard,
+				IsAssigned: true,
+			},
+		},
+		{
+			name: "effective github review cancels manual pending",
+			in: ReconcileInput{
+				AssignedInSnapshot:      true,
+				SnapshotComplete:        true,
+				State:                   "open",
+				HeadSHA:                 "sha-13",
+				HasCompletedLocalReview: true,
+				EffectiveReview:         &EffectiveReview{ID: 99, State: EffectiveReviewApproved},
+				Requests: []RequestFact{
+					{ID: 14, CommitSHA: "sha-13", Status: RequestPending},
+				},
+			},
+			want: ReconcileDecision{
+				Placement:  PlacementDashboard,
+				IsAssigned: true,
+				Cancel: []RequestCancellation{
+					{ID: 14, Status: RequestCanceled},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {

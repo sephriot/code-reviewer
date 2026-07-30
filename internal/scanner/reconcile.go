@@ -83,9 +83,11 @@ func DecideReconciliation(in ReconcileInput) ReconcileDecision {
 		decision.Placement = PlacementDashboard
 	}
 
-	eligible := decision.Placement == PlacementDashboard &&
+	autoEligible := decision.Placement == PlacementDashboard &&
 		in.EffectiveReview == nil &&
 		!in.HasCompletedLocalReview
+	// Keep a human-requested active job even when a local draft already exists.
+	keepActive := decision.Placement == PlacementDashboard && in.EffectiveReview == nil
 	hasActiveCurrent := false
 	hasTerminalStop := false
 
@@ -97,7 +99,7 @@ func DecideReconciliation(in ReconcileInput) ReconcileDecision {
 					ID:     request.ID,
 					Status: RequestSuperseded,
 				})
-			} else if !eligible {
+			} else if !keepActive {
 				decision.Cancel = append(decision.Cancel, RequestCancellation{
 					ID:     request.ID,
 					Status: RequestCanceled,
@@ -112,7 +114,7 @@ func DecideReconciliation(in ReconcileInput) ReconcileDecision {
 		}
 	}
 
-	if eligible && !hasActiveCurrent && !hasTerminalStop && in.HeadSHA != "" {
+	if autoEligible && !hasActiveCurrent && !hasTerminalStop && in.HeadSHA != "" {
 		decision.CreateSHA = in.HeadSHA
 	}
 	return decision

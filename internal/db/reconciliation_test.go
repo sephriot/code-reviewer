@@ -340,3 +340,43 @@ func TestManualRetryAllowsFailedOrSuppressedCurrentSHA(t *testing.T) {
 		})
 	}
 }
+
+func TestManualRetryAllowsCompletedLocalReview(t *testing.T) {
+	d := openTestDB(t)
+	prID := mustUpsert(t, d, PullRequest{
+		Repo: "acme/repo", PRNumber: 31, Title: "rerequest", Author: "alice",
+		CommitSHA: "sha-done", State: PRStateOpen, IsAssigned: true,
+	})
+	requestID, err := d.CreateReviewRequest(prID, "sha-done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateReview(Review{
+		PullRequestID: prID, ReviewRequestID: requestID,
+		Outcome: ReviewOutcomeApproveWithComments, CommitSHA: "sha-done",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateReviewRequestStatus(requestID, ReviewRequestStatusDone); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := d.CanQueueReview(prID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("CanQueueReview should allow re-request after a completed local draft")
+	}
+	retryID, err := d.CreateManualReviewRequest(prID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := d.GetReviewRequest(retryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry == nil || retry.CommitSHA != "sha-done" || retry.Status != ReviewRequestStatusPending {
+		t.Fatalf("manual retry = %#v", retry)
+	}
+}
