@@ -34,7 +34,17 @@ document.addEventListener('DOMContentLoaded', function() {
   consumeFlashToast();
   connectSSE();
   initMuteToggle();
+  initActiveNav();
 });
+
+function initActiveNav() {
+  const path = window.location.pathname || '/';
+  document.querySelectorAll('.nav-links a[data-nav]').forEach(function(a) {
+    const nav = a.getAttribute('data-nav');
+    const active = nav === '/' ? path === '/' : path === nav || path.indexOf(nav + '/') === 0;
+    a.classList.toggle('active', active);
+  });
+}
 
 function initMuteToggle() {
   const el = document.getElementById('mute-notifications');

@@ -1,7 +1,7 @@
 # UI dark IDE redesign
 
 **Date:** 2026-07-30  
-**Status:** draft — awaiting user review before implementation plan  
+**Status:** approved — implementing / shipped in UI  
 **Scope:** Web UI only (`internal/web/templates/*`, `internal/web/static/style.css`, `internal/web/static/app.js`). Prefer no backend/API/schema changes.
 
 ## Problem

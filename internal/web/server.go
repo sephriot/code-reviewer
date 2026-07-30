@@ -139,8 +139,13 @@ func (s *Server) Serve(ctx context.Context) error {
 func (s *Server) render(w http.ResponseWriter, name string, data interface{}) {
 	t := template.New("")
 	t.Funcs(template.FuncMap{
-		"safe":       func(s string) template.HTML { return template.HTML(s) },
-		"formatTime": func(t time.Time) string { return t.Format("2006-01-02 15:04") },
+		"safe":               func(s string) template.HTML { return template.HTML(s) },
+		"formatTime":         func(t time.Time) string { return t.Format("2006-01-02 15:04") },
+		"formatOutcome":      formatOutcome,
+		"formatFilter":       formatFilter,
+		"formatStatus":       formatStatus,
+		"shortSHA":           shortSHA,
+		"showHistorySummary": showHistorySummary,
 	})
 	t, err := t.ParseFS(content, "templates/base.html", "templates/"+name)
 	if err != nil {

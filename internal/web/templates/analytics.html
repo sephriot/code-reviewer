@@ -39,7 +39,7 @@
       </tr>
     </thead>
     <tbody id="authors-table-body">
-      <tr><td colspan="6" class="empty">Loading...</td></tr>
+      <tr><td colspan="6" class="empty">Loading…</td></tr>
     </tbody>
   </table>
 </div>
@@ -107,7 +107,7 @@ function rateBadgeClass(rate, kind) {
     if (rate >= 40) return 'rate-warning';
     return 'rate-danger';
   }
-  // human review: lower is better
+  // human review / change request: lower is better
   if (rate <= 10) return 'rate-good';
   if (rate <= 25) return 'rate-warning';
   return 'rate-danger';
@@ -122,12 +122,13 @@ function renderAuthorsTable(authors) {
   tbody.innerHTML = authors.map(a => {
     const approvalClass = rateBadgeClass(a.approval_rate || 0, 'approval');
     const humanClass = rateBadgeClass(a.human_review_rate || 0, 'human');
+    const changeClass = rateBadgeClass(a.change_request_rate || 0, 'human');
     return '<tr>' +
       '<td><strong>@' + a.author + '</strong></td>' +
       '<td>' + a.total_reviews + '</td>' +
       '<td><span class="rate-badge ' + approvalClass + '">' + (a.approval_rate || 0) + '%</span></td>' +
       '<td><span class="rate-badge ' + humanClass + '">' + (a.human_review_rate || 0) + '%</span></td>' +
-      '<td>' + (a.change_request_rate || 0) + '%</td>' +
+      '<td><span class="rate-badge ' + changeClass + '">' + (a.change_request_rate || 0) + '%</span></td>' +
       '<td>' + (a.avg_inline_comments || 0) + '</td>' +
       '</tr>';
   }).join('');
