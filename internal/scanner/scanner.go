@@ -223,7 +223,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 			Draft:          false,
 			State:          "open",
 			NeedsReview:    needsReview,
-			IsOutdated:     existing.IsOutdated,
+			IsOutdated:     hasReviewed && existing.IsOutdated,
 			FilteredReason: "",
 			GhUpdatedAt:    details.UpdatedAt,
 		})
@@ -251,10 +251,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 	}
 
 	if existing != nil && existing.CommitSHA != details.CommitSHA {
-		if err := s.db.MarkPROutdated(existing.ID); err != nil {
-			return false, err
-		}
-		log.Printf("scan: new commit on %s/%s#%d, marked outdated", pr.Owner, pr.Repo, pr.Number)
+		log.Printf("scan: new commit on %s/%s#%d (%s -> %s)", pr.Owner, pr.Repo, pr.Number, existing.CommitSHA, details.CommitSHA)
 	}
 
 	hasReviewed, err := s.gh.HasUserReviewed(ctx, pr.Owner, pr.Repo, pr.Number, details.CommitSHA)
@@ -272,6 +269,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 		Draft:          details.Draft,
 		State:          "open",
 		NeedsReview:    needsReview,
+		IsOutdated:     false,
 		FilteredReason: "",
 		GhUpdatedAt:    details.UpdatedAt,
 	})

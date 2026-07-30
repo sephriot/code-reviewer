@@ -566,3 +566,71 @@ func TestProcessPR_SameSHAReenqueuesWhenNeedsReviewAndNoPending(t *testing.T) {
 		t.Fatal("must not duplicate pending request")
 	}
 }
+
+func TestProcessPR_NewSHAClearsOutdatedForNewCycle(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 100)
+	fake := &fakeGH{
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 100, Title: "t", Author: "a", CommitSHA: "sha2", Draft: false, State: "open"},
+		},
+		hasReviewed: map[string]bool{key: false},
+	}
+	s, d := testScanner(t, &config.Config{}, fake)
+	id, err := d.UpsertPR(db.PullRequest{
+		Repo: "spacelift-io/backend", PRNumber: 100, Title: "t", Author: "a",
+		CommitSHA: "sha1", State: "open", NeedsReview: true, IsOutdated: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := s.processPR(context.Background(), gh.PRSummary{
+		Owner: "spacelift-io", Repo: "backend", Number: 100, Title: "t", Author: "a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected enqueue for new SHA")
+	}
+	pr, _ := d.GetPR(id)
+	if pr.IsOutdated {
+		t.Fatal("new review cycle must clear is_outdated so PR stays on dashboard")
+	}
+	if pr.CommitSHA != "sha2" {
+		t.Fatalf("want sha2, got %s", pr.CommitSHA)
+	}
+}
+
+func TestProcessPR_SameSHAClearsOutdatedWhenReenqueueing(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 101)
+	sha := "stuck-outdated"
+	fake := &fakeGH{
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 101, Title: "t", Author: "a", CommitSHA: sha, Draft: false, State: "open"},
+		},
+		hasReviewed: map[string]bool{key: false},
+	}
+	s, d := testScanner(t, &config.Config{}, fake)
+	id, err := d.UpsertPR(db.PullRequest{
+		Repo: "spacelift-io/backend", PRNumber: 101, Title: "t", Author: "a",
+		CommitSHA: sha, State: "open", NeedsReview: true, IsOutdated: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := s.processPR(context.Background(), gh.PRSummary{
+		Owner: "spacelift-io", Repo: "backend", Number: 101, Title: "t", Author: "a", CommitSHA: sha,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected enqueue")
+	}
+	pr, _ := d.GetPR(id)
+	if pr.IsOutdated {
+		t.Fatal("re-enqueue must clear is_outdated for dashboard visibility")
+	}
+}
