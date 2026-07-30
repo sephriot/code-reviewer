@@ -1,4 +1,4 @@
-next_id: 41
+next_id: 42
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -479,6 +479,7 @@ entries:
   - K-000037
   - K-000038
   - K-000040
+  - K-000041
 - id: K-000040
   title: Pending GitHub reviews may lack submitted timestamps
   type: gotcha
@@ -490,5 +491,19 @@ entries:
   sources:
   - internal/github/client.go
   - internal/github/reviewed_test.go
+  links:
+  - K-000039
+- id: K-000041
+  title: Scanner logs every committed reconciliation decision
+  type: decision
+  confidence: high
+  tags:
+  - scanner
+  - observability
+  - reconciliation
+  - queue
+  sources:
+  - internal/scanner/scanner.go
+  - internal/scanner/scanner_test.go
   links:
   - K-000039

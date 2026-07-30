@@ -1,0 +1,24 @@
+id: K-000041
+title: Scanner logs every committed reconciliation decision
+type: decision
+confidence: high
+summary: Each scan logs discovery, committed per-PR decisions, queue invalidations, and a final error-aware summary.
+details: |-
+  Scanner emits one discovery line, one decision line for every successfully reconciled candidate on every scan, and one final summary. Decision lines are emitted only after `ApplyReconciliation` commits.
+
+  Per-PR logs identify the PR, shorten the head SHA to twelve characters, expose assignment, placement, effective review, local-review, and queue state, and count canceled and superseded requests separately. They omit titles, review content, and full SHAs.
+
+  The final `failed` count includes assignment-discovery failures, tracked-PR lookup failures, and per-PR reconciliation failures. Snapshot completeness remains a separate field.
+
+  Source: `internal/scanner/scanner.go`; behavior covered by `TestScanLogsReconciliationDecisions` and `TestScanIncompleteSnapshotPreservesAssignment`.
+tags:
+- scanner
+- observability
+- reconciliation
+- queue
+sources:
+- internal/scanner/scanner.go
+- internal/scanner/scanner_test.go
+links:
+- K-000039
+updated_at: 2026-07-30

@@ -1,11 +1,13 @@
 package scanner
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sephriot/code-reviewer/internal/config"
@@ -93,6 +95,10 @@ func TestScanIncompleteSnapshotPreservesAssignment(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(io.Discard) })
+
 	if err := scanner.Scan(context.Background()); err == nil {
 		t.Fatal("partial discovery error must remain visible")
 	}
@@ -106,6 +112,13 @@ func TestScanIncompleteSnapshotPreservesAssignment(t *testing.T) {
 	dashboard, err := database.ListDashboardPRs()
 	if !idsOfPRs(t, dashboard, err)[prID] {
 		t.Fatal("preserved assigned PR must remain on Dashboard")
+	}
+	output := logs.String()
+	if !strings.Contains(output, "scan: discovered assigned=0 tracked_open=1 candidates=1 complete=false") {
+		t.Fatalf("incomplete discovery log missing:\n%s", output)
+	}
+	if !strings.Contains(output, "scan: done candidates=1 reconciled=1 failed=1 created=1 canceled=0 superseded=0 complete=false duration=") {
+		t.Fatalf("incomplete summary log missing:\n%s", output)
 	}
 }
 
@@ -262,6 +275,72 @@ func TestScanCompleteAbsenceMovesPRToHistoryAndCancelsAfterCommit(t *testing.T) 
 	}
 	if len(canceller.canceled) != 1 || canceller.canceled[0] != requestID {
 		t.Fatalf("system cancellations = %#v", canceller.canceled)
+	}
+}
+
+func TestScanLogsReconciliationDecisions(t *testing.T) {
+	const (
+		fullSHA = "0123456789abcdef0123456789abcdef01234567"
+		title   = "do not log this title"
+	)
+	key := prKey("acme", "repo", 5)
+	fake := &fakeGH{
+		snapshot: gh.AssignmentSnapshot{
+			Complete: true,
+			PRs:      []gh.PRSummary{{Owner: "acme", Repo: "repo", Number: 5}},
+		},
+		details: map[string]*gh.PRSummary{
+			key: {
+				Owner: "acme", Repo: "repo", Number: 5, Title: title,
+				Author: "alice", CommitSHA: fullSHA, State: "open",
+			},
+		},
+		reviews: map[string]*gh.EffectiveReview{},
+	}
+	scanner, database := testScanner(t, nil, fake, nil, nil)
+	prID, err := database.UpsertPR(db.PullRequest{
+		Repo: "acme/repo", PRNumber: 5, Title: title, Author: "alice",
+		CommitSHA: "old-head", State: db.PRStateOpen, IsAssigned: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateReviewRequest(prID, "old-head"); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(io.Discard) })
+
+	if err := scanner.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := scanner.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	output := logs.String()
+	if !strings.Contains(output, "scan: discovered assigned=1 tracked_open=1 candidates=1 complete=true") {
+		t.Fatalf("discovery log missing:\n%s", output)
+	}
+	if strings.Count(output, "scan: pr=acme/repo#5 ") != 2 {
+		t.Fatalf("decision log count wrong:\n%s", output)
+	}
+	if !strings.Contains(output, "head=0123456789ab assigned=true placement=dashboard review=none local_review=false queue=created canceled=0 superseded=1") {
+		t.Fatalf("created decision log missing:\n%s", output)
+	}
+	if !strings.Contains(output, "head=0123456789ab assigned=true placement=dashboard review=none local_review=false queue=kept canceled=0 superseded=0") {
+		t.Fatalf("kept decision log missing:\n%s", output)
+	}
+	if !strings.Contains(output, "scan: done candidates=1 reconciled=1 failed=0 created=1 canceled=0 superseded=1 complete=true duration=") {
+		t.Fatalf("first summary log missing:\n%s", output)
+	}
+	if !strings.Contains(output, "scan: done candidates=1 reconciled=1 failed=0 created=0 canceled=0 superseded=0 complete=true duration=") {
+		t.Fatalf("second summary log missing:\n%s", output)
+	}
+	if strings.Contains(output, fullSHA) || strings.Contains(output, title) {
+		t.Fatalf("sensitive PR data leaked into logs:\n%s", output)
 	}
 }
 
