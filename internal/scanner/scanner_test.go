@@ -92,11 +92,14 @@ func TestProcessPR_RepoFilterUpsertsFiltered(t *testing.T) {
 }
 
 func TestProcessPR_AuthorFilterUpsertsFiltered(t *testing.T) {
-	fake := &fakeGH{}
+	key := prKey("spacelift-io", "backend", 2)
+	fake := &fakeGH{details: map[string]*gh.PRSummary{
+		key: {Owner: "spacelift-io", Repo: "backend", Number: 2, Title: "x", Author: "bob", CommitSHA: "c2", State: "open"},
+	}}
 	s, d := testScanner(t, &config.Config{PRAuthors: []string{`^alice$`}}, fake)
 
 	_, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 2, Title: "x", Author: "bob", CommitSHA: "c2", State: "open",
+		Owner: "spacelift-io", Repo: "backend", Number: 2, Title: "x", Author: "bob", CommitSHA: "", State: "open",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -632,5 +635,32 @@ func TestProcessPR_SameSHAClearsOutdatedWhenReenqueueing(t *testing.T) {
 	pr, _ := d.GetPR(id)
 	if pr.IsOutdated {
 		t.Fatal("re-enqueue must clear is_outdated for dashboard visibility")
+	}
+}
+
+func TestProcessPR_AuthorFilterUsesDetailsCommitSHA(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 55)
+	sha := "detail-sha-55"
+	fake := &fakeGH{
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 55, Title: "x", Author: "bob", CommitSHA: sha, State: "open"},
+		},
+	}
+	s, d := testScanner(t, &config.Config{PRAuthors: []string{"^alice$"}}, fake)
+	_, err := s.processPR(context.Background(), gh.PRSummary{
+		Owner: "spacelift-io", Repo: "backend", Number: 55, Title: "x", Author: "bob", CommitSHA: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 55)
+	if pr == nil || pr.FilteredReason != "author" {
+		t.Fatalf("got %#v", pr)
+	}
+	if pr.CommitSHA != sha {
+		t.Fatalf("want commit_sha from details %s, got %q", sha, pr.CommitSHA)
+	}
+	if fake.getCalls < 1 {
+		t.Fatal("expected GetPRDetails before filter upsert")
 	}
 }

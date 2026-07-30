@@ -134,30 +134,31 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, pr.CommitSHA)
 		return false, nil
 	}
-	if !matchesFilter(pr.Author, s.cfg.AuthorFilterRegex()) {
-		log.Printf("scan: filtered out author=%s %s/%s#%d", pr.Author, pr.Owner, pr.Repo, pr.Number)
-		prID, err := s.db.UpsertPR(db.PullRequest{
-			Repo:           fullName,
-			PRNumber:       pr.Number,
-			Title:          pr.Title,
-			Author:         pr.Author,
-			CommitSHA:      pr.CommitSHA,
-			Draft:          pr.Draft,
-			State:          openOr(pr.State),
-			NeedsReview:    false,
-			FilteredReason: "author",
-			GhUpdatedAt:    pr.UpdatedAt,
-		})
-		if err != nil {
-			return false, err
-		}
-		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, pr.CommitSHA)
-		return false, nil
-	}
 
 	details, err := s.gh.GetPRDetails(ctx, pr.Owner, pr.Repo, pr.Number)
 	if err != nil {
 		return false, err
+	}
+
+	if !matchesFilter(details.Author, s.cfg.AuthorFilterRegex()) {
+		log.Printf("scan: filtered out author=%s %s/%s#%d", details.Author, pr.Owner, pr.Repo, pr.Number)
+		prID, err := s.db.UpsertPR(db.PullRequest{
+			Repo:           fullName,
+			PRNumber:       pr.Number,
+			Title:          details.Title,
+			Author:         details.Author,
+			CommitSHA:      details.CommitSHA,
+			Draft:          details.Draft,
+			State:          openOr(details.State),
+			NeedsReview:    false,
+			FilteredReason: "author",
+			GhUpdatedAt:    details.UpdatedAt,
+		})
+		if err != nil {
+			return false, err
+		}
+		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, details.CommitSHA)
+		return false, nil
 	}
 
 	if details.Draft {
@@ -316,12 +317,13 @@ func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSu
 			continue
 		}
 
-		details, err := s.gh.GetPRDetails(ctx, parts[0], parts[1], pr.PRNumber)
-		if err != nil {
-			log.Printf("scan: reconcile error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
-			continue
-		}
-		created, err := s.processPR(ctx, *details)
+		created, err := s.processPR(ctx, gh.PRSummary{
+			Owner:  parts[0],
+			Repo:   parts[1],
+			Number: pr.PRNumber,
+			Title:  pr.Title,
+			Author: pr.Author,
+		})
 		if err != nil {
 			log.Printf("scan: reconcile error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
 			continue
