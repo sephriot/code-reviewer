@@ -9,7 +9,14 @@ import (
 	"testing"
 
 	"github.com/sephriot/code-reviewer/internal/config"
+	"github.com/sephriot/code-reviewer/internal/db"
 )
+
+func TestMapActionToOutcomePreservesRequestChanges(t *testing.T) {
+	if got := mapActionToOutcome("request_changes"); got != db.ReviewOutcomeChangesRequested {
+		t.Fatalf("outcome = %q, want %q", got, db.ReviewOutcomeChangesRequested)
+	}
+}
 
 func TestReadClaudeStreamJSON(t *testing.T) {
 	oldWriter := log.Writer()

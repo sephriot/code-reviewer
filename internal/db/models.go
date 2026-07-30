@@ -3,27 +3,31 @@ package db
 import "time"
 
 type PullRequest struct {
-	ID             int64      `json:"id"`
-	Repo           string     `json:"repo"`
-	PRNumber       int        `json:"pr_number"`
-	Title          string     `json:"title"`
-	Author         string     `json:"author"`
-	CommitSHA      string     `json:"commit_sha"`
-	Draft          bool       `json:"draft"`
-	State          string     `json:"state"`
-	NeedsReview    bool       `json:"needs_review"`
-	IsOutdated     bool       `json:"is_outdated"`
-	FilteredReason string     `json:"filtered_reason,omitempty"`
-	GhUpdatedAt    time.Time  `json:"gh_updated_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
+	ID                   int64      `json:"id"`
+	Repo                 string     `json:"repo"`
+	PRNumber             int        `json:"pr_number"`
+	Title                string     `json:"title"`
+	Author               string     `json:"author"`
+	CommitSHA            string     `json:"commit_sha"`
+	Draft                bool       `json:"draft"`
+	State                string     `json:"state"`
+	NeedsReview          bool       `json:"needs_review"`
+	IsOutdated           bool       `json:"is_outdated"`
+	FilteredReason       string     `json:"filtered_reason,omitempty"`
+	GhUpdatedAt          time.Time  `json:"gh_updated_at,omitempty"`
+	IsAssigned           bool       `json:"is_assigned"`
+	EffectiveReviewID    *int64     `json:"effective_review_id,omitempty"`
+	EffectiveReviewState string     `json:"effective_review_state,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	DeletedAt            *time.Time `json:"deleted_at,omitempty"`
 }
 
 type ReviewRequest struct {
 	ID            int64      `json:"id"`
 	PullRequestID int64      `json:"pull_request_id"`
 	Status        string     `json:"status"`
+	CommitSHA     string     `json:"commit_sha"`
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
@@ -38,6 +42,7 @@ type Review struct {
 	Summary         string     `json:"summary"`
 	GeneralComment  string     `json:"general_comment"`
 	Published       bool       `json:"published"`
+	GitHubReviewID  *int64     `json:"github_review_id,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 	DeletedAt       *time.Time `json:"deleted_at,omitempty"`
@@ -73,10 +78,19 @@ const (
 )
 
 const (
+	EffectiveReviewStateCommented        = "commented"
+	EffectiveReviewStateApproved         = "approved"
+	EffectiveReviewStateChangesRequested = "changes_requested"
+)
+
+const (
 	ReviewRequestStatusPending    = "pending"
 	ReviewRequestStatusInProgress = "in_progress"
 	ReviewRequestStatusDone       = "done"
 	ReviewRequestStatusFailed     = "failed"
+	ReviewRequestStatusCanceled   = "canceled"
+	ReviewRequestStatusSuperseded = "superseded"
+	ReviewRequestStatusSuppressed = "suppressed"
 )
 
 const (

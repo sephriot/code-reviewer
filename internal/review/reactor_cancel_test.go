@@ -26,12 +26,12 @@ func TestCancelRequestSoftDeletesPending(t *testing.T) {
 	d := openReactorDB(t)
 	prID, err := d.UpsertPR(db.PullRequest{
 		Repo: "o/r", PRNumber: 1, Title: "t", Author: "a",
-		CommitSHA: "1", State: db.PRStateOpen, NeedsReview: true,
+		CommitSHA: "1", State: db.PRStateOpen, IsAssigned: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rrID, err := d.CreateReviewRequest(prID)
+	rrID, err := d.CreateReviewRequest(prID, "1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,12 +48,12 @@ func TestCancelRequestSoftDeletesPending(t *testing.T) {
 	if len(list) != 0 {
 		t.Fatalf("expected empty queue, got %+v", list)
 	}
-	pr, err := d.GetPR(prID)
+	request, err := d.GetReviewRequestIncludingTerminal(rrID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !pr.NeedsReview {
-		t.Fatal("needs_review should remain true")
+	if request == nil || request.Status != db.ReviewRequestStatusSuppressed {
+		t.Fatalf("user cancellation = %#v, want suppressed", request)
 	}
 }
 
@@ -61,12 +61,12 @@ func TestProcessQueueCancelLeavesNoReview(t *testing.T) {
 	d := openReactorDB(t)
 	prID, err := d.UpsertPR(db.PullRequest{
 		Repo: "o/r", PRNumber: 2, Title: "t", Author: "a",
-		CommitSHA: "2", State: db.PRStateOpen, NeedsReview: true,
+		CommitSHA: "2", State: db.PRStateOpen, IsAssigned: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rrID, err := d.CreateReviewRequest(prID)
+	rrID, err := d.CreateReviewRequest(prID, "2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,12 +117,12 @@ func TestProcessQueueCancelLeavesNoReview(t *testing.T) {
 	if len(reviews) != 0 {
 		t.Fatalf("expected no reviews, got %+v", reviews)
 	}
-	pr, err := d.GetPR(prID)
+	request, err := d.GetReviewRequestIncludingTerminal(rrID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !pr.NeedsReview {
-		t.Fatal("needs_review should remain true after cancel")
+	if request == nil || request.Status != db.ReviewRequestStatusSuppressed {
+		t.Fatalf("user cancellation = %#v, want suppressed", request)
 	}
 
 	eventsMu.Lock()
@@ -138,6 +138,98 @@ func TestProcessQueueCancelLeavesNoReview(t *testing.T) {
 	}
 	if !sawCancel {
 		t.Fatal("expected review_cancel event")
+	}
+}
+
+func TestProcessQueueRejectsResultAfterSystemSupersedesRequest(t *testing.T) {
+	d := openReactorDB(t)
+	prID, err := d.UpsertPR(db.PullRequest{
+		Repo: "o/r", PRNumber: 3, Title: "t", Author: "a",
+		CommitSHA: "sha-old", State: db.PRStateOpen, IsAssigned: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID, err := d.CreateReviewRequest(prID, "sha-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	reactor := NewReactor(&config.Config{ReviewTimeout: time.Minute}, d, nil, nil, nil)
+	reactor.runReview = func(ctx context.Context, pr db.PullRequest, promptPath string) (*ReviewResult, error) {
+		close(started)
+		<-release
+		return &ReviewResult{
+			Review: &db.Review{
+				PullRequestID: pr.ID,
+				Outcome:       db.ReviewOutcomeApproveWithoutComments,
+				Summary:       "late",
+			},
+		}, nil
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- reactor.ProcessQueue(context.Background()) }()
+	<-started
+
+	if err := d.UpdateReviewRequestStatus(requestID, db.ReviewRequestStatusSuperseded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec("UPDATE pull_requests SET commit_sha = 'sha-new' WHERE id = ?", prID); err != nil {
+		t.Fatal(err)
+	}
+	reactor.CancelSystemRequest(requestID)
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	reviews, err := d.ListReviewsForPR(prID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews) != 0 {
+		t.Fatalf("superseded request persisted late review: %#v", reviews)
+	}
+}
+
+func TestProcessQueueFailureStopsAutomaticSameSHARetry(t *testing.T) {
+	d := openReactorDB(t)
+	prID, err := d.UpsertPR(db.PullRequest{
+		Repo: "o/r", PRNumber: 4, Title: "t", Author: "a",
+		CommitSHA: "sha-4", State: db.PRStateOpen, IsAssigned: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID, err := d.CreateReviewRequest(prID, "sha-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reactor := NewReactor(&config.Config{ReviewTimeout: time.Minute}, d, nil, nil, nil)
+	reactor.runReview = func(context.Context, db.PullRequest, string) (*ReviewResult, error) {
+		return nil, errors.New("runner failed")
+	}
+	if err := reactor.ProcessQueue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	request, err := d.GetReviewRequestIncludingTerminal(requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Status != db.ReviewRequestStatusFailed {
+		t.Fatalf("request status = %q, want failed", request.Status)
+	}
+	reviews, err := d.ListReviewsForPR(prID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews) != 1 || reviews[0].Outcome != db.ReviewOutcomeToolFailed || reviews[0].CommitSHA != "sha-4" {
+		t.Fatalf("failure review = %#v", reviews)
 	}
 }
 

@@ -1,0 +1,19 @@
+id: K-000040
+title: Pending GitHub reviews may lack submitted timestamps
+type: gotcha
+confidence: high
+summary: Use review ID ordering when a candidate GitHub review has no submitted_at timestamp.
+details: |-
+  GitHub may return a `PENDING` pull-request review without `submitted_at`. Effective-review selection must fall back to the monotonically increasing review ID whenever either candidate lacks a submission timestamp. Otherwise an older submitted approval sorts after the pending draft and incorrectly blocks a new app review.
+
+  The regression fixture is `TestGetEffectiveReviewTreatsHigherIDPendingReviewWithoutSubmittedTimeAsLatest`.
+tags:
+- github
+- review-state
+- scanner
+sources:
+- internal/github/client.go
+- internal/github/reviewed_test.go
+links:
+- K-000039
+updated_at: 2026-07-30

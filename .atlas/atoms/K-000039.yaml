@@ -1,0 +1,45 @@
+id: K-000039
+title: PR scanning uses snapshot-driven reconciliation
+type: decision
+confidence: high
+summary: PR assignment, GitHub review state, UI placement, and SHA-scoped queue state derive from one complete snapshot and pure decision stage.
+details: |-
+  ## Decision
+
+  Replace imperative scanner branching with a snapshot-driven `Scan → Observe → Decide → Apply → Notify` reconciliation pipeline.
+
+  ## Stable invariants
+
+  - GitHub is authoritative for assignment, PR state, head SHA, and the authenticated user's current effective PR-level review.
+  - Direct and visible team assignments form one complete snapshot. Partial discovery cannot prove unassignment.
+  - Open, assigned, unfiltered PRs stay on Dashboard after review; review state changes labels and queue eligibility, not placement.
+  - Current GitHub review state is refreshed every scan. Commit SHA scopes local app reviews and review requests.
+  - App-versus-external correlation uses only the GitHub review ID returned at publication.
+  - Queue state is derived and idempotent. Active requests are keyed by PR and target SHA, invalidated work is canceled, and the reactor revalidates SHA before persisting results.
+  - Failed same-SHA execution requires manual retry; a new SHA gets a fresh automatic attempt.
+
+  ## Data shape
+
+  - PRs store assignment plus current effective GitHub review ID/state.
+  - Reviews store nullable unique GitHub review ID.
+  - Review requests store target commit SHA.
+  - Dashboard, Filtered, History, labels, and queue eligibility are derived from facts rather than `needs_review` or `is_outdated`.
+
+  ## Rationale
+
+  The existing early-return scanner repeatedly skipped reconciliation paths and allowed PR facts, UI placement, and queue state to drift. A pure decision stage makes every state transition explicit and table-testable without adding an event store or configurable rules engine.
+tags:
+- scanner
+- reconciliation
+- github
+- queue
+- review-state
+sources:
+- docs/superpowers/specs/2026-07-30-pr-detection-reconciliation-design.md
+links:
+- K-000031
+- K-000034
+- K-000037
+- K-000038
+- K-000040
+updated_at: 2026-07-30

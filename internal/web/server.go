@@ -17,8 +17,8 @@ import (
 
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/db"
-	"github.com/sephriot/code-reviewer/internal/notify"
 	gh "github.com/sephriot/code-reviewer/internal/github"
+	"github.com/sephriot/code-reviewer/internal/notify"
 	"github.com/sephriot/code-reviewer/internal/review"
 )
 
@@ -29,10 +29,16 @@ type QueueCanceller interface {
 	CancelRequest(id int64) error
 }
 
+type githubAPI interface {
+	SubmitReview(context.Context, string, string, int, gh.ReviewSubmission) (int64, error)
+	CreateReviewComment(context.Context, string, string, int, gh.ReviewComment) error
+	GetFileContent(context.Context, string, string, string, string, int, int) (string, int, error)
+}
+
 type Server struct {
 	cfg    *config.Config
 	d      *db.DB
-	gh     *gh.Client
+	gh     githubAPI
 	runner *review.Runner
 
 	canceller QueueCanceller
@@ -43,7 +49,7 @@ type Server struct {
 	subsMu sync.RWMutex
 }
 
-func New(cfg *config.Config, d *db.DB, gh *gh.Client, runner *review.Runner) *Server {
+func New(cfg *config.Config, d *db.DB, gh githubAPI, runner *review.Runner) *Server {
 	s := &Server{
 		cfg:    cfg,
 		d:      d,
@@ -180,7 +186,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prs, err := s.d.ListPRsNeedingReview()
+	prs, err := s.d.ListDashboardPRs()
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -196,12 +202,16 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	outcomeMap := make(map[int64]string)
 	for _, pr := range prs {
 		prMap[pr.ID] = pr
-		latest, err := s.d.GetLatestReviewByPR(pr.ID)
-		if err == nil && latest != nil {
-			outcomeMap[pr.ID] = latest.Outcome
+		label, err := s.currentReviewLabel(pr)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		if label != "" {
+			outcomeMap[pr.ID] = label
 		}
 	}
-	// Queue can include filtered/history PRs that are absent from ListPRsNeedingReview.
+	// Queue lookup must not depend on current PR placement.
 	for _, rr := range requests {
 		if _, ok := prMap[rr.PullRequestID]; ok {
 			continue
@@ -264,15 +274,22 @@ func (s *Server) prDetail(w http.ResponseWriter, r *http.Request) {
 		nonPublished++
 	}
 
-	var latestOutcome string
-	if latest, err := s.d.GetLatestReviewByPR(pr.ID); err == nil && latest != nil {
-		latestOutcome = latest.Outcome
+	latestOutcome, err := s.currentReviewLabel(*pr)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	canRequestReview, err := s.d.CanQueueReview(pr.ID)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
 	}
 
 	s.render(w, "pr_detail.html", map[string]interface{}{
-		"PR":            pr,
-		"Reviews":       reviewList,
-		"LatestOutcome": latestOutcome,
+		"PR":               pr,
+		"Reviews":          reviewList,
+		"LatestOutcome":    latestOutcome,
+		"CanRequestReview": canRequestReview,
 	})
 }
 
@@ -305,6 +322,16 @@ func (s *Server) historyPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	feed := BuildHistoryFeed(prs, published)
+	for i := range feed {
+		label, err := s.currentReviewLabel(feed[i].PR)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		if label != "" {
+			feed[i].Outcome = label
+		}
+	}
 	page := 1
 	if raw := r.URL.Query().Get("page"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
@@ -331,9 +358,13 @@ func (s *Server) filteredPRs(w http.ResponseWriter, r *http.Request) {
 
 	outcomeMap := make(map[int64]string)
 	for _, pr := range prs {
-		latest, err := s.d.GetLatestReviewByPR(pr.ID)
-		if err == nil && latest != nil {
-			outcomeMap[pr.ID] = latest.Outcome
+		label, err := s.currentReviewLabel(pr)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		if label != "" {
+			outcomeMap[pr.ID] = label
 		}
 	}
 
@@ -418,8 +449,12 @@ func (s *Server) getPR(w http.ResponseWriter, prID int64) {
 }
 
 func (s *Server) requestReview(w http.ResponseWriter, r *http.Request, prID int64) {
-	rrID, err := s.d.CreateReviewRequest(prID)
+	rrID, err := s.d.CreateManualReviewRequest(prID)
 	if err != nil {
+		if errors.Is(err, db.ErrReviewNotEligible) || errors.Is(err, db.ErrActiveReviewRequestExists) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -628,7 +663,7 @@ func (s *Server) publishReview(w http.ResponseWriter, rv *db.Review) {
 		})
 	}
 
-	err = s.gh.SubmitReview(context.Background(), parts[0], parts[1], pr.PRNumber, gh.ReviewSubmission{
+	githubReviewID, err := s.gh.SubmitReview(context.Background(), parts[0], parts[1], pr.PRNumber, gh.ReviewSubmission{
 		Outcome:  rv.Outcome,
 		Body:     rv.GeneralComment,
 		Comments: ghComments,
@@ -643,8 +678,34 @@ func (s *Server) publishReview(w http.ResponseWriter, rv *db.Review) {
 			log.Printf("web: failed to mark comment %d published: %v", c.ID, err)
 		}
 	}
-	s.d.PublishReview(rv.ID)
+	if err := s.d.PublishReview(rv.ID, githubReviewID); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 	s.respondJSON(w, map[string]string{"status": "published"})
+}
+
+func (s *Server) currentReviewLabel(pr db.PullRequest) (string, error) {
+	if pr.EffectiveReviewID == nil {
+		return "", nil
+	}
+	local, err := s.d.GetReviewByGitHubID(*pr.EffectiveReviewID)
+	if err != nil {
+		return "", err
+	}
+	if local != nil && local.PullRequestID == pr.ID {
+		return local.Outcome, nil
+	}
+	switch pr.EffectiveReviewState {
+	case db.EffectiveReviewStateCommented:
+		return "reviewed_externally", nil
+	case db.EffectiveReviewStateApproved:
+		return "approved_externally", nil
+	case db.EffectiveReviewStateChangesRequested:
+		return "changes_requested_externally", nil
+	default:
+		return "", nil
+	}
 }
 
 func (s *Server) publishReviewComments(w http.ResponseWriter, rv *db.Review) {

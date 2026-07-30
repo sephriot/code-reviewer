@@ -10,7 +10,9 @@
   </div>
 
   <div class="actions">
+    {{if .CanRequestReview}}
     <button onclick="requestReview({{.PR.ID}})" class="btn">Request Review</button>
+    {{end}}
   </div>
 
   <section class="reviews">

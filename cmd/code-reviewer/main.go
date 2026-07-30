@@ -94,6 +94,7 @@ func run(ctx context.Context) error {
 			}
 		}()
 	})
+	sc.SetQueueCanceller(reactor)
 
 	log.Printf("scan: next run in %v", cfg.PollInterval)
 	scanTicker := time.NewTicker(cfg.PollInterval)

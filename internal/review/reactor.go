@@ -56,24 +56,27 @@ func (r *Reactor) CancelRequest(id int64) error {
 		return db.ErrNotFound
 	}
 
+	if err := r.db.CancelActiveReviewRequest(id, db.ReviewRequestStatusSuppressed); err != nil {
+		log.Printf("reactor: suppress request %d failed: %v", id, err)
+		return err
+	}
+	r.cancelActive(id)
+	log.Printf("reactor: request %d suppressed for commit %s", id, rr.CommitSHA)
+	return nil
+}
+
+func (r *Reactor) CancelSystemRequest(id int64) {
+	r.cancelActive(id)
+}
+
+func (r *Reactor) cancelActive(id int64) {
 	r.cancelMu.Lock()
 	cancel := r.activeCancel
 	match := r.activeReqID == id && cancel != nil
 	r.cancelMu.Unlock()
-
 	if match {
-		log.Printf("reactor: canceling in-progress request %d (pr_id=%d)", id, rr.PullRequestID)
 		cancel()
-	} else {
-		log.Printf("reactor: removing queue request %d (pr_id=%d, status=%s)", id, rr.PullRequestID, rr.Status)
 	}
-
-	if err := r.db.SoftDeleteReviewRequest(id); err != nil {
-		log.Printf("reactor: soft-delete request %d failed: %v", id, err)
-		return err
-	}
-	log.Printf("reactor: request %d removed from queue", id)
-	return nil
 }
 
 func (r *Reactor) setActive(id int64, cancel context.CancelFunc) {
@@ -118,8 +121,25 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 			return nil
 		}
 
-		if err := r.db.UpdateReviewRequestStatus(rr.ID, "in_progress"); err != nil {
-			log.Printf("reactor: failed to mark request %d as in_progress: %v", rr.ID, err)
+		claimed, err := r.db.ClaimReviewRequest(rr.ID)
+		if err != nil {
+			log.Printf("reactor: failed to claim request %d: %v", rr.ID, err)
+			continue
+		}
+		if !claimed {
+			continue
+		}
+
+		eligible, err := r.db.ReviewRequestEligible(rr.ID)
+		if err != nil {
+			log.Printf("reactor: failed to validate request %d: %v", rr.ID, err)
+			r.markFailed(rr.ID)
+			continue
+		}
+		if !eligible {
+			if err := r.db.CancelActiveReviewRequest(rr.ID, db.ReviewRequestStatusCanceled); err != nil && !errors.Is(err, db.ErrNotFound) {
+				log.Printf("reactor: failed to cancel ineligible request %d: %v", rr.ID, err)
+			}
 			continue
 		}
 
@@ -133,6 +153,7 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 			r.markFailed(rr.ID)
 			continue
 		}
+		pr.CommitSHA = rr.CommitSHA
 
 		r.emit(ReviewEvent{Type: EventReviewStart, PR: *pr})
 
@@ -149,8 +170,11 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 
 		if errors.Is(err, context.Canceled) {
 			log.Printf("reactor: review canceled for PR %s#%d", pr.Repo, pr.PRNumber)
-			if delErr := r.db.SoftDeleteReviewRequest(rr.ID); delErr != nil && !errors.Is(delErr, db.ErrNotFound) {
-				log.Printf("reactor: failed to soft-delete canceled request %d: %v", rr.ID, delErr)
+			request, getErr := r.db.GetReviewRequest(rr.ID)
+			if getErr == nil && request != nil {
+				if cancelErr := r.db.CancelActiveReviewRequest(rr.ID, db.ReviewRequestStatusCanceled); cancelErr != nil && !errors.Is(cancelErr, db.ErrNotFound) {
+					log.Printf("reactor: failed to cancel request %d: %v", rr.ID, cancelErr)
+				}
 			}
 			r.emit(ReviewEvent{Type: EventReviewCancel, PR: *pr, Message: "canceled"})
 			continue
@@ -161,46 +185,48 @@ func (r *Reactor) ProcessQueue(ctx context.Context) error {
 			review := &db.Review{
 				PullRequestID:   pr.ID,
 				ReviewRequestID: rr.ID,
-				Outcome:         "tool_failed",
+				Outcome:         db.ReviewOutcomeToolFailed,
+				CommitSHA:       rr.CommitSHA,
 				Summary:         err.Error(),
 			}
-			reviewID, dbErr := r.db.CreateReview(*review)
+			reviewID, saved, dbErr := r.db.SaveReviewResult(
+				rr.ID, *review, nil, db.ReviewRequestStatusFailed,
+			)
 			if dbErr != nil {
 				log.Printf("reactor: failed to save failed review: %v", dbErr)
 			}
+			if !saved {
+				r.emit(ReviewEvent{Type: EventReviewCancel, PR: *pr, Message: "stale"})
+				continue
+			}
 			review.ID = reviewID
-			r.markDone(rr.ID)
 			r.emit(ReviewEvent{Type: EventReviewFail, PR: *pr, Review: review, Message: err.Error()})
 			continue
 		}
 
 		review := result.Review
+		review.PullRequestID = pr.ID
 		review.ReviewRequestID = rr.ID
-		reviewID, err := r.db.CreateReview(*review)
+		review.CommitSHA = rr.CommitSHA
+		comments := make([]db.ReviewComment, 0, len(result.Comments))
+		for _, comment := range result.Comments {
+			comments = append(comments, db.ReviewComment{
+				File: comment.File, Line: comment.Line, Message: comment.Message,
+			})
+		}
+		reviewID, saved, err := r.db.SaveReviewResult(
+			rr.ID, *review, comments, db.ReviewRequestStatusDone,
+		)
 		if err != nil {
 			log.Printf("reactor: failed to save review: %v", err)
 			r.markFailed(rr.ID)
 			continue
 		}
+		if !saved {
+			r.emit(ReviewEvent{Type: EventReviewCancel, PR: *pr, Message: "stale"})
+			continue
+		}
 		review.ID = reviewID
-
-		for _, tc := range result.Comments {
-			_, cerr := r.db.AddReviewComment(db.ReviewComment{
-				ReviewID: review.ID,
-				File:     tc.File,
-				Line:     tc.Line,
-				Message:  tc.Message,
-			})
-			if cerr != nil {
-				log.Printf("reactor: failed to save comment: %v", cerr)
-			}
-		}
-
-		if err := r.db.SetPRNeedsReview(pr.ID, false); err != nil {
-			log.Printf("reactor: failed to mark PR as reviewed: %v", err)
-		}
-
-		r.markDone(rr.ID)
 
 		eventType := EventReviewSuccess
 		msg := ""

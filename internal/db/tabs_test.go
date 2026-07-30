@@ -37,15 +37,15 @@ func TestPRTabQueriesMutuallyExclusive(t *testing.T) {
 
 	dashID := mustUpsert(t, d, PullRequest{
 		Repo: "org/a", PRNumber: 1, Title: "needs review", Author: "alice",
-		CommitSHA: "aaa", State: "open", NeedsReview: true,
+		CommitSHA: "aaa", State: "open", NeedsReview: true, IsAssigned: true,
 	})
-	histReviewedID := mustUpsert(t, d, PullRequest{
+	dashReviewedID := mustUpsert(t, d, PullRequest{
 		Repo: "org/b", PRNumber: 2, Title: "reviewed open", Author: "bob",
-		CommitSHA: "bbb", State: "open", NeedsReview: false,
+		CommitSHA: "bbb", State: "open", NeedsReview: false, IsAssigned: true,
 	})
 	filteredDraftID := mustUpsert(t, d, PullRequest{
 		Repo: "org/c", PRNumber: 3, Title: "draft", Author: "carol",
-		CommitSHA: "ccc", State: "open", NeedsReview: false, FilteredReason: "draft",
+		CommitSHA: "ccc", State: "open", NeedsReview: false, FilteredReason: "draft", IsAssigned: true,
 	})
 	closedID := mustUpsert(t, d, PullRequest{
 		Repo: "org/d", PRNumber: 4, Title: "merged", Author: "dave",
@@ -57,10 +57,10 @@ func TestPRTabQueriesMutuallyExclusive(t *testing.T) {
 	})
 	_ = mustUpsert(t, d, PullRequest{
 		Repo: "org/f", PRNumber: 6, Title: "outdated limbo", Author: "frank",
-		CommitSHA: "fff", State: "open", NeedsReview: true, IsOutdated: true,
+		CommitSHA: "fff", State: "open", NeedsReview: true, IsOutdated: true, IsAssigned: true,
 	})
 
-	dashboard, err := d.ListPRsNeedingReview()
+	dashboard, err := d.ListDashboardPRs()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,8 +89,11 @@ func TestPRTabQueriesMutuallyExclusive(t *testing.T) {
 		t.Errorf("filtered PR %d leaked into dashboard=%v history=%v", filteredDraftID, dIDs[filteredDraftID], hIDs[filteredDraftID])
 	}
 
-	if !hIDs[histReviewedID] {
-		t.Errorf("history missing reviewed-open PR %d", histReviewedID)
+	if !dIDs[dashReviewedID] {
+		t.Errorf("dashboard missing reviewed assigned PR %d", dashReviewedID)
+	}
+	if fIDs[dashReviewedID] || hIDs[dashReviewedID] {
+		t.Errorf("reviewed assigned PR %d leaked into filtered=%v history=%v", dashReviewedID, fIDs[dashReviewedID], hIDs[dashReviewedID])
 	}
 	if !hIDs[closedID] {
 		t.Errorf("history missing closed PR %d", closedID)

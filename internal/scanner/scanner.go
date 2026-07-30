@@ -2,392 +2,219 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
 	"strings"
 
-	gh "github.com/sephriot/code-reviewer/internal/github"
-
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/db"
+	gh "github.com/sephriot/code-reviewer/internal/github"
 )
 
-// githubAPI is the subset of GitHub client methods the scanner needs.
 type githubAPI interface {
-	ListAssignedPRs(ctx context.Context) ([]gh.PRSummary, error)
-	ListOwnPRs(ctx context.Context) ([]gh.PRSummary, error)
+	ListReviewAssignments(ctx context.Context) (gh.AssignmentSnapshot, error)
 	GetPRDetails(ctx context.Context, owner, repo string, number int) (*gh.PRSummary, error)
-	HasUserReviewed(ctx context.Context, owner, repo string, number int, commitSHA string) (bool, error)
+	GetEffectiveReview(ctx context.Context, owner, repo string, number int) (*gh.EffectiveReview, error)
+}
+
+type queueCanceller interface {
+	CancelSystemRequest(id int64)
 }
 
 type Scanner struct {
-	cfg   *config.Config
-	gh    githubAPI
-	db    *db.DB
-	onNew func()
+	cfg       *config.Config
+	gh        githubAPI
+	db        *db.DB
+	canceller queueCanceller
+	onNew     func()
 }
 
-func New(cfg *config.Config, client *gh.Client, d *db.DB, onNew func()) *Scanner {
-	return &Scanner{cfg: cfg, gh: client, db: d, onNew: onNew}
+func New(cfg *config.Config, client *gh.Client, database *db.DB, onNew func()) *Scanner {
+	return &Scanner{cfg: cfg, gh: client, db: database, onNew: onNew}
+}
+
+func (s *Scanner) SetQueueCanceller(canceller queueCanceller) {
+	s.canceller = canceller
 }
 
 func (s *Scanner) Scan(ctx context.Context) error {
 	log.Println("scan: starting PR scan")
-
-	var allPRs []gh.PRSummary
-
-	assigned, err := s.gh.ListAssignedPRs(ctx)
-	if err != nil {
-		return fmt.Errorf("list assigned PRs: %w", err)
-	}
-	allPRs = append(allPRs, assigned...)
-
-	if s.cfg.OwnPRMode != "off" {
-		own, err := s.gh.ListOwnPRs(ctx)
-		if err != nil {
-			return fmt.Errorf("list own PRs: %w", err)
-		}
-		allPRs = append(allPRs, own...)
+	snapshot, discoveryErr := s.gh.ListReviewAssignments(ctx)
+	if discoveryErr != nil {
+		log.Printf("scan: assignment snapshot incomplete: %v", discoveryErr)
 	}
 
-	log.Printf("scan: found %d PRs total", len(allPRs))
-
-	dedup := map[string]gh.PRSummary{}
-	for _, pr := range allPRs {
+	candidates := make(map[string]gh.PRSummary)
+	assigned := make(map[string]bool)
+	for _, pr := range snapshot.PRs {
 		key := prKey(pr.Owner, pr.Repo, pr.Number)
-		dedup[key] = pr
+		candidates[key] = pr
+		assigned[key] = true
 	}
 
-	newRequests := 0
-	for _, pr := range dedup {
-		created, err := s.processPR(ctx, pr)
-		if err != nil {
-			log.Printf("scan: error processing %s/%s#%d: %v", pr.Owner, pr.Repo, pr.Number, err)
+	tracked, err := s.db.ListOpenPRs()
+	if err != nil {
+		return errors.Join(discoveryErr, fmt.Errorf("list tracked open PRs: %w", err))
+	}
+	for _, pr := range tracked {
+		owner, repo, ok := splitRepo(pr.Repo)
+		if !ok {
+			log.Printf("scan: invalid tracked repository %q", pr.Repo)
 			continue
 		}
-		if created {
-			newRequests++
+		key := prKey(owner, repo, pr.PRNumber)
+		if _, exists := candidates[key]; !exists {
+			candidates[key] = gh.PRSummary{
+				Owner: owner, Repo: repo, Number: pr.PRNumber,
+			}
 		}
 	}
 
-	newRequests += s.reconcileStalePRs(ctx, dedup)
-	s.backfillMergedStates(ctx)
+	var scanErrors []error
+	if discoveryErr != nil {
+		scanErrors = append(scanErrors, discoveryErr)
+	}
+	created := 0
+	for key, candidate := range candidates {
+		result, err := s.reconcilePR(ctx, candidate, assigned[key], snapshot.Complete)
+		if err != nil {
+			log.Printf("scan: reconcile %s: %v", key, err)
+			scanErrors = append(scanErrors, fmt.Errorf("%s: %w", key, err))
+			continue
+		}
+		for _, requestID := range result.CanceledIDs {
+			if s.canceller != nil {
+				s.canceller.CancelSystemRequest(requestID)
+			}
+		}
+		if result.CreatedRequestID != 0 {
+			created++
+		}
+	}
 
-	log.Printf("scan: done, %d new review requests", newRequests)
-
-	if newRequests > 0 && s.onNew != nil {
+	if created > 0 && s.onNew != nil {
 		s.onNew()
 	}
-	return nil
+	log.Printf("scan: done, %d new review requests", created)
+	return errors.Join(scanErrors...)
 }
 
-// ensureExternalReview records reviewed_externally when GitHub already has our review.
-func (s *Scanner) ensureExternalReview(ctx context.Context, owner, repo string, number int, prID int64, commitSHA string) {
-	hasReviewed, err := s.gh.HasUserReviewed(ctx, owner, repo, number, commitSHA)
+func (s *Scanner) reconcilePR(
+	ctx context.Context,
+	candidate gh.PRSummary,
+	assignedInSnapshot bool,
+	snapshotComplete bool,
+) (db.ReconciliationResult, error) {
+	details, err := s.gh.GetPRDetails(ctx, candidate.Owner, candidate.Repo, candidate.Number)
 	if err != nil {
-		log.Printf("scan: error checking review status for %s/%s#%d: %v", owner, repo, number, err)
-		return
+		return db.ReconciliationResult{}, err
 	}
-	if !hasReviewed {
-		return
-	}
-	s.recordExternalReview(owner, repo, number, prID, commitSHA)
-}
-
-func (s *Scanner) recordExternalReview(owner, repo string, number int, prID int64, commitSHA string) {
-	extExists, err := s.db.HasExternalReview(prID, commitSHA)
+	effective, err := s.gh.GetEffectiveReview(ctx, candidate.Owner, candidate.Repo, candidate.Number)
 	if err != nil {
-		log.Printf("scan: error checking external review for %s/%s#%d: %v", owner, repo, number, err)
-		return
-	}
-	if extExists {
-		return
-	}
-	if _, err := s.db.CreateExternalReview(prID, commitSHA); err != nil {
-		log.Printf("scan: error recording external review for %s/%s#%d: %v", owner, repo, number, err)
-		return
-	}
-	log.Printf("scan: recorded external review for %s/%s#%d", owner, repo, number)
-}
-
-func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) {
-	fullName := pr.Owner + "/" + pr.Repo
-
-	if !matchesFilter(fullName, s.cfg.RepoFilterRegex()) {
-		log.Printf("scan: filtered out repo=%s %s/%s#%d", fullName, pr.Owner, pr.Repo, pr.Number)
-		prID, err := s.db.UpsertPR(db.PullRequest{
-			Repo:           fullName,
-			PRNumber:       pr.Number,
-			Title:          pr.Title,
-			Author:         pr.Author,
-			CommitSHA:      pr.CommitSHA,
-			Draft:          pr.Draft,
-			State:          openOr(pr.State),
-			NeedsReview:    false,
-			FilteredReason: "repo",
-			GhUpdatedAt:    pr.UpdatedAt,
-		})
-		if err != nil {
-			return false, err
-		}
-		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, pr.CommitSHA)
-		return false, nil
+		return db.ReconciliationResult{}, err
 	}
 
-	details, err := s.gh.GetPRDetails(ctx, pr.Owner, pr.Repo, pr.Number)
+	fullName := details.Owner + "/" + details.Repo
+	existing, err := s.db.GetPRByRepoAndNumber(fullName, details.Number)
 	if err != nil {
-		return false, err
+		return db.ReconciliationResult{}, err
 	}
 
-	if !matchesFilter(details.Author, s.cfg.AuthorFilterRegex()) {
-		log.Printf("scan: filtered out author=%s %s/%s#%d", details.Author, pr.Owner, pr.Repo, pr.Number)
-		prID, err := s.db.UpsertPR(db.PullRequest{
-			Repo:           fullName,
-			PRNumber:       pr.Number,
-			Title:          details.Title,
-			Author:         details.Author,
-			CommitSHA:      details.CommitSHA,
-			Draft:          details.Draft,
-			State:          openOr(details.State),
-			NeedsReview:    false,
-			FilteredReason: "author",
-			GhUpdatedAt:    details.UpdatedAt,
-		})
+	var existingAssigned bool
+	var completed bool
+	var requests []db.ReviewRequest
+	if existing != nil {
+		existingAssigned = existing.IsAssigned
+		completed, err = s.db.HasCompletedReviewForSHA(existing.ID, details.CommitSHA)
 		if err != nil {
-			return false, err
+			return db.ReconciliationResult{}, err
 		}
-		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, details.CommitSHA)
-		return false, nil
-	}
-
-	if details.Draft {
-		log.Printf("scan: filtered out draft %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
-		prID, err := s.db.UpsertPR(db.PullRequest{
-			Repo:           fullName,
-			PRNumber:       pr.Number,
-			Title:          details.Title,
-			Author:         details.Author,
-			CommitSHA:      details.CommitSHA,
-			Draft:          true,
-			State:          "open",
-			NeedsReview:    false,
-			FilteredReason: "draft",
-			GhUpdatedAt:    details.UpdatedAt,
-		})
+		requests, err = s.db.ListReviewRequestsForPR(existing.ID)
 		if err != nil {
-			return false, err
+			return db.ReconciliationResult{}, err
 		}
-		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, details.CommitSHA)
-		return false, nil
 	}
 
-	if details.State != "open" {
-		log.Printf("scan: closed/merged %s/%s#%d state=%s -> history", pr.Owner, pr.Repo, pr.Number, details.State)
-		prID, err := s.db.UpsertPR(db.PullRequest{
-			Repo:           fullName,
-			PRNumber:       pr.Number,
-			Title:          details.Title,
-			Author:         details.Author,
-			CommitSHA:      details.CommitSHA,
-			Draft:          details.Draft,
-			State:          details.State,
-			NeedsReview:    false,
-			FilteredReason: "",
-			GhUpdatedAt:    details.UpdatedAt,
-		})
-		if err != nil {
-			return false, err
-		}
-		s.ensureExternalReview(ctx, pr.Owner, pr.Repo, pr.Number, prID, details.CommitSHA)
-		return false, nil
+	input := ReconcileInput{
+		AssignedInSnapshot:      assignedInSnapshot,
+		SnapshotComplete:        snapshotComplete,
+		ExistingAssigned:        existingAssigned,
+		State:                   openOr(details.State),
+		HeadSHA:                 details.CommitSHA,
+		Draft:                   details.Draft,
+		FilteredReason:          s.filterReason(*details),
+		HasCompletedLocalReview: completed,
+		Requests:                requestFacts(requests),
 	}
-
-	existing, err := s.db.GetPRByRepoAndNumber(fullName, pr.Number)
-	if err != nil {
-		return false, err
+	if effective != nil {
+		input.EffectiveReview = &EffectiveReview{
+			ID:    effective.ID,
+			State: EffectiveReviewState(effective.State),
+		}
 	}
+	decision := DecideReconciliation(input)
 
-	if existing != nil && existing.CommitSHA == details.CommitSHA {
-		hasReviewed, err := s.gh.HasUserReviewed(ctx, pr.Owner, pr.Repo, pr.Number, details.CommitSHA)
-		if err != nil {
-			return false, err
-		}
-		needsReview := !hasReviewed
-		// Clear any prior filter reason (e.g. draft→ready same SHA) and sync needs_review.
-		prID, err := s.db.UpsertPR(db.PullRequest{
-			Repo:           fullName,
-			PRNumber:       pr.Number,
-			Title:          details.Title,
-			Author:         details.Author,
-			CommitSHA:      details.CommitSHA,
-			Draft:          false,
-			State:          "open",
-			NeedsReview:    needsReview,
-			IsOutdated:     hasReviewed && existing.IsOutdated,
-			FilteredReason: "",
-			GhUpdatedAt:    details.UpdatedAt,
-		})
-		if err != nil {
-			return false, err
-		}
-		if hasReviewed {
-			log.Printf("scan: %s/%s#%d already reviewed, needs_review=false", pr.Owner, pr.Repo, pr.Number)
-			s.recordExternalReview(pr.Owner, pr.Repo, pr.Number, prID, details.CommitSHA)
-			return false, nil
-		}
-		pending, err := s.db.GetPendingRequestByPR(prID)
-		if err != nil {
-			return false, err
-		}
-		if pending != nil {
-			log.Printf("scan: %s/%s#%d not reviewed, needs_review=true (request already queued)", pr.Owner, pr.Repo, pr.Number)
-			return false, nil
-		}
-		if _, err := s.db.CreateReviewRequest(prID); err != nil {
-			return false, err
-		}
-		log.Printf("scan: review request created for %s/%s#%d (same SHA, queue was empty)", pr.Owner, pr.Repo, pr.Number)
-		return true, nil
-	}
-
-	if existing != nil && existing.CommitSHA != details.CommitSHA {
-		log.Printf("scan: new commit on %s/%s#%d (%s -> %s)", pr.Owner, pr.Repo, pr.Number, existing.CommitSHA, details.CommitSHA)
-	}
-
-	hasReviewed, err := s.gh.HasUserReviewed(ctx, pr.Owner, pr.Repo, pr.Number, details.CommitSHA)
-	if err != nil {
-		return false, err
-	}
-
-	needsReview := !hasReviewed
-	prID, err := s.db.UpsertPR(db.PullRequest{
+	pr := db.PullRequest{
 		Repo:           fullName,
-		PRNumber:       pr.Number,
+		PRNumber:       details.Number,
 		Title:          details.Title,
 		Author:         details.Author,
 		CommitSHA:      details.CommitSHA,
 		Draft:          details.Draft,
-		State:          "open",
-		NeedsReview:    needsReview,
-		IsOutdated:     false,
-		FilteredReason: "",
+		State:          openOr(details.State),
+		FilteredReason: decision.FilteredReason,
 		GhUpdatedAt:    details.UpdatedAt,
-	})
-	if err != nil {
-		return false, err
+		IsAssigned:     decision.IsAssigned,
+	}
+	if effective != nil {
+		id := effective.ID
+		pr.EffectiveReviewID = &id
+		pr.EffectiveReviewState = string(effective.State)
 	}
 
-	if !needsReview {
-		s.recordExternalReview(pr.Owner, pr.Repo, pr.Number, prID, details.CommitSHA)
-		return false, nil
+	change := db.ReconciliationChange{
+		PR:        pr,
+		CreateSHA: decision.CreateSHA,
 	}
-
-	pending, err := s.db.GetPendingRequestByPR(prID)
-	if err != nil {
-		return false, err
+	for _, cancellation := range decision.Cancel {
+		change.Cancel = append(change.Cancel, db.RequestStatusChange{
+			ID:     cancellation.ID,
+			Status: cancellation.Status,
+		})
 	}
-	if pending != nil {
-		return false, nil
-	}
-	if _, err = s.db.CreateReviewRequest(prID); err != nil {
-		return false, err
-	}
-	log.Printf("scan: review request created for %s/%s#%d", pr.Owner, pr.Repo, pr.Number)
-	return true, nil
+	return s.db.ApplyReconciliation(change)
 }
 
-func (s *Scanner) reconcileStalePRs(ctx context.Context, seen map[string]gh.PRSummary) int {
-	// Re-run full processPR for open DB rows missing from the search input
-	// (e.g. review request dismissed) so SHA advances still enqueue.
-	openPRs, err := s.db.ListOpenPRs()
-	if err != nil {
-		log.Printf("scan: error listing open PRs for reconciliation: %v", err)
-		return 0
+func (s *Scanner) filterReason(pr gh.PRSummary) string {
+	if !matchesFilter(pr.Owner+"/"+pr.Repo, s.cfg.RepoFilterRegex()) {
+		return "repo"
 	}
-
-	newRequests := 0
-	for _, pr := range openPRs {
-		parts := strings.SplitN(pr.Repo, "/", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.ToLower(fmt.Sprintf("%s/%s#%d", parts[0], parts[1], pr.PRNumber))
-		if _, found := seen[key]; found {
-			continue
-		}
-
-		created, err := s.processPR(ctx, gh.PRSummary{
-			Owner:  parts[0],
-			Repo:   parts[1],
-			Number: pr.PRNumber,
-			Title:  pr.Title,
-			Author: pr.Author,
-		})
-		if err != nil {
-			log.Printf("scan: reconcile error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
-			continue
-		}
-		if created {
-			newRequests++
-		}
+	if !matchesFilter(pr.Author, s.cfg.AuthorFilterRegex()) {
+		return "author"
 	}
-	return newRequests
+	return ""
 }
 
-// backfillMergedStates re-fetches PRs stored as closed and upgrades them to
-// merged when GitHub reports merged. Needed because older scans stored
-// GitHub's raw state (closed) for merged PRs.
-func (s *Scanner) backfillMergedStates(ctx context.Context) {
-	closed, err := s.db.ListClosedPRs()
-	if err != nil {
-		log.Printf("scan: error listing closed PRs for merged backfill: %v", err)
-		return
-	}
-	updated := 0
-	for _, pr := range closed {
-		parts := strings.SplitN(pr.Repo, "/", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		details, err := s.gh.GetPRDetails(ctx, parts[0], parts[1], pr.PRNumber)
-		if err != nil {
-			log.Printf("scan: merged backfill error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
-			continue
-		}
-		if details.State != db.PRStateMerged {
-			continue
-		}
-		log.Printf("scan: backfill %s#%d closed -> merged", pr.Repo, pr.PRNumber)
-		_, err = s.db.UpsertPR(db.PullRequest{
-			Repo:           pr.Repo,
-			PRNumber:       pr.PRNumber,
-			Title:          details.Title,
-			Author:         details.Author,
-			CommitSHA:      details.CommitSHA,
-			Draft:          details.Draft,
-			State:          db.PRStateMerged,
-			NeedsReview:    false,
-			FilteredReason: "",
-			GhUpdatedAt:    details.UpdatedAt,
+func requestFacts(requests []db.ReviewRequest) []RequestFact {
+	facts := make([]RequestFact, 0, len(requests))
+	for _, request := range requests {
+		facts = append(facts, RequestFact{
+			ID:        request.ID,
+			CommitSHA: request.CommitSHA,
+			Status:    request.Status,
 		})
-		if err != nil {
-			log.Printf("scan: merged backfill upsert error for %s#%d: %v", pr.Repo, pr.PRNumber, err)
-			continue
-		}
-		updated++
 	}
-	if updated > 0 {
-		log.Printf("scan: backfilled %d closed PRs to merged", updated)
-	}
+	return facts
 }
 
 func matchesFilter(value string, patterns []*regexp.Regexp) bool {
 	if len(patterns) == 0 {
 		return true
 	}
-	for _, re := range patterns {
-		if re.MatchString(value) {
+	for _, pattern := range patterns {
+		if pattern.MatchString(value) {
 			return true
 		}
 	}
@@ -398,9 +225,17 @@ func prKey(owner, repo string, number int) string {
 	return strings.ToLower(fmt.Sprintf("%s/%s#%d", owner, repo, number))
 }
 
+func splitRepo(fullName string) (string, string, bool) {
+	parts := strings.SplitN(fullName, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
 func openOr(state string) string {
 	if state == "" {
-		return "open"
+		return db.PRStateOpen
 	}
 	return state
 }

@@ -1,4 +1,4 @@
-next_id: 39
+next_id: 41
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -353,6 +353,7 @@ entries:
   - K-000012
   - K-000030
   - K-000038
+  - K-000039
 - id: K-000032
   title: design.md is as-built rebuild guideline
   type: decision
@@ -403,6 +404,7 @@ entries:
   - K-000030
   - K-000036
   - K-000037
+  - K-000039
 - id: K-000035
   title: Sort PR lists by GitHub updated_at via gh_updated_at
   type: decision
@@ -443,6 +445,7 @@ entries:
   links:
   - K-000034
   - K-000038
+  - K-000039
 - id: K-000038
   title: Scanner review gating must be commit-scoped and re-enqueue empty queues
   type: gotcha
@@ -457,3 +460,35 @@ entries:
   links:
   - K-000031
   - K-000037
+  - K-000039
+- id: K-000039
+  title: PR scanning uses snapshot-driven reconciliation
+  type: decision
+  confidence: high
+  tags:
+  - scanner
+  - reconciliation
+  - github
+  - queue
+  - review-state
+  sources:
+  - docs/superpowers/specs/2026-07-30-pr-detection-reconciliation-design.md
+  links:
+  - K-000031
+  - K-000034
+  - K-000037
+  - K-000038
+  - K-000040
+- id: K-000040
+  title: Pending GitHub reviews may lack submitted timestamps
+  type: gotcha
+  confidence: high
+  tags:
+  - github
+  - review-state
+  - scanner
+  sources:
+  - internal/github/client.go
+  - internal/github/reviewed_test.go
+  links:
+  - K-000039

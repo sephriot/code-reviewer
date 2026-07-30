@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"path/filepath"
@@ -13,654 +14,265 @@ import (
 )
 
 type fakeGH struct {
-	details     map[string]*gh.PRSummary
-	hasReviewed map[string]bool
-	getCalls    int
+	snapshot     gh.AssignmentSnapshot
+	discoveryErr error
+	details      map[string]*gh.PRSummary
+	reviews      map[string]*gh.EffectiveReview
+	reviewErrors map[string]error
 }
 
-func (f *fakeGH) key(owner, repo string, n int) string {
-	return prKey(owner, repo, n)
+func (f *fakeGH) ListReviewAssignments(context.Context) (gh.AssignmentSnapshot, error) {
+	return f.snapshot, f.discoveryErr
 }
 
-func (f *fakeGH) ListAssignedPRs(ctx context.Context) ([]gh.PRSummary, error) {
-	return nil, nil
-}
-func (f *fakeGH) ListOwnPRs(ctx context.Context) ([]gh.PRSummary, error) {
-	return nil, nil
-}
-func (f *fakeGH) GetPRDetails(ctx context.Context, owner, repo string, number int) (*gh.PRSummary, error) {
-	f.getCalls++
-	d := f.details[f.key(owner, repo, number)]
-	if d == nil {
-		return nil, context.Canceled
+func (f *fakeGH) GetPRDetails(_ context.Context, owner, repo string, number int) (*gh.PRSummary, error) {
+	detail := f.details[prKey(owner, repo, number)]
+	if detail == nil {
+		return nil, errors.New("missing PR detail")
 	}
-	cp := *d
-	return &cp, nil
-}
-func (f *fakeGH) HasUserReviewed(ctx context.Context, owner, repo string, number int, commitSHA string) (bool, error) {
-	k := f.key(owner, repo, number)
-	if commitSHA != "" {
-		if v, ok := f.hasReviewed[k+"@"+commitSHA]; ok {
-			return v, nil
-		}
-	}
-	return f.hasReviewed[k], nil
+	copy := *detail
+	return &copy, nil
 }
 
-func testScanner(t *testing.T, cfg *config.Config, fake *fakeGH) (*Scanner, *db.DB) {
+func (f *fakeGH) GetEffectiveReview(_ context.Context, owner, repo string, number int) (*gh.EffectiveReview, error) {
+	key := prKey(owner, repo, number)
+	if err := f.reviewErrors[key]; err != nil {
+		return nil, err
+	}
+	return f.reviews[key], nil
+}
+
+type recordingCanceller struct {
+	db       *db.DB
+	canceled []int64
+	t        *testing.T
+}
+
+func (c *recordingCanceller) CancelSystemRequest(id int64) {
+	c.t.Helper()
+	request, err := c.db.GetReviewRequestIncludingTerminal(id)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	if request == nil || (request.Status != db.ReviewRequestStatusCanceled && request.Status != db.ReviewRequestStatusSuperseded) {
+		c.t.Fatalf("cancellation ran before terminal state committed: %#v", request)
+	}
+	c.canceled = append(c.canceled, id)
+}
+
+func testScanner(t *testing.T, cfg *config.Config, fake *fakeGH, canceller queueCanceller, onNew func()) (*Scanner, *db.DB) {
 	t.Helper()
 	log.SetOutput(io.Discard)
-	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	database, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { d.Close() })
+	t.Cleanup(func() { database.Close() })
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
-	s := &Scanner{cfg: cfg, gh: fake, db: d}
-	return s, d
+	return &Scanner{cfg: cfg, gh: fake, db: database, canceller: canceller, onNew: onNew}, database
 }
 
-func TestProcessPR_RepoFilterUpsertsFiltered(t *testing.T) {
-	fake := &fakeGH{details: map[string]*gh.PRSummary{}}
-	s, d := testScanner(t, &config.Config{Repositories: []string{`^spacelift-io/backend$`}}, fake)
-
-	created, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "other", Repo: "thing", Number: 1, Title: "nope", Author: "a", CommitSHA: "c1", State: "open",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created {
-		t.Fatal("expected no review request")
-	}
-	if fake.getCalls != 0 {
-		t.Fatalf("repo filter should not call GetPRDetails, got %d", fake.getCalls)
-	}
-	pr, err := d.GetPRByRepoAndNumber("other/thing", 1)
-	if err != nil || pr == nil {
-		t.Fatalf("expected upserted PR: %v %#v", err, pr)
-	}
-	if pr.FilteredReason != "repo" {
-		t.Fatalf("FilteredReason=%q want repo", pr.FilteredReason)
-	}
-	filtered, _ := d.ListFilteredPRs()
-	if len(filtered) != 1 {
-		t.Fatalf("filtered len=%d", len(filtered))
-	}
-}
-
-func TestProcessPR_AuthorFilterUpsertsFiltered(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 2)
-	fake := &fakeGH{details: map[string]*gh.PRSummary{
-		key: {Owner: "spacelift-io", Repo: "backend", Number: 2, Title: "x", Author: "bob", CommitSHA: "c2", State: "open"},
-	}}
-	s, d := testScanner(t, &config.Config{PRAuthors: []string{`^alice$`}}, fake)
-
-	_, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 2, Title: "x", Author: "bob", CommitSHA: "", State: "open",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 2)
-	if pr == nil || pr.FilteredReason != "author" {
-		t.Fatalf("got %#v", pr)
-	}
-}
-
-func TestProcessPR_DraftFiltered(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 3)
-	fake := &fakeGH{details: map[string]*gh.PRSummary{
-		key: {Owner: "spacelift-io", Repo: "backend", Number: 3, Title: "d", Author: "a", CommitSHA: "c3", Draft: true, State: "open"},
-	}}
-	s, d := testScanner(t, &config.Config{}, fake)
-	_, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 3, Title: "d", Author: "a", CommitSHA: "c3",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 3)
-	if pr == nil || pr.FilteredReason != "draft" || pr.State != "open" {
-		t.Fatalf("got %#v", pr)
-	}
-	hist, _ := d.ListHistoryPRs()
-	for _, h := range hist {
-		if h.ID == pr.ID {
-			t.Fatal("draft should not be in history")
-		}
-	}
-}
-
-func TestProcessPR_ClosedGoesToHistoryNotFiltered(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 15571)
-	fake := &fakeGH{details: map[string]*gh.PRSummary{
-		key: {Owner: "spacelift-io", Repo: "backend", Number: 15571, Title: "merged", Author: "kutluhanmetin", CommitSHA: "dead", State: "closed"},
-	}}
-	s, d := testScanner(t, &config.Config{}, fake)
-	created, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 15571, Title: "merged", Author: "kutluhanmetin",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created {
-		t.Fatal("no review request for closed")
-	}
-	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 15571)
-	if pr == nil || pr.State != "closed" || pr.FilteredReason != "" || pr.NeedsReview {
-		t.Fatalf("got %#v", pr)
-	}
-	filtered, _ := d.ListFilteredPRs()
-	history, _ := d.ListHistoryPRs()
-	for _, f := range filtered {
-		if f.ID == pr.ID {
-			t.Fatal("closed PR on filtered")
-		}
-	}
-	found := false
-	for _, h := range history {
-		if h.ID == pr.ID {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("closed PR missing from history")
-	}
-}
-
-func TestProcessPR_MergedGoesToHistoryAsMerged(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 15572)
-	fake := &fakeGH{details: map[string]*gh.PRSummary{
-		key: {Owner: "spacelift-io", Repo: "backend", Number: 15572, Title: "shipped", Author: "kutluhanmetin", CommitSHA: "beef", State: "merged"},
-	}}
-	s, d := testScanner(t, &config.Config{}, fake)
-	created, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 15572, Title: "shipped", Author: "kutluhanmetin",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created {
-		t.Fatal("no review request for merged")
-	}
-	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 15572)
-	if pr == nil || pr.State != "merged" || pr.FilteredReason != "" || pr.NeedsReview {
-		t.Fatalf("got %#v", pr)
-	}
-	history, _ := d.ListHistoryPRs()
-	found := false
-	for _, h := range history {
-		if h.ID == pr.ID {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("merged PR missing from history")
-	}
-}
-
-func TestProcessPR_DraftToReadySameSHAClearsFilter(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 10)
-	sha := "same-sha"
+func TestScanIncompleteSnapshotPreservesAssignment(t *testing.T) {
+	key := prKey("acme", "repo", 1)
 	fake := &fakeGH{
+		snapshot:     gh.AssignmentSnapshot{Complete: false},
+		discoveryErr: errors.New("team page failed"),
 		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 10, Title: "ready", Author: "a", CommitSHA: sha, Draft: false, State: "open"},
+			key: {Owner: "acme", Repo: "repo", Number: 1, Title: "tracked", Author: "alice", CommitSHA: "sha-1", State: "open"},
 		},
-		hasReviewed: map[string]bool{key: false},
+		reviews: map[string]*gh.EffectiveReview{},
 	}
-	s, d := testScanner(t, &config.Config{}, fake)
-	_, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 10, Title: "ready", Author: "a",
-		CommitSHA: sha, Draft: true, State: "open", NeedsReview: false, FilteredReason: "draft",
+	scanner, database := testScanner(t, nil, fake, nil, nil)
+	prID, err := database.UpsertPR(db.PullRequest{
+		Repo: "acme/repo", PRNumber: 1, Title: "tracked", Author: "alice",
+		CommitSHA: "sha-1", State: db.PRStateOpen, IsAssigned: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	created, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 10, Title: "ready", Author: "a", CommitSHA: sha,
-	})
+	if err := scanner.Scan(context.Background()); err == nil {
+		t.Fatal("partial discovery error must remain visible")
+	}
+	pr, err := database.GetPR(prID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !created {
-		t.Fatal("draft→ready should enqueue when queue is empty")
+	if !pr.IsAssigned {
+		t.Fatal("incomplete snapshot must preserve assignment")
 	}
-	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 10)
-	if pr.FilteredReason != "" {
-		t.Fatalf("expected cleared filter, got %q", pr.FilteredReason)
-	}
-	if !pr.NeedsReview {
-		t.Fatal("expected needs_review=true")
-	}
-	dash, _ := d.ListPRsNeedingReview()
-	found := false
-	for _, p := range dash {
-		if p.ID == pr.ID {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("expected on dashboard after draft→ready")
+	dashboard, err := database.ListDashboardPRs()
+	if !idsOfPRs(t, dashboard, err)[prID] {
+		t.Fatal("preserved assigned PR must remain on Dashboard")
 	}
 }
 
-func TestReconcileStale_FilteredThenClosedLeavesFiltered(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 20)
-	fake := &fakeGH{details: map[string]*gh.PRSummary{
-		key: {Owner: "spacelift-io", Repo: "backend", Number: 20, Title: "gone", Author: "a", CommitSHA: "z", State: "closed"},
-	}}
-	s, d := testScanner(t, &config.Config{}, fake)
-	id, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 20, Title: "gone", Author: "a",
-		CommitSHA: "z", State: "open", FilteredReason: "draft", NeedsReview: false,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s.reconcileStalePRs(context.Background(), map[string]gh.PRSummary{})
-
-	pr, _ := d.GetPR(id)
-	if pr.State != "closed" || pr.FilteredReason != "" {
-		t.Fatalf("got %#v", pr)
-	}
-	filtered, _ := d.ListFilteredPRs()
-	for _, f := range filtered {
-		if f.ID == id {
-			t.Fatal("should not remain on filtered")
-		}
-	}
-	history, _ := d.ListHistoryPRs()
-	found := false
-	for _, h := range history {
-		if h.ID == id {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("should be on history")
-	}
-}
-
-func TestReconcileStale_OpenFilteredRecordsExternalWhenReviewed(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 44)
-	sha := "open-recon-ext"
+func TestScanRetainedEffectiveReviewKeepsNewHeadOnDashboardWithoutQueue(t *testing.T) {
+	key := prKey("acme", "repo", 2)
 	fake := &fakeGH{
-		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 44, Title: "open", Author: "bob", CommitSHA: sha, State: "open"},
+		snapshot: gh.AssignmentSnapshot{
+			Complete: true,
+			PRs:      []gh.PRSummary{{Owner: "acme", Repo: "repo", Number: 2}},
 		},
-		hasReviewed: map[string]bool{key: true},
-	}
-	s, d := testScanner(t, &config.Config{PRAuthors: []string{"^alice$"}}, fake)
-	id, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 44, Title: "open", Author: "bob",
-		CommitSHA: "", State: "open", FilteredReason: "author", NeedsReview: false,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s.reconcileStalePRs(context.Background(), map[string]gh.PRSummary{})
-
-	pr, err := d.GetPR(id)
-	if err != nil || pr == nil || pr.State != "open" || pr.FilteredReason != "author" {
-		t.Fatalf("want open filtered PR, got %#v err=%v", pr, err)
-	}
-	if pr.CommitSHA != sha {
-		t.Fatalf("want refreshed commit_sha=%s, got %s", sha, pr.CommitSHA)
-	}
-	latest, err := d.GetLatestReviewByPR(id)
-	if err != nil || latest == nil || latest.Outcome != db.ReviewOutcomeReviewedExternally || latest.CommitSHA != sha {
-		t.Fatalf("want reviewed_externally for refreshed SHA, got %#v err=%v", latest, err)
-	}
-}
-
-func TestBackfillMergedStates_UpgradesClosedToMerged(t *testing.T) {
-	keyMerged := prKey("spacelift-io", "backend", 30)
-	keyClosed := prKey("spacelift-io", "backend", 31)
-	fake := &fakeGH{details: map[string]*gh.PRSummary{
-		keyMerged: {Owner: "spacelift-io", Repo: "backend", Number: 30, Title: "shipped", Author: "a", CommitSHA: "a1", State: "merged"},
-		keyClosed: {Owner: "spacelift-io", Repo: "backend", Number: 31, Title: "abandoned", Author: "b", CommitSHA: "b1", State: "closed"},
-	}}
-	s, d := testScanner(t, &config.Config{}, fake)
-	if _, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 30, Title: "shipped", Author: "a",
-		CommitSHA: "a1", State: "closed", NeedsReview: false,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 31, Title: "abandoned", Author: "b",
-		CommitSHA: "b1", State: "closed", NeedsReview: false,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	s.backfillMergedStates(context.Background())
-
-	merged, err := d.GetPRByRepoAndNumber("spacelift-io/backend", 30)
-	if err != nil || merged == nil || merged.State != "merged" {
-		t.Fatalf("want merged, got %#v err=%v", merged, err)
-	}
-	closed, err := d.GetPRByRepoAndNumber("spacelift-io/backend", 31)
-	if err != nil || closed == nil || closed.State != "closed" {
-		t.Fatalf("want still closed, got %#v err=%v", closed, err)
-	}
-}
-
-func TestProcessPR_AlreadyReviewedRecordsExternal(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 40)
-	sha := "ext-sha"
-	fake := &fakeGH{
 		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 40, Title: "t", Author: "a", CommitSHA: sha, State: "open"},
+			key: {Owner: "acme", Repo: "repo", Number: 2, Title: "approved", Author: "alice", CommitSHA: "sha-new", State: "open"},
 		},
-		hasReviewed: map[string]bool{key: true},
-	}
-	s, d := testScanner(t, &config.Config{}, fake)
-	_, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 40, Title: "t", Author: "a", CommitSHA: sha, State: "open",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 40)
-	if pr == nil || pr.NeedsReview {
-		t.Fatalf("want reviewed open PR, got %#v", pr)
-	}
-	ok, err := d.HasExternalReview(pr.ID, sha)
-	if err != nil || !ok {
-		t.Fatalf("want external review recorded, ok=%v err=%v", ok, err)
-	}
-	latest, err := d.GetLatestReviewByPR(pr.ID)
-	if err != nil || latest == nil || latest.Outcome != db.ReviewOutcomeReviewedExternally {
-		t.Fatalf("want reviewed_externally, got %#v err=%v", latest, err)
-	}
-}
-
-func TestProcessPR_RepoFilterRecordsExternalWhenReviewed(t *testing.T) {
-	key := prKey("other", "thing", 41)
-	sha := "filt-sha"
-	fake := &fakeGH{
-		hasReviewed: map[string]bool{key: true},
-	}
-	s, d := testScanner(t, &config.Config{Repositories: []string{`^spacelift-io/backend$`}}, fake)
-	_, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "other", Repo: "thing", Number: 41, Title: "nope", Author: "a", CommitSHA: sha, State: "open",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pr, _ := d.GetPRByRepoAndNumber("other/thing", 41)
-	if pr == nil || pr.FilteredReason != "repo" {
-		t.Fatalf("got %#v", pr)
-	}
-	ok, err := d.HasExternalReview(pr.ID, sha)
-	if err != nil || !ok {
-		t.Fatalf("want external review on filtered PR, ok=%v err=%v", ok, err)
-	}
-}
-
-func TestProcessPR_ClosedRecordsExternalWhenReviewed(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 42)
-	sha := "closed-ext"
-	fake := &fakeGH{
-		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 42, Title: "done", Author: "a", CommitSHA: sha, State: "merged"},
-		},
-		hasReviewed: map[string]bool{key: true},
-	}
-	s, d := testScanner(t, &config.Config{}, fake)
-	_, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 42, Title: "done", Author: "a", CommitSHA: sha,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 42)
-	if pr == nil || pr.State != "merged" {
-		t.Fatalf("got %#v", pr)
-	}
-	ok, err := d.HasExternalReview(pr.ID, sha)
-	if err != nil || !ok {
-		t.Fatalf("want external review on closed/merged PR, ok=%v err=%v", ok, err)
-	}
-}
-
-func TestReconcileStale_ClosedRecordsExternalWhenReviewed(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 43)
-	sha := "recon-ext"
-	fake := &fakeGH{
-		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 43, Title: "gone", Author: "a", CommitSHA: sha, State: "closed"},
-		},
-		hasReviewed: map[string]bool{key: true},
-	}
-	s, d := testScanner(t, &config.Config{}, fake)
-	id, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 43, Title: "gone", Author: "a",
-		CommitSHA: sha, State: "open", NeedsReview: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s.reconcileStalePRs(context.Background(), map[string]gh.PRSummary{})
-
-	ok, err := d.HasExternalReview(id, sha)
-	if err != nil || !ok {
-		t.Fatalf("want external review after reconcile close, ok=%v err=%v", ok, err)
-	}
-}
-
-func TestReconcileStale_OpenUpdatesSHAAndEnqueues(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 15706)
-	oldSHA := "old-commit"
-	newSHA := "new-commit"
-	fake := &fakeGH{
-		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 15706, Title: "advances", Author: "a", CommitSHA: newSHA, Draft: false, State: "open"},
-		},
-		hasReviewed: map[string]bool{key: false},
-	}
-	s, d := testScanner(t, &config.Config{}, fake)
-	id, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 15706, Title: "advances", Author: "a",
-		CommitSHA: oldSHA, State: "open", NeedsReview: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s.reconcileStalePRs(context.Background(), map[string]gh.PRSummary{})
-
-	pr, err := d.GetPR(id)
-	if err != nil || pr == nil {
-		t.Fatalf("get PR: %#v err=%v", pr, err)
-	}
-	if pr.CommitSHA != newSHA {
-		t.Fatalf("want commit_sha=%s, got %s", newSHA, pr.CommitSHA)
-	}
-	if !pr.NeedsReview {
-		t.Fatal("expected needs_review=true")
-	}
-	pending, err := d.GetPendingRequestByPR(id)
-	if err != nil || pending == nil {
-		t.Fatalf("want pending review request, got %#v err=%v", pending, err)
-	}
-}
-
-func TestProcessPR_NewSHAEnqueuesEvenIfOldCommitReviewed(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 15707)
-	fake := &fakeGH{
-		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 15707, Title: "next", Author: "a", CommitSHA: "sha-new", Draft: false, State: "open"},
-		},
-		// Reviewed on old head only — new head must still enqueue.
-		hasReviewed: map[string]bool{key + "@sha-old": true},
-	}
-	s, d := testScanner(t, &config.Config{}, fake)
-	id, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 15707, Title: "next", Author: "a",
-		CommitSHA: "sha-old", State: "open", NeedsReview: false,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	created, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 15707, Title: "next", Author: "a", CommitSHA: "sha-new",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !created {
-		t.Fatal("expected review request for new SHA after old-commit review")
-	}
-	pr, _ := d.GetPR(id)
-	if pr.CommitSHA != "sha-new" || !pr.NeedsReview {
-		t.Fatalf("got %#v", pr)
-	}
-}
-
-func TestProcessPR_SameSHAReenqueuesWhenNeedsReviewAndNoPending(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 99)
-	sha := "same-sha-requeue"
-	fake := &fakeGH{
-		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 99, Title: "t", Author: "a", CommitSHA: sha, Draft: false, State: "open"},
-		},
-		hasReviewed: map[string]bool{key: false},
-	}
-	s, d := testScanner(t, &config.Config{}, fake)
-	id, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 99, Title: "t", Author: "a",
-		CommitSHA: sha, State: "open", NeedsReview: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	created, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 99, Title: "t", Author: "a", CommitSHA: sha,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !created {
-		t.Fatal("expected review request when needs_review and queue empty")
-	}
-	pending, err := d.GetPendingRequestByPR(id)
-	if err != nil || pending == nil {
-		t.Fatalf("want pending request, got %#v err=%v", pending, err)
-	}
-
-	created, err = s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 99, Title: "t", Author: "a", CommitSHA: sha,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created {
-		t.Fatal("must not duplicate pending request")
-	}
-}
-
-func TestProcessPR_NewSHAClearsOutdatedForNewCycle(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 100)
-	fake := &fakeGH{
-		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 100, Title: "t", Author: "a", CommitSHA: "sha2", Draft: false, State: "open"},
-		},
-		hasReviewed: map[string]bool{key: false},
-	}
-	s, d := testScanner(t, &config.Config{}, fake)
-	id, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 100, Title: "t", Author: "a",
-		CommitSHA: "sha1", State: "open", NeedsReview: true, IsOutdated: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	created, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 100, Title: "t", Author: "a",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !created {
-		t.Fatal("expected enqueue for new SHA")
-	}
-	pr, _ := d.GetPR(id)
-	if pr.IsOutdated {
-		t.Fatal("new review cycle must clear is_outdated so PR stays on dashboard")
-	}
-	if pr.CommitSHA != "sha2" {
-		t.Fatalf("want sha2, got %s", pr.CommitSHA)
-	}
-}
-
-func TestProcessPR_SameSHAClearsOutdatedWhenReenqueueing(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 101)
-	sha := "stuck-outdated"
-	fake := &fakeGH{
-		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 101, Title: "t", Author: "a", CommitSHA: sha, Draft: false, State: "open"},
-		},
-		hasReviewed: map[string]bool{key: false},
-	}
-	s, d := testScanner(t, &config.Config{}, fake)
-	id, err := d.UpsertPR(db.PullRequest{
-		Repo: "spacelift-io/backend", PRNumber: 101, Title: "t", Author: "a",
-		CommitSHA: sha, State: "open", NeedsReview: true, IsOutdated: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	created, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 101, Title: "t", Author: "a", CommitSHA: sha,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !created {
-		t.Fatal("expected enqueue")
-	}
-	pr, _ := d.GetPR(id)
-	if pr.IsOutdated {
-		t.Fatal("re-enqueue must clear is_outdated for dashboard visibility")
-	}
-}
-
-func TestProcessPR_AuthorFilterUsesDetailsCommitSHA(t *testing.T) {
-	key := prKey("spacelift-io", "backend", 55)
-	sha := "detail-sha-55"
-	fake := &fakeGH{
-		details: map[string]*gh.PRSummary{
-			key: {Owner: "spacelift-io", Repo: "backend", Number: 55, Title: "x", Author: "bob", CommitSHA: sha, State: "open"},
+		reviews: map[string]*gh.EffectiveReview{
+			key: {ID: 22, State: gh.ReviewStateApproved},
 		},
 	}
-	s, d := testScanner(t, &config.Config{PRAuthors: []string{"^alice$"}}, fake)
-	_, err := s.processPR(context.Background(), gh.PRSummary{
-		Owner: "spacelift-io", Repo: "backend", Number: 55, Title: "x", Author: "bob", CommitSHA: "",
+	scanner, database := testScanner(t, nil, fake, nil, nil)
+	prID, err := database.UpsertPR(db.PullRequest{
+		Repo: "acme/repo", PRNumber: 2, Title: "approved", Author: "alice",
+		CommitSHA: "sha-old", State: db.PRStateOpen, IsAssigned: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr, _ := d.GetPRByRepoAndNumber("spacelift-io/backend", 55)
-	if pr == nil || pr.FilteredReason != "author" {
-		t.Fatalf("got %#v", pr)
+
+	if err := scanner.Scan(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if pr.CommitSHA != sha {
-		t.Fatalf("want commit_sha from details %s, got %q", sha, pr.CommitSHA)
+	pr, err := database.GetPR(prID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if fake.getCalls < 1 {
-		t.Fatal("expected GetPRDetails before filter upsert")
+	if pr.CommitSHA != "sha-new" || pr.EffectiveReviewID == nil || *pr.EffectiveReviewID != 22 {
+		t.Fatalf("reconciled PR = %#v", pr)
 	}
+	dashboard, err := database.ListDashboardPRs()
+	if !idsOfPRs(t, dashboard, err)[prID] {
+		t.Fatal("reviewed assigned PR must stay on Dashboard")
+	}
+	requests, err := database.ListReviewRequests()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 0 {
+		t.Fatalf("effective review must block queueing: %#v", requests)
+	}
+}
+
+func TestScanDroppedReviewSupersedesOldHeadAndQueuesNewHeadOnce(t *testing.T) {
+	key := prKey("acme", "repo", 3)
+	fake := &fakeGH{
+		snapshot: gh.AssignmentSnapshot{
+			Complete: true,
+			PRs:      []gh.PRSummary{{Owner: "acme", Repo: "repo", Number: 3}},
+		},
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "acme", Repo: "repo", Number: 3, Title: "updated", Author: "alice", CommitSHA: "sha-new", State: "open"},
+		},
+		reviews: map[string]*gh.EffectiveReview{},
+	}
+	wakeCount := 0
+	scanner, database := testScanner(t, nil, fake, nil, func() { wakeCount++ })
+	prID, err := database.UpsertPR(db.PullRequest{
+		Repo: "acme/repo", PRNumber: 3, Title: "updated", Author: "alice",
+		CommitSHA: "sha-old", State: db.PRStateOpen, IsAssigned: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRequestID, err := database.CreateReviewRequest(prID, "sha-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	canceller := &recordingCanceller{db: database, t: t}
+	scanner.canceller = canceller
+
+	if err := scanner.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var changesAfterFirstScan int64
+	if err := database.QueryRow("SELECT total_changes()").Scan(&changesAfterFirstScan); err != nil {
+		t.Fatal(err)
+	}
+	if err := scanner.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var changesAfterSecondScan int64
+	if err := database.QueryRow("SELECT total_changes()").Scan(&changesAfterSecondScan); err != nil {
+		t.Fatal(err)
+	}
+	if changesAfterSecondScan != changesAfterFirstScan {
+		t.Fatalf("identical second scan wrote %d rows", changesAfterSecondScan-changesAfterFirstScan)
+	}
+	oldRequest, err := database.GetReviewRequestIncludingTerminal(oldRequestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldRequest.Status != db.ReviewRequestStatusSuperseded {
+		t.Fatalf("old request status = %q", oldRequest.Status)
+	}
+	requests, err := database.ListReviewRequests()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 1 || requests[0].CommitSHA != "sha-new" {
+		t.Fatalf("active requests = %#v, want one for sha-new", requests)
+	}
+	if wakeCount != 1 {
+		t.Fatalf("reactor wake count = %d, want 1", wakeCount)
+	}
+	if len(canceller.canceled) != 1 || canceller.canceled[0] != oldRequestID {
+		t.Fatalf("system cancellations = %#v", canceller.canceled)
+	}
+}
+
+func TestScanCompleteAbsenceMovesPRToHistoryAndCancelsAfterCommit(t *testing.T) {
+	key := prKey("acme", "repo", 4)
+	fake := &fakeGH{
+		snapshot: gh.AssignmentSnapshot{Complete: true},
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "acme", Repo: "repo", Number: 4, Title: "unassigned", Author: "alice", CommitSHA: "sha-4", State: "open"},
+		},
+		reviews: map[string]*gh.EffectiveReview{},
+	}
+	scanner, database := testScanner(t, nil, fake, nil, nil)
+	prID, err := database.UpsertPR(db.PullRequest{
+		Repo: "acme/repo", PRNumber: 4, Title: "unassigned", Author: "alice",
+		CommitSHA: "sha-4", State: db.PRStateOpen, IsAssigned: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID, err := database.CreateReviewRequest(prID, "sha-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	canceller := &recordingCanceller{db: database, t: t}
+	scanner.canceller = canceller
+
+	if err := scanner.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pr, err := database.GetPR(prID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.IsAssigned {
+		t.Fatal("complete absence must clear assignment")
+	}
+	history, err := database.ListHistoryPRs()
+	if !idsOfPRs(t, history, err)[prID] {
+		t.Fatal("unassigned PR must move to History")
+	}
+	if len(canceller.canceled) != 1 || canceller.canceled[0] != requestID {
+		t.Fatalf("system cancellations = %#v", canceller.canceled)
+	}
+}
+
+func idsOfPRs(t *testing.T, prs []db.PullRequest, err error) map[int64]bool {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make(map[int64]bool, len(prs))
+	for _, pr := range prs {
+		ids[pr.ID] = true
+	}
+	return ids
 }

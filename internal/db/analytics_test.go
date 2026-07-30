@@ -7,7 +7,7 @@ import (
 
 func mustReviewAt(t *testing.T, d *DB, prID int64, outcome string, createdAt time.Time) int64 {
 	t.Helper()
-	rrID, err := d.CreateReviewRequest(prID)
+	rrID, err := d.CreateReviewRequest(prID, "abc")
 	if err != nil {
 		t.Fatalf("CreateReviewRequest: %v", err)
 	}
@@ -20,6 +20,9 @@ func mustReviewAt(t *testing.T, d *DB, prID int64, outcome string, createdAt tim
 	})
 	if err != nil {
 		t.Fatalf("CreateReview: %v", err)
+	}
+	if err := d.UpdateReviewRequestStatus(rrID, ReviewRequestStatusDone); err != nil {
+		t.Fatalf("complete review request: %v", err)
 	}
 	ts := createdAt.UTC().Format("2006-01-02 15:04:05")
 	if _, err := d.Exec(`UPDATE reviews SET created_at = ?, updated_at = ? WHERE id = ?`, ts, ts, id); err != nil {

@@ -10,7 +10,7 @@ func TestSoftDeleteReviewRequestRemovesFromQueue(t *testing.T) {
 		Repo: "org/a", PRNumber: 1, Title: "t", Author: "a",
 		CommitSHA: "abc", State: PRStateOpen, NeedsReview: true,
 	})
-	rrID, err := d.CreateReviewRequest(prID)
+	rrID, err := d.CreateReviewRequest(prID, "abc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestSoftDeleteReviewRequestAlreadyDone(t *testing.T) {
 		Repo: "org/a", PRNumber: 2, Title: "t", Author: "a",
 		CommitSHA: "abc", State: PRStateOpen, NeedsReview: true,
 	})
-	rrID, err := d.CreateReviewRequest(prID)
+	rrID, err := d.CreateReviewRequest(prID, "abc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestGetReviewRequest(t *testing.T) {
 		Repo: "org/a", PRNumber: 3, Title: "t", Author: "a",
 		CommitSHA: "abc", State: PRStateOpen, NeedsReview: true,
 	})
-	rrID, err := d.CreateReviewRequest(prID)
+	rrID, err := d.CreateReviewRequest(prID, "abc")
 	if err != nil {
 		t.Fatal(err)
 	}

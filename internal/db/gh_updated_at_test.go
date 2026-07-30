@@ -56,7 +56,7 @@ func TestUpsertPR_StoresAndPreservesGhUpdatedAt(t *testing.T) {
 	}
 }
 
-func TestListPRsNeedingReview_OrdersByGhUpdatedAtDesc(t *testing.T) {
+func TestListDashboardPRsOrdersByGhUpdatedAtDesc(t *testing.T) {
 	d, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -69,18 +69,18 @@ func TestListPRsNeedingReview_OrdersByGhUpdatedAtDesc(t *testing.T) {
 
 	mustUpsert(t, d, PullRequest{
 		Repo: "o/r", PRNumber: 1, Title: "old", Author: "a", CommitSHA: "1",
-		State: PRStateOpen, NeedsReview: true, GhUpdatedAt: old,
+		State: PRStateOpen, NeedsReview: true, GhUpdatedAt: old, IsAssigned: true,
 	})
 	mustUpsert(t, d, PullRequest{
 		Repo: "o/r", PRNumber: 2, Title: "new", Author: "a", CommitSHA: "2",
-		State: PRStateOpen, NeedsReview: true, GhUpdatedAt: new_,
+		State: PRStateOpen, NeedsReview: true, GhUpdatedAt: new_, IsAssigned: true,
 	})
 	mustUpsert(t, d, PullRequest{
 		Repo: "o/r", PRNumber: 3, Title: "mid", Author: "a", CommitSHA: "3",
-		State: PRStateOpen, NeedsReview: true, GhUpdatedAt: mid,
+		State: PRStateOpen, NeedsReview: true, GhUpdatedAt: mid, IsAssigned: true,
 	})
 
-	list, err := d.ListPRsNeedingReview()
+	list, err := d.ListDashboardPRs()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,11 +103,11 @@ func TestListFilteredPRs_OrdersByGhUpdatedAtDesc(t *testing.T) {
 	new_ := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
 	mustUpsert(t, d, PullRequest{
 		Repo: "o/r", PRNumber: 10, Title: "old", Author: "a", CommitSHA: "1",
-		State: PRStateOpen, NeedsReview: false, FilteredReason: "draft", GhUpdatedAt: old,
+		State: PRStateOpen, NeedsReview: false, FilteredReason: "draft", GhUpdatedAt: old, IsAssigned: true,
 	})
 	mustUpsert(t, d, PullRequest{
 		Repo: "o/r", PRNumber: 11, Title: "new", Author: "a", CommitSHA: "2",
-		State: PRStateOpen, NeedsReview: false, FilteredReason: "author", GhUpdatedAt: new_,
+		State: PRStateOpen, NeedsReview: false, FilteredReason: "author", GhUpdatedAt: new_, IsAssigned: true,
 	})
 
 	list, err := d.ListFilteredPRs()

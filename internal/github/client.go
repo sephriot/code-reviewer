@@ -2,8 +2,10 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,6 +38,24 @@ type ReviewComment struct {
 	CommitID string
 }
 
+type AssignmentSnapshot struct {
+	PRs      []PRSummary
+	Complete bool
+}
+
+type ReviewState string
+
+const (
+	ReviewStateCommented        ReviewState = "commented"
+	ReviewStateApproved         ReviewState = "approved"
+	ReviewStateChangesRequested ReviewState = "changes_requested"
+)
+
+type EffectiveReview struct {
+	ID    int64
+	State ReviewState
+}
+
 type Client struct {
 	*github.Client
 	username string
@@ -50,17 +70,61 @@ func New(token, username string) *Client {
 	}
 }
 
-func (c *Client) ListAssignedPRs(ctx context.Context) ([]PRSummary, error) {
-	query := fmt.Sprintf("is:open is:pr review-requested:%s", c.username)
-	return c.searchPRSummaries(ctx, query, "search assigned PRs")
+func (c *Client) ListReviewAssignments(ctx context.Context) (AssignmentSnapshot, error) {
+	snapshot := AssignmentSnapshot{Complete: true}
+	var discoveryErrors []error
+
+	direct, complete, err := c.searchPRSummariesDetailed(
+		ctx,
+		fmt.Sprintf("is:open is:pr review-requested:%s", c.username),
+		"search direct review assignments",
+	)
+	snapshot.PRs = append(snapshot.PRs, direct...)
+	if err != nil {
+		discoveryErrors = append(discoveryErrors, err)
+	}
+	if err != nil || !complete {
+		snapshot.Complete = false
+	}
+
+	teams, err := c.listUserTeams(ctx)
+	if err != nil {
+		snapshot.Complete = false
+		discoveryErrors = append(discoveryErrors, err)
+	}
+	for _, team := range teams {
+		teamPRs, complete, err := c.searchPRSummariesDetailed(
+			ctx,
+			fmt.Sprintf("is:open is:pr team-review-requested:%s/%s", team.Organization.GetLogin(), team.GetSlug()),
+			fmt.Sprintf("search review assignments for %s/%s", team.Organization.GetLogin(), team.GetSlug()),
+		)
+		snapshot.PRs = append(snapshot.PRs, teamPRs...)
+		if err != nil {
+			discoveryErrors = append(discoveryErrors, err)
+		}
+		if err != nil || !complete {
+			snapshot.Complete = false
+		}
+	}
+
+	deduplicated := make(map[string]PRSummary, len(snapshot.PRs))
+	for _, pr := range snapshot.PRs {
+		key := strings.ToLower(fmt.Sprintf("%s/%s#%d", pr.Owner, pr.Repo, pr.Number))
+		deduplicated[key] = pr
+	}
+	snapshot.PRs = snapshot.PRs[:0]
+	for _, pr := range deduplicated {
+		snapshot.PRs = append(snapshot.PRs, pr)
+	}
+	sort.Slice(snapshot.PRs, func(i, j int) bool {
+		left := fmt.Sprintf("%s/%s#%d", snapshot.PRs[i].Owner, snapshot.PRs[i].Repo, snapshot.PRs[i].Number)
+		right := fmt.Sprintf("%s/%s#%d", snapshot.PRs[j].Owner, snapshot.PRs[j].Repo, snapshot.PRs[j].Number)
+		return left < right
+	})
+	return snapshot, errors.Join(discoveryErrors...)
 }
 
-func (c *Client) ListOwnPRs(ctx context.Context) ([]PRSummary, error) {
-	query := fmt.Sprintf("is:open is:pr author:%s", c.username)
-	return c.searchPRSummaries(ctx, query, "search own PRs")
-}
-
-func (c *Client) searchPRSummaries(ctx context.Context, query, errLabel string) ([]PRSummary, error) {
+func (c *Client) searchPRSummariesDetailed(ctx context.Context, query, errLabel string) ([]PRSummary, bool, error) {
 	opts := &github.SearchOptions{
 		Sort:  "updated",
 		Order: "desc",
@@ -69,12 +133,35 @@ func (c *Client) searchPRSummaries(ctx context.Context, query, errLabel string) 
 		},
 	}
 	var all []PRSummary
+	complete := true
 	for {
 		result, resp, err := c.Search.Issues(ctx, query, opts)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", errLabel, err)
+			return all, false, fmt.Errorf("%s: %w", errLabel, err)
 		}
+		complete = complete && !result.GetIncompleteResults()
 		all = append(all, prIssuesToSummaries(result.Issues)...)
+		if resp == nil || resp.NextPage == 0 {
+			return all, complete, nil
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
+func (c *Client) listUserTeams(ctx context.Context) ([]*github.Team, error) {
+	opts := &github.ListOptions{PerPage: 100}
+	var all []*github.Team
+	for {
+		teams, resp, err := c.Teams.ListUserTeams(ctx, opts)
+		if err != nil {
+			return all, fmt.Errorf("list authenticated user teams: %w", err)
+		}
+		for _, team := range teams {
+			if team.Organization == nil || team.Organization.GetLogin() == "" || team.GetSlug() == "" {
+				return all, fmt.Errorf("list authenticated user teams: team is missing organization or slug")
+			}
+			all = append(all, team)
+		}
 		if resp == nil || resp.NextPage == 0 {
 			return all, nil
 		}
@@ -139,29 +226,58 @@ func (c *Client) GetPRDetails(ctx context.Context, owner, repo string, number in
 	}, nil
 }
 
-func (c *Client) HasUserReviewed(ctx context.Context, owner, repo string, number int, commitSHA string) (bool, error) {
+func (c *Client) GetEffectiveReview(ctx context.Context, owner, repo string, number int) (*EffectiveReview, error) {
 	opts := &github.ListOptions{PerPage: 100}
+	var latest *github.PullRequestReview
 	for {
 		reviews, resp, err := c.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
-			return false, fmt.Errorf("list reviews for %s/%s#%d: %w", owner, repo, number, err)
+			return nil, fmt.Errorf("list reviews for %s/%s#%d: %w", owner, repo, number, err)
 		}
 		for _, r := range reviews {
-			if r.GetUser().GetLogin() != c.username {
+			if !strings.EqualFold(r.GetUser().GetLogin(), c.username) {
 				continue
 			}
-			if commitSHA == "" || r.GetCommitID() == commitSHA {
-				return true, nil
+			if latest == nil || reviewAfter(r, latest) {
+				latest = r
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
-			return false, nil
+			break
 		}
 		opts.Page = resp.NextPage
 	}
+
+	if latest == nil {
+		return nil, nil
+	}
+	var state ReviewState
+	switch strings.ToUpper(latest.GetState()) {
+	case "COMMENTED":
+		state = ReviewStateCommented
+	case "APPROVED":
+		state = ReviewStateApproved
+	case "CHANGES_REQUESTED":
+		state = ReviewStateChangesRequested
+	default:
+		return nil, nil
+	}
+	return &EffectiveReview{ID: latest.GetID(), State: state}, nil
 }
 
-func (c *Client) SubmitReview(ctx context.Context, owner, repo string, number int, submission ReviewSubmission) error {
+func reviewAfter(left, right *github.PullRequestReview) bool {
+	leftTime := left.GetSubmittedAt().Time
+	rightTime := right.GetSubmittedAt().Time
+	if leftTime.IsZero() || rightTime.IsZero() {
+		return left.GetID() > right.GetID()
+	}
+	if leftTime.Equal(rightTime) {
+		return left.GetID() > right.GetID()
+	}
+	return leftTime.After(rightTime)
+}
+
+func (c *Client) SubmitReview(ctx context.Context, owner, repo string, number int, submission ReviewSubmission) (int64, error) {
 	var event string
 	switch submission.Outcome {
 	case "approve_without_comments", "approve_with_comments":
@@ -190,12 +306,12 @@ func (c *Client) SubmitReview(ctx context.Context, owner, repo string, number in
 		})
 	}
 
-	_, _, err := c.PullRequests.CreateReview(ctx, owner, repo, number, review)
+	created, _, err := c.PullRequests.CreateReview(ctx, owner, repo, number, review)
 	if err != nil {
-		return fmt.Errorf("submit review for %s/%s#%d: %w", owner, repo, number, err)
+		return 0, fmt.Errorf("submit review for %s/%s#%d: %w", owner, repo, number, err)
 	}
 	log.Printf("submitted review for %s/%s#%d (event=%s, comments=%d)", owner, repo, number, event, len(submission.Comments))
-	return nil
+	return created.GetID(), nil
 }
 
 func (c *Client) CreatePRComment(ctx context.Context, owner, repo string, number int, body string) error {
