@@ -51,22 +51,16 @@ func New(token, username string) *Client {
 }
 
 func (c *Client) ListAssignedPRs(ctx context.Context) ([]PRSummary, error) {
-	opts := &github.SearchOptions{
-		Sort:  "updated",
-		Order: "desc",
-		ListOptions: github.ListOptions{
-			PerPage: 100,
-		},
-	}
 	query := fmt.Sprintf("is:open is:pr review-requested:%s", c.username)
-	result, _, err := c.Search.Issues(ctx, query, opts)
-	if err != nil {
-		return nil, fmt.Errorf("search assigned PRs: %w", err)
-	}
-	return prIssuesToSummaries(result.Issues), nil
+	return c.searchPRSummaries(ctx, query, "search assigned PRs")
 }
 
 func (c *Client) ListOwnPRs(ctx context.Context) ([]PRSummary, error) {
+	query := fmt.Sprintf("is:open is:pr author:%s", c.username)
+	return c.searchPRSummaries(ctx, query, "search own PRs")
+}
+
+func (c *Client) searchPRSummaries(ctx context.Context, query, errLabel string) ([]PRSummary, error) {
 	opts := &github.SearchOptions{
 		Sort:  "updated",
 		Order: "desc",
@@ -74,12 +68,18 @@ func (c *Client) ListOwnPRs(ctx context.Context) ([]PRSummary, error) {
 			PerPage: 100,
 		},
 	}
-	query := fmt.Sprintf("is:open is:pr author:%s", c.username)
-	result, _, err := c.Search.Issues(ctx, query, opts)
-	if err != nil {
-		return nil, fmt.Errorf("search own PRs: %w", err)
+	var all []PRSummary
+	for {
+		result, resp, err := c.Search.Issues(ctx, query, opts)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", errLabel, err)
+		}
+		all = append(all, prIssuesToSummaries(result.Issues)...)
+		if resp == nil || resp.NextPage == 0 {
+			return all, nil
+		}
+		opts.Page = resp.NextPage
 	}
-	return prIssuesToSummaries(result.Issues), nil
 }
 
 func prIssuesToSummaries(issues []*github.Issue) []PRSummary {
