@@ -139,18 +139,26 @@ func (c *Client) GetPRDetails(ctx context.Context, owner, repo string, number in
 	}, nil
 }
 
-func (c *Client) HasUserReviewed(ctx context.Context, owner, repo string, number int) (bool, error) {
-	opts := &github.ListOptions{PerPage: 50}
-	reviews, _, err := c.PullRequests.ListReviews(ctx, owner, repo, number, opts)
-	if err != nil {
-		return false, fmt.Errorf("list reviews for %s/%s#%d: %w", owner, repo, number, err)
-	}
-	for _, r := range reviews {
-		if r.GetUser().GetLogin() == c.username {
-			return true, nil
+func (c *Client) HasUserReviewed(ctx context.Context, owner, repo string, number int, commitSHA string) (bool, error) {
+	opts := &github.ListOptions{PerPage: 100}
+	for {
+		reviews, resp, err := c.PullRequests.ListReviews(ctx, owner, repo, number, opts)
+		if err != nil {
+			return false, fmt.Errorf("list reviews for %s/%s#%d: %w", owner, repo, number, err)
 		}
+		for _, r := range reviews {
+			if r.GetUser().GetLogin() != c.username {
+				continue
+			}
+			if commitSHA == "" || r.GetCommitID() == commitSHA {
+				return true, nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return false, nil
+		}
+		opts.Page = resp.NextPage
 	}
-	return false, nil
 }
 
 func (c *Client) SubmitReview(ctx context.Context, owner, repo string, number int, submission ReviewSubmission) error {

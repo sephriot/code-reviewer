@@ -18,7 +18,7 @@ type githubAPI interface {
 	ListAssignedPRs(ctx context.Context) ([]gh.PRSummary, error)
 	ListOwnPRs(ctx context.Context) ([]gh.PRSummary, error)
 	GetPRDetails(ctx context.Context, owner, repo string, number int) (*gh.PRSummary, error)
-	HasUserReviewed(ctx context.Context, owner, repo string, number int) (bool, error)
+	HasUserReviewed(ctx context.Context, owner, repo string, number int, commitSHA string) (bool, error)
 }
 
 type Scanner struct {
@@ -84,7 +84,7 @@ func (s *Scanner) Scan(ctx context.Context) error {
 
 // ensureExternalReview records reviewed_externally when GitHub already has our review.
 func (s *Scanner) ensureExternalReview(ctx context.Context, owner, repo string, number int, prID int64, commitSHA string) {
-	hasReviewed, err := s.gh.HasUserReviewed(ctx, owner, repo, number)
+	hasReviewed, err := s.gh.HasUserReviewed(ctx, owner, repo, number, commitSHA)
 	if err != nil {
 		log.Printf("scan: error checking review status for %s/%s#%d: %v", owner, repo, number, err)
 		return
@@ -208,7 +208,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 	}
 
 	if existing != nil && existing.CommitSHA == details.CommitSHA {
-		hasReviewed, err := s.gh.HasUserReviewed(ctx, pr.Owner, pr.Repo, pr.Number)
+		hasReviewed, err := s.gh.HasUserReviewed(ctx, pr.Owner, pr.Repo, pr.Number, details.CommitSHA)
 		if err != nil {
 			return false, err
 		}
@@ -246,7 +246,7 @@ func (s *Scanner) processPR(ctx context.Context, pr gh.PRSummary) (bool, error) 
 		log.Printf("scan: new commit on %s/%s#%d, marked outdated", pr.Owner, pr.Repo, pr.Number)
 	}
 
-	hasReviewed, err := s.gh.HasUserReviewed(ctx, pr.Owner, pr.Repo, pr.Number)
+	hasReviewed, err := s.gh.HasUserReviewed(ctx, pr.Owner, pr.Repo, pr.Number, details.CommitSHA)
 	if err != nil {
 		return false, err
 	}

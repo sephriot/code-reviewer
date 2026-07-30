@@ -37,8 +37,14 @@ func (f *fakeGH) GetPRDetails(ctx context.Context, owner, repo string, number in
 	cp := *d
 	return &cp, nil
 }
-func (f *fakeGH) HasUserReviewed(ctx context.Context, owner, repo string, number int) (bool, error) {
-	return f.hasReviewed[f.key(owner, repo, number)], nil
+func (f *fakeGH) HasUserReviewed(ctx context.Context, owner, repo string, number int, commitSHA string) (bool, error) {
+	k := f.key(owner, repo, number)
+	if commitSHA != "" {
+		if v, ok := f.hasReviewed[k+"@"+commitSHA]; ok {
+			return v, nil
+		}
+	}
+	return f.hasReviewed[k], nil
 }
 
 func testScanner(t *testing.T, cfg *config.Config, fake *fakeGH) (*Scanner, *db.DB) {
@@ -482,5 +488,38 @@ func TestReconcileStale_OpenUpdatesSHAAndEnqueues(t *testing.T) {
 	pending, err := d.GetPendingRequestByPR(id)
 	if err != nil || pending == nil {
 		t.Fatalf("want pending review request, got %#v err=%v", pending, err)
+	}
+}
+
+func TestProcessPR_NewSHAEnqueuesEvenIfOldCommitReviewed(t *testing.T) {
+	key := prKey("spacelift-io", "backend", 15707)
+	fake := &fakeGH{
+		details: map[string]*gh.PRSummary{
+			key: {Owner: "spacelift-io", Repo: "backend", Number: 15707, Title: "next", Author: "a", CommitSHA: "sha-new", Draft: false, State: "open"},
+		},
+		// Reviewed on old head only — new head must still enqueue.
+		hasReviewed: map[string]bool{key + "@sha-old": true},
+	}
+	s, d := testScanner(t, &config.Config{}, fake)
+	id, err := d.UpsertPR(db.PullRequest{
+		Repo: "spacelift-io/backend", PRNumber: 15707, Title: "next", Author: "a",
+		CommitSHA: "sha-old", State: "open", NeedsReview: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := s.processPR(context.Background(), gh.PRSummary{
+		Owner: "spacelift-io", Repo: "backend", Number: 15707, Title: "next", Author: "a", CommitSHA: "sha-new",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected review request for new SHA after old-commit review")
+	}
+	pr, _ := d.GetPR(id)
+	if pr.CommitSHA != "sha-new" || !pr.NeedsReview {
+		t.Fatalf("got %#v", pr)
 	}
 }
