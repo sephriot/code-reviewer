@@ -1,0 +1,22 @@
+id: K-000038
+title: Scanner review gating must be commit-scoped and re-enqueue empty queues
+type: gotcha
+confidence: high
+summary: HasUserReviewed matches head commit; same-SHA re-enqueues when needs_review and no active request; clear is_outdated for active cycles.
+details: |-
+  ## Pitfalls fixed
+  1. `HasUserReviewed` previously returned true for any review on the PR, blocking re-queue after new commits. It now matches `commit_id` to the head SHA and paginates ListReviews.
+  2. Same-SHA path never called `CreateReviewRequest`, so cancel left `needs_review=true` with an empty queue. It now enqueues when GitHub still needs a review and no non-done request exists.
+  3. `MarkPROutdated` was immediately overwritten by UpsertPR; active cycles now set `is_outdated=false` so PRs stay on the dashboard.
+  4. Assigned/own search now paginates past the first 100 hits.
+tags:
+- scanner
+- HasUserReviewed
+- queue
+sources:
+- internal/scanner/scanner.go
+- internal/github/client.go
+links:
+- K-000031
+- K-000037
+updated_at: 2026-07-30

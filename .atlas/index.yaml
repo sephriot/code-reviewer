@@ -1,4 +1,4 @@
-next_id: 38
+next_id: 39
 entries:
 - id: K-000002
   title: Legacy v1 own-PR SHA deduplication (superseded)
@@ -352,6 +352,7 @@ entries:
   links:
   - K-000012
   - K-000030
+  - K-000038
 - id: K-000032
   title: design.md is as-built rebuild guideline
   type: decision
@@ -430,17 +431,29 @@ entries:
   links:
   - K-000034
 - id: K-000037
-  title: Open stale filtered PRs do not get external review backfilled
+  title: Open stale PRs must run full processPR reconciliation
   type: gotcha
   confidence: high
   tags:
   - scanner
-  - reviewed_externally
-  - filtered
   - reconciliation
+  - commit_sha
   sources:
   - internal/scanner/scanner.go
-  - internal/web/server.go
-  - internal/web/templates/filtered.html
   links:
   - K-000034
+  - K-000038
+- id: K-000038
+  title: Scanner review gating must be commit-scoped and re-enqueue empty queues
+  type: gotcha
+  confidence: high
+  tags:
+  - scanner
+  - HasUserReviewed
+  - queue
+  sources:
+  - internal/scanner/scanner.go
+  - internal/github/client.go
+  links:
+  - K-000031
+  - K-000037
