@@ -86,8 +86,8 @@ func DecideReconciliation(in ReconcileInput) ReconcileDecision {
 	autoEligible := decision.Placement == PlacementDashboard &&
 		in.EffectiveReview == nil &&
 		!in.HasCompletedLocalReview
-	// Keep a human-requested active job even when a local draft already exists.
-	keepActive := decision.Placement == PlacementDashboard && in.EffectiveReview == nil
+	// Keep same-SHA active jobs while the PR is open (manual request from any UI list).
+	keepActive := in.State == "open"
 	hasActiveCurrent := false
 	hasTerminalStop := false
 

@@ -280,7 +280,7 @@ func TestPRDetailShowsRequestReviewAfterLocalDraft(t *testing.T) {
 	}
 }
 
-func TestManualRetryRequiresDashboardEligibility(t *testing.T) {
+func TestManualRetryAllowsFilteredOpenPR(t *testing.T) {
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -297,15 +297,43 @@ func TestManualRetryRequiresDashboardEligibility(t *testing.T) {
 	server := New(&config.Config{}, d, nil, nil)
 	recorder := httptest.NewRecorder()
 	server.requestReview(recorder, httptest.NewRequest(http.MethodPost, "/", nil), prID)
-	if recorder.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409; body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
 	}
 	requests, err := d.ListReviewRequests()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(requests) != 0 {
-		t.Fatalf("filtered PR queued manually: %#v", requests)
+	if len(requests) != 1 || requests[0].PullRequestID != prID {
+		t.Fatalf("filtered open PR should queue manually: %#v", requests)
+	}
+}
+
+func TestPRDetailShowsRequestReviewForExternallyReviewed(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	ghID := int64(501)
+	prID, err := d.UpsertPR(db.PullRequest{
+		Repo: "org/repo", PRNumber: 17, Title: "external", Author: "alice",
+		CommitSHA: "sha17", State: db.PRStateOpen, IsAssigned: true,
+		EffectiveReviewID: &ghID, EffectiveReviewState: db.EffectiveReviewStateApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(&config.Config{}, d, nil, nil)
+	recorder := httptest.NewRecorder()
+	server.prDetail(recorder, httptest.NewRequest(http.MethodGet, "/pr/"+strconv.FormatInt(prID, 10), nil))
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", recorder.Code, body)
+	}
+	if !strings.Contains(body, "Request Review") {
+		t.Fatalf("PR detail missing Request Review button for externally reviewed open PR; body:\n%s", body)
 	}
 }
 

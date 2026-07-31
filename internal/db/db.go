@@ -434,9 +434,6 @@ func (d *DB) CanQueueReview(prID int64) (bool, error) {
 		FROM pull_requests pr
 		WHERE pr.id = ?
 			AND pr.state = 'open'
-			AND pr.is_assigned = 1
-			AND pr.filtered_reason IS NULL
-			AND pr.effective_review_id IS NULL
 			AND pr.commit_sha != ''
 			AND pr.deleted_at IS NULL
 			AND NOT EXISTS (
@@ -461,9 +458,6 @@ func (d *DB) CreateManualReviewRequest(prID int64) (int64, error) {
 		FROM pull_requests pr
 		WHERE pr.id = ?
 			AND pr.state = 'open'
-			AND pr.is_assigned = 1
-			AND pr.filtered_reason IS NULL
-			AND pr.effective_review_id IS NULL
 			AND pr.commit_sha != ''
 			AND pr.deleted_at IS NULL
 			AND NOT EXISTS (
@@ -805,18 +799,8 @@ func (d *DB) ReviewRequestEligible(requestID int64) (bool, error) {
 			AND rr.status IN ('pending', 'in_progress')
 			AND rr.commit_sha = pr.commit_sha
 			AND pr.state = 'open'
-			AND pr.is_assigned = 1
-			AND pr.filtered_reason IS NULL
-			AND pr.effective_review_id IS NULL
-			AND pr.deleted_at IS NULL
-			AND NOT EXISTS (
-				SELECT 1 FROM reviews r
-				WHERE r.pull_request_id = pr.id
-					AND r.commit_sha = rr.commit_sha
-					AND r.outcome NOT IN (?, ?)
-					AND r.deleted_at IS NULL
-			)`,
-		requestID, ReviewOutcomeToolFailed, ReviewOutcomeReviewedExternally,
+			AND pr.deleted_at IS NULL`,
+		requestID,
 	).Scan(&count)
 	if err != nil {
 		return false, err
@@ -860,19 +844,8 @@ func (d *DB) SaveReviewResult(
 		WHERE pr.id = ?
 			AND pr.commit_sha = ?
 			AND pr.state = 'open'
-			AND pr.is_assigned = 1
-			AND pr.filtered_reason IS NULL
-			AND pr.effective_review_id IS NULL
-			AND pr.deleted_at IS NULL
-			AND NOT EXISTS (
-				SELECT 1 FROM reviews r
-				WHERE r.pull_request_id = pr.id
-					AND r.commit_sha = ?
-					AND r.outcome NOT IN (?, ?)
-					AND r.deleted_at IS NULL
-			)`,
-		prID, commitSHA, commitSHA,
-		ReviewOutcomeToolFailed, ReviewOutcomeReviewedExternally,
+			AND pr.deleted_at IS NULL`,
+		prID, commitSHA,
 	).Scan(&eligible)
 	if err != nil {
 		return 0, false, err

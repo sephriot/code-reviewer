@@ -67,7 +67,7 @@ func TestDecideReconciliation(t *testing.T) {
 			},
 		},
 		{
-			name: "filter moves assigned PR and cancels current request",
+			name: "filter moves assigned PR and keeps current request",
 			in: ReconcileInput{
 				AssignedInSnapshot: true,
 				SnapshotComplete:   true,
@@ -82,9 +82,6 @@ func TestDecideReconciliation(t *testing.T) {
 				Placement:      PlacementFiltered,
 				IsAssigned:     true,
 				FilteredReason: "author",
-				Cancel: []RequestCancellation{
-					{ID: 8, Status: RequestCanceled},
-				},
 			},
 		},
 		{
@@ -203,7 +200,7 @@ func TestDecideReconciliation(t *testing.T) {
 			},
 		},
 		{
-			name: "effective github review cancels manual pending",
+			name: "effective github review keeps manual pending",
 			in: ReconcileInput{
 				AssignedInSnapshot:      true,
 				SnapshotComplete:        true,
@@ -218,8 +215,24 @@ func TestDecideReconciliation(t *testing.T) {
 			want: ReconcileDecision{
 				Placement:  PlacementDashboard,
 				IsAssigned: true,
+			},
+		},
+		{
+			name: "closed PR cancels active request",
+			in: ReconcileInput{
+				AssignedInSnapshot: true,
+				SnapshotComplete:   true,
+				State:              "closed",
+				HeadSHA:            "sha-14",
+				Requests: []RequestFact{
+					{ID: 15, CommitSHA: "sha-14", Status: RequestPending},
+				},
+			},
+			want: ReconcileDecision{
+				Placement:  PlacementHistory,
+				IsAssigned: true,
 				Cancel: []RequestCancellation{
-					{ID: 14, Status: RequestCanceled},
+					{ID: 15, Status: RequestCanceled},
 				},
 			},
 		},

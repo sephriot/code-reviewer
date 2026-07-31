@@ -380,3 +380,129 @@ func TestManualRetryAllowsCompletedLocalReview(t *testing.T) {
 		t.Fatalf("manual retry = %#v", retry)
 	}
 }
+
+func TestCanQueueReviewAllowsAnyOpenListedPR(t *testing.T) {
+	d := openTestDB(t)
+	reviewID := int64(77)
+
+	cases := []struct {
+		name string
+		pr   PullRequest
+	}{
+		{
+			name: "draft filtered",
+			pr: PullRequest{
+				Repo: "acme/repo", PRNumber: 101, Title: "draft", Author: "alice",
+				CommitSHA: "sha-draft", State: PRStateOpen, IsAssigned: true, FilteredReason: "draft", Draft: true,
+			},
+		},
+		{
+			name: "author filtered",
+			pr: PullRequest{
+				Repo: "acme/repo", PRNumber: 102, Title: "filtered", Author: "bob",
+				CommitSHA: "sha-filter", State: PRStateOpen, IsAssigned: true, FilteredReason: "author",
+			},
+		},
+		{
+			name: "reviewed externally",
+			pr: PullRequest{
+				Repo: "acme/repo", PRNumber: 103, Title: "external", Author: "alice",
+				CommitSHA: "sha-ext", State: PRStateOpen, IsAssigned: true,
+				EffectiveReviewID: &reviewID, EffectiveReviewState: EffectiveReviewStateApproved,
+			},
+		},
+		{
+			name: "unassigned open history",
+			pr: PullRequest{
+				Repo: "acme/repo", PRNumber: 104, Title: "history", Author: "alice",
+				CommitSHA: "sha-hist", State: PRStateOpen, IsAssigned: false,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prID := mustUpsert(t, d, tc.pr)
+			ok, err := d.CanQueueReview(prID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Fatal("CanQueueReview should allow open PR listed in UI")
+			}
+			rrID, err := d.CreateManualReviewRequest(prID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if claimed, err := d.ClaimReviewRequest(rrID); err != nil || !claimed {
+				t.Fatalf("claim = %v, err=%v", claimed, err)
+			}
+			eligible, err := d.ReviewRequestEligible(rrID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !eligible {
+				t.Fatal("ReviewRequestEligible should allow queued open PR")
+			}
+		})
+	}
+}
+
+func TestCanQueueReviewRejectsClosedPR(t *testing.T) {
+	d := openTestDB(t)
+	prID := mustUpsert(t, d, PullRequest{
+		Repo: "acme/repo", PRNumber: 105, Title: "closed", Author: "alice",
+		CommitSHA: "sha-closed", State: PRStateClosed, IsAssigned: true,
+	})
+	ok, err := d.CanQueueReview(prID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("CanQueueReview should reject closed PR")
+	}
+	if _, err := d.CreateManualReviewRequest(prID); err != ErrReviewNotEligible {
+		t.Fatalf("err = %v, want ErrReviewNotEligible", err)
+	}
+}
+
+func TestSaveReviewResultAllowsManualRerunAfterLocalAndExternal(t *testing.T) {
+	d := openTestDB(t)
+	reviewID := int64(88)
+	prID := mustUpsert(t, d, PullRequest{
+		Repo: "acme/repo", PRNumber: 106, Title: "rerun", Author: "alice",
+		CommitSHA: "sha-rerun", State: PRStateOpen, IsAssigned: true,
+		EffectiveReviewID: &reviewID, EffectiveReviewState: EffectiveReviewStateCommented,
+		FilteredReason: "draft", Draft: true,
+	})
+	firstID, err := d.CreateReviewRequest(prID, "sha-rerun")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.CreateReview(Review{
+		PullRequestID: prID, ReviewRequestID: firstID,
+		Outcome: ReviewOutcomeApproveWithComments, CommitSHA: "sha-rerun",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpdateReviewRequestStatus(firstID, ReviewRequestStatusDone); err != nil {
+		t.Fatal(err)
+	}
+
+	retryID, err := d.CreateManualReviewRequest(prID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := d.ClaimReviewRequest(retryID); err != nil || !claimed {
+		t.Fatalf("claim = %v, err=%v", claimed, err)
+	}
+	reviewIDOut, saved, err := d.SaveReviewResult(retryID, Review{
+		Outcome: ReviewOutcomeHumanReview, Summary: "second pass",
+	}, nil, ReviewRequestStatusDone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved || reviewIDOut == 0 {
+		t.Fatalf("saved=%v reviewID=%d", saved, reviewIDOut)
+	}
+}

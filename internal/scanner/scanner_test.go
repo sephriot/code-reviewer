@@ -235,7 +235,7 @@ func TestScanDroppedReviewSupersedesOldHeadAndQueuesNewHeadOnce(t *testing.T) {
 	}
 }
 
-func TestScanCompleteAbsenceMovesPRToHistoryAndCancelsAfterCommit(t *testing.T) {
+func TestScanCompleteAbsenceMovesPRToHistoryAndKeepsOpenRequest(t *testing.T) {
 	key := prKey("acme", "repo", 4)
 	fake := &fakeGH{
 		snapshot: gh.AssignmentSnapshot{Complete: true},
@@ -273,8 +273,15 @@ func TestScanCompleteAbsenceMovesPRToHistoryAndCancelsAfterCommit(t *testing.T) 
 	if !idsOfPRs(t, history, err)[prID] {
 		t.Fatal("unassigned PR must move to History")
 	}
-	if len(canceller.canceled) != 1 || canceller.canceled[0] != requestID {
-		t.Fatalf("system cancellations = %#v", canceller.canceled)
+	if len(canceller.canceled) != 0 {
+		t.Fatalf("open PR request must stay queued, cancellations = %#v", canceller.canceled)
+	}
+	request, err := database.GetReviewRequest(requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request == nil || request.Status != db.ReviewRequestStatusPending {
+		t.Fatalf("request = %#v, want pending", request)
 	}
 }
 
