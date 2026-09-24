@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -202,20 +203,45 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+	publishedReviews, err := s.d.ListPublishedReviews()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 
 	prMap := make(map[int64]db.PullRequest)
 	outcomeMap := make(map[int64]string)
+	publishedMap := make(map[int64]bool)
+	publishedOutcomeMap := make(map[int64]string)
 	for _, pr := range prs {
 		prMap[pr.ID] = pr
+	}
+	for _, published := range publishedReviews {
+		pr, ok := prMap[published.PullRequestID]
+		if !ok || published.CommitSHA != pr.CommitSHA {
+			continue
+		}
+		publishedMap[published.PullRequestID] = true
+		if _, found := publishedOutcomeMap[published.PullRequestID]; !found {
+			publishedOutcomeMap[published.PullRequestID] = published.Outcome
+		}
+	}
+	for _, pr := range prs {
 		label, err := s.currentReviewLabel(pr)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
+		if label == "" {
+			label = publishedOutcomeMap[pr.ID]
+		}
 		if label != "" {
 			outcomeMap[pr.ID] = label
 		}
 	}
+	sort.SliceStable(prs, func(i, j int) bool {
+		return dashboardOutcomeRank(outcomeMap[prs[i].ID]) < dashboardOutcomeRank(outcomeMap[prs[j].ID])
+	})
 	// Queue lookup must not depend on current PR placement.
 	for _, rr := range requests {
 		if _, ok := prMap[rr.PullRequestID]; ok {
@@ -231,10 +257,11 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, "dashboard.html", map[string]interface{}{
-		"PRs":        prs,
-		"Requests":   requests,
-		"PRMap":      prMap,
-		"OutcomeMap": outcomeMap,
+		"PRs":          prs,
+		"Requests":     requests,
+		"PRMap":        prMap,
+		"OutcomeMap":   outcomeMap,
+		"PublishedMap": publishedMap,
 	})
 }
 
@@ -320,6 +347,9 @@ func (s *Server) historyPage(w http.ResponseWriter, r *http.Request) {
 		}
 		pr, err := s.d.GetPR(rev.PullRequestID)
 		if err != nil || pr == nil {
+			continue
+		}
+		if pr.State == db.PRStateOpen && pr.IsAssigned {
 			continue
 		}
 		prs = append(prs, *pr)
@@ -710,6 +740,15 @@ func (s *Server) currentReviewLabel(pr db.PullRequest) (string, error) {
 		return "changes_requested_externally", nil
 	default:
 		return "", nil
+	}
+}
+
+func dashboardOutcomeRank(outcome string) int {
+	switch outcome {
+	case db.ReviewOutcomeApproveWithoutComments, db.ReviewOutcomeApproveWithComments, "approved_externally":
+		return 1
+	default:
+		return 0
 	}
 }
 

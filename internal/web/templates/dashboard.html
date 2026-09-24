@@ -20,6 +20,7 @@
       <span>{{.Author}}</span>
       <span class="pr-status {{.State}}">{{.State}}</span>
       {{$outcome := index $.OutcomeMap .ID}}{{if $outcome}}<span class="outcome-badge {{$outcome}}">{{formatOutcome $outcome}}</span>{{end}}
+      {{if index $.PublishedMap .ID}}<span class="badge published">published</span>{{end}}
     </div>
   </div>
   {{else}}
