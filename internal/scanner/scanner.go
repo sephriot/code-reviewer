@@ -265,6 +265,10 @@ func (s *Scanner) filterReason(pr gh.PRSummary) string {
 	if !matchesFilter(pr.Author, s.cfg.AuthorFilterRegex()) {
 		return "author"
 	}
+	exclusions := s.cfg.AuthorExclusionRegex()
+	if len(exclusions) > 0 && matchesFilter(pr.Author, exclusions) {
+		return "author"
+	}
 	return ""
 }
 

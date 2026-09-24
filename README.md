@@ -34,7 +34,9 @@ See `.env.example` for all options.
 | `--log` | `LOG_LEVEL` | `INFO` | Log level |
 | `--log-file` | `LOG_FILE` | `data/code-reviewer.log` | Application and review-tool log file; empty disables file logging |
 
-Key env vars: `GITHUB_TOKEN`, `GITHUB_USERNAME`, `REVIEW_TOOL` (CLAUDE/CODEX/AGENT), `REVIEW_AGENT_ARGV` (JSON Agent command override), `REVIEW_TIMEOUT` (seconds), `POLL_INTERVAL` (seconds), `PROMPT_FILE`, `REPOSITORIES`, `PR_AUTHORS`.
+Key env vars: `GITHUB_TOKEN`, `GITHUB_USERNAME`, `REVIEW_TOOL` (CLAUDE/CODEX/AGENT), `REVIEW_AGENT_ARGV` (JSON Agent command override), `REVIEW_TIMEOUT` (seconds), `POLL_INTERVAL` (seconds), `PROMPT_FILE`, `REPOSITORIES`, `PR_AUTHORS`, `PR_AUTHORS_EXCLUSIONS`.
+
+`PR_AUTHORS` is an optional comma-separated list of author usernames or regex patterns to allow. `PR_AUTHORS_EXCLUSIONS` is an optional comma-separated list of usernames or regex patterns to exclude; matching exclusions take precedence over the allow list. Leave it unset or empty to exclude no authors. For example, `PR_AUTHORS_EXCLUSIONS=dependabot\[bot\]` excludes Dependabot.
 
 Agent defaults to `agent --print --output-format json --trust`. To explicitly allow headless tool calls, configure `REVIEW_AGENT_ARGV` with the desired CLI permission flag, for example `--force` or `--yolo`. The default remains approval-protected.
 

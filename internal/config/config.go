@@ -33,8 +33,9 @@ type Config struct {
 	WebHost          string        `yaml:"web_host"`
 	WebPort          int           `yaml:"web_port"`
 
-	Repositories []string `yaml:"repositories"`
-	PRAuthors    []string `yaml:"pr_authors"`
+	Repositories        []string `yaml:"repositories"`
+	PRAuthors           []string `yaml:"pr_authors"`
+	PRAuthorsExclusions []string `yaml:"pr_authors_exclusions"`
 
 	SoundEnabled                    bool   `yaml:"sound_enabled"`
 	StartupSoundsEnabled            bool   `yaml:"startup_sounds_enabled"`
@@ -64,6 +65,10 @@ func (c *Config) RepoFilterRegex() []*regexp.Regexp {
 
 func (c *Config) AuthorFilterRegex() []*regexp.Regexp {
 	return compilePatterns(c.PRAuthors)
+}
+
+func (c *Config) AuthorExclusionRegex() []*regexp.Regexp {
+	return compilePatterns(c.PRAuthorsExclusions)
 }
 
 func compilePatterns(patterns []string) []*regexp.Regexp {
@@ -202,6 +207,9 @@ func (c *Config) loadEnv() error {
 	}
 	if v, ok := os.LookupEnv("PR_AUTHORS"); ok {
 		c.PRAuthors = splitAndTrim(v)
+	}
+	if v, ok := os.LookupEnv("PR_AUTHORS_EXCLUSIONS"); ok {
+		c.PRAuthorsExclusions = splitAndTrim(v)
 	}
 	if v, ok := os.LookupEnv("SOUND_ENABLED"); ok {
 		c.SoundEnabled = v == "true"
