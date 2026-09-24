@@ -293,17 +293,22 @@ func (s *Server) prDetail(w http.ResponseWriter, r *http.Request) {
 	type reviewWithComments struct {
 		Review   db.Review
 		Comments []db.ReviewComment
+		Editable bool
 	}
 
 	var reviewList []reviewWithComments
-	nonPublished := 0
+	editableFound := false
 	for _, r := range reviews {
-		if r.Published {
-			continue
+		comments, err := s.d.ListReviewComments(r.ID)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
 		}
-		comments, _ := s.d.ListReviewComments(r.ID)
-		reviewList = append(reviewList, reviewWithComments{Review: r, Comments: comments})
-		nonPublished++
+		editable := !r.Published && !editableFound
+		if editable {
+			editableFound = true
+		}
+		reviewList = append(reviewList, reviewWithComments{Review: r, Comments: comments, Editable: editable})
 	}
 
 	latestOutcome, err := s.currentReviewLabel(*pr)

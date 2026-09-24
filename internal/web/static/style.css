@@ -368,6 +368,14 @@ h2 {
   opacity: 0.72;
 }
 
+.review-card.is-published {
+  opacity: 0.6;
+}
+
+.review-card.is-published textarea:disabled {
+  cursor: default;
+}
+
 .review-header {
   display: flex;
   align-items: center;

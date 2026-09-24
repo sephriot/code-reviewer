@@ -379,6 +379,56 @@ func TestPublishReviewStoresGitHubReviewID(t *testing.T) {
 	}
 }
 
+func TestPRDetailKeepsPublishedReviewReadOnly(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	prID, err := d.UpsertPR(db.PullRequest{
+		Repo: "org/repo", PRNumber: 15, Title: "publish", Author: "alice",
+		CommitSHA: "sha15", State: db.PRStateOpen, IsAssigned: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID, err := d.CreateReviewRequest(prID, "sha15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewID, err := d.CreateReview(db.Review{
+		PullRequestID: prID, ReviewRequestID: requestID,
+		Outcome: db.ReviewOutcomeChangesRequested, CommitSHA: "sha15",
+		Summary: "Review summary", GeneralComment: "Review body",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commentID, err := d.AddReviewComment(db.ReviewComment{ReviewID: reviewID, File: "main.go", Line: 7, Message: "Inline feedback"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.PublishReview(reviewID, 555); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(&config.Config{}, d, nil, nil)
+	recorder := httptest.NewRecorder()
+	server.prDetail(recorder, httptest.NewRequest(http.MethodGet, "/pr/"+strconv.FormatInt(prID, 10), nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d; body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{"Review summary", "Review body", "Inline feedback", `class="review-card outcome-changes_requested is-published"`, `class="published-badge">Published</span>`, `data-review-id="` + strconv.FormatInt(reviewID, 10) + `" disabled`, `data-comment-id="` + strconv.FormatInt(commentID, 10) + `" disabled`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("published review page missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Publish full review") || strings.Contains(body, "Publish this inline comment") || strings.Contains(body, "Delete this inline comment") {
+		t.Error("published review still has publish controls")
+	}
+}
+
 func TestEffectiveReviewLabelsMapUncorrelatedGitHubStates(t *testing.T) {
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

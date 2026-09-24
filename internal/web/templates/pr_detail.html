@@ -21,11 +21,12 @@
   </div>
 
   <section class="reviews">
-    <h2>Draft reviews</h2>
+    <h2>Reviews</h2>
     {{range $i, $rv := .Reviews}}
-    <div class="review-card outcome-{{$rv.Review.Outcome}}{{if ne $i 0}} is-older{{end}}">
+    <div class="review-card outcome-{{$rv.Review.Outcome}}{{if $rv.Review.Published}} is-published{{else if not $rv.Editable}} is-older{{end}}">
       <div class="review-header">
         <span class="outcome-badge {{$rv.Review.Outcome}}">{{formatOutcome $rv.Review.Outcome}}</span>
+        {{if $rv.Review.Published}}<span class="published-badge">Published</span>{{end}}
         <small>{{$rv.Review.CreatedAt | formatTime}}</small>
       </div>
       {{if $rv.Review.Summary}}
@@ -34,10 +35,10 @@
         {{$rv.Review.Summary}}
       </div>
       {{end}}
-      {{if or $rv.Review.GeneralComment (eq $i 0)}}
+      {{if or $rv.Review.GeneralComment $rv.Editable}}
       <div class="review-comment">
         <strong>GitHub review comment</strong>
-        <textarea class="review-comment-input" data-review-id="{{$rv.Review.ID}}" {{if ne $i 0}}disabled{{else}}onchange="saveGeneralComment(this)"{{end}}>{{$rv.Review.GeneralComment}}</textarea>
+        <textarea class="review-comment-input" data-review-id="{{$rv.Review.ID}}" {{if not $rv.Editable}}disabled{{else}}onchange="saveGeneralComment(this)"{{end}}>{{$rv.Review.GeneralComment}}</textarea>
       </div>
       {{end}}
       {{if $rv.Comments}}
@@ -49,10 +50,10 @@
             <a href="https://github.com/{{$.PR.Repo}}/blob/{{$.PR.CommitSHA}}/{{.File}}#L{{.Line}}" target="_blank" rel="noopener" class="file-link"><code>{{.File}}:{{.Line}}</code></a>
             {{if .Published}}<span class="published-badge">Published</span>{{end}}
           </div>
-          <textarea class="comment-input" data-comment-id="{{.ID}}" {{if or .Published (ne $i 0)}}disabled{{else}}onchange="saveInlineComment(this)"{{end}}>{{.Message}}</textarea>
+          <textarea class="comment-input" data-comment-id="{{.ID}}" {{if or .Published (not $rv.Editable)}}disabled{{else}}onchange="saveInlineComment(this)"{{end}}>{{.Message}}</textarea>
           <div class="comment-toolbar">
             <button type="button" class="btn btn-sm btn-secondary" onclick="toggleSnippet(this, '{{$.PR.Repo}}', '{{$.PR.CommitSHA}}', '{{.File}}', {{.Line}})"><svg viewBox="0 0 16 16" width="12" height="12" style="vertical-align:middle;margin-right:3px" aria-hidden="true"><path fill="currentColor" d="M4.72 3.22a.75.75 0 011.06 1.06L2.06 8l3.72 3.72a.75.75 0 11-1.06 1.06L.47 8.53a.75.75 0 010-1.06l4.25-4.25zm6.56 0a.75.75 0 10-1.06 1.06L13.94 8l-3.72 3.72a.75.75 0 101.06 1.06l4.25-4.25a.75.75 0 000-1.06l-4.25-4.25z"/></svg> Snippet</button>
-            {{if and (not .Published) (eq $i 0)}}
+            {{if and (not .Published) $rv.Editable}}
             <button type="button" class="btn btn-sm btn-secondary" onclick="confirmAction('Publish this inline comment to GitHub?', function() { publishInlineComment({{.ID}}) })">Publish</button>
             <button type="button" class="btn btn-sm btn-danger" onclick="confirmAction('Delete this inline comment?', function() { deleteInlineComment({{.ID}}) })"><svg viewBox="0 0 16 16" width="12" height="12" style="vertical-align:middle;margin-right:3px" aria-hidden="true"><path fill="currentColor" d="M5.75 2h4.5a.75.75 0 01.75.75V3h-6v-.25A.75.75 0 015.75 2zM3.5 3.5h9a.5.5 0 010 1H12v7a2 2 0 01-2 2H6a2 2 0 01-2-2V4.5h-.5a.5.5 0 010-1zM11 4.5H5v7a1 1 0 001 1h4a1 1 0 001-1v-7z"/></svg> Delete</button>
             {{end}}
@@ -62,7 +63,7 @@
         {{end}}
       </div>
       {{end}}
-      {{if eq $i 0}}
+      {{if $rv.Editable}}
       <div class="review-actions">
         <button type="button" onclick="confirmAction('Publish full review to GitHub? This cannot be undone.', function() { publishReview({{$rv.Review.ID}}) })" class="btn btn-sm">Publish full review</button>
         <button type="button" onclick="confirmAction('Publish inline comments to GitHub?', function() { publishComments({{$rv.Review.ID}}) })" class="btn btn-sm btn-secondary">Publish comments only</button>
@@ -70,7 +71,7 @@
       {{end}}
     </div>
     {{else}}
-    <p class="empty">No draft reviews.</p>
+    <p class="empty">No reviews yet.</p>
     {{end}}
   </section>
 </div>
