@@ -67,6 +67,36 @@ func TestDashboardQueueShowsFilteredPR(t *testing.T) {
 	}
 }
 
+func TestPRLineChangesAppearOnDashboardAndDetail(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	additions, deletions := 24, 7
+	prID, err := d.UpsertPR(db.PullRequest{
+		Repo: "org/repo", PRNumber: 1, Title: "change", Author: "alice",
+		CommitSHA: "abc", State: db.PRStateOpen, IsAssigned: true,
+		Additions: &additions, Deletions: &deletions,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(&config.Config{}, d, nil, nil)
+	for _, path := range []string{"/", "/pr/" + strconv.FormatInt(prID, 10)} {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if path == "/" {
+			s.dashboard(rr, req)
+		} else {
+			s.prDetail(rr, req)
+		}
+		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `31 lines changed (<span class="added">+24</span>, <span class="deleted">-7</span>)`) {
+			t.Fatalf("%s: status %d body %s", path, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 func TestFilteredShowsReviewedExternally(t *testing.T) {
 	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

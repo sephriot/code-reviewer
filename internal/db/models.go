@@ -9,6 +9,8 @@ type PullRequest struct {
 	Title                string     `json:"title"`
 	Author               string     `json:"author"`
 	CommitSHA            string     `json:"commit_sha"`
+	Additions            *int       `json:"additions,omitempty"`
+	Deletions            *int       `json:"deletions,omitempty"`
 	Draft                bool       `json:"draft"`
 	State                string     `json:"state"`
 	NeedsReview          bool       `json:"needs_review"`
@@ -21,6 +23,13 @@ type PullRequest struct {
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
 	DeletedAt            *time.Time `json:"deleted_at,omitempty"`
+}
+
+func (pr PullRequest) LinesChanged() int {
+	if pr.Additions == nil || pr.Deletions == nil {
+		return 0
+	}
+	return *pr.Additions + *pr.Deletions
 }
 
 type ReviewRequest struct {

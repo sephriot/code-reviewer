@@ -20,6 +20,8 @@ type PRSummary struct {
 	Title     string
 	Author    string
 	CommitSHA string
+	Additions *int
+	Deletions *int
 	Draft     bool
 	State     string
 	UpdatedAt time.Time
@@ -220,6 +222,8 @@ func (c *Client) GetPRDetails(ctx context.Context, owner, repo string, number in
 		Title:     pr.GetTitle(),
 		Author:    pr.GetUser().GetLogin(),
 		CommitSHA: sha,
+		Additions: pr.Additions,
+		Deletions: pr.Deletions,
 		Draft:     pr.GetDraft(),
 		State:     NormalizePRState(pr.GetState(), pr.GetMerged()),
 		UpdatedAt: pr.GetUpdatedAt().Time,

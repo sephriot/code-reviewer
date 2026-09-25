@@ -17,6 +17,7 @@
     <div class="pr-meta">
       <span>{{.PR.Author}}</span>
       <span class="pr-status {{.PR.State}}">{{.PR.State}}</span>
+      {{if and .PR.Additions .PR.Deletions}}<span class="pr-changes">{{.PR.LinesChanged}} lines changed (<span class="added">+{{.PR.Additions}}</span>, <span class="deleted">-{{.PR.Deletions}}</span>)</span>{{end}}
       {{if and (eq .PR.State "open") (not .PR.IsAssigned)}}<span class="badge unassigned">review request removed</span>{{end}}
       {{if .Published}}<span class="badge published">published</span>{{end}}
       {{if .Outcome}}<span class="outcome-badge {{.Outcome}}">{{formatOutcome .Outcome}}</span>{{end}}

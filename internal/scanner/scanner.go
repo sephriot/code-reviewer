@@ -205,6 +205,8 @@ func (s *Scanner) reconcilePR(
 		Title:          details.Title,
 		Author:         details.Author,
 		CommitSHA:      details.CommitSHA,
+		Additions:      details.Additions,
+		Deletions:      details.Deletions,
 		Draft:          details.Draft,
 		State:          openOr(details.State),
 		FilteredReason: decision.FilteredReason,

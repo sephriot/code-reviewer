@@ -124,13 +124,14 @@ func TestScanIncompleteSnapshotPreservesAssignment(t *testing.T) {
 
 func TestScanRetainedEffectiveReviewKeepsNewHeadOnDashboardWithoutQueue(t *testing.T) {
 	key := prKey("acme", "repo", 2)
+	additions, deletions := 24, 7
 	fake := &fakeGH{
 		snapshot: gh.AssignmentSnapshot{
 			Complete: true,
 			PRs:      []gh.PRSummary{{Owner: "acme", Repo: "repo", Number: 2}},
 		},
 		details: map[string]*gh.PRSummary{
-			key: {Owner: "acme", Repo: "repo", Number: 2, Title: "approved", Author: "alice", CommitSHA: "sha-new", State: "open"},
+			key: {Owner: "acme", Repo: "repo", Number: 2, Title: "approved", Author: "alice", CommitSHA: "sha-new", State: "open", Additions: &additions, Deletions: &deletions},
 		},
 		reviews: map[string]*gh.EffectiveReview{
 			key: {ID: 22, State: gh.ReviewStateApproved},
@@ -154,6 +155,9 @@ func TestScanRetainedEffectiveReviewKeepsNewHeadOnDashboardWithoutQueue(t *testi
 	}
 	if pr.CommitSHA != "sha-new" || pr.EffectiveReviewID == nil || *pr.EffectiveReviewID != 22 {
 		t.Fatalf("reconciled PR = %#v", pr)
+	}
+	if pr.Additions == nil || *pr.Additions != 24 || pr.Deletions == nil || *pr.Deletions != 7 || pr.LinesChanged() != 31 {
+		t.Fatalf("line changes = %#v", pr)
 	}
 	dashboard, err := database.ListDashboardPRs()
 	if !idsOfPRs(t, dashboard, err)[prID] {

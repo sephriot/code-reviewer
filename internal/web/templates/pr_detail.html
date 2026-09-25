@@ -11,6 +11,7 @@
     <span>Author: {{.PR.Author}}</span>
     <span>Commit: <span class="sha" title="{{.PR.CommitSHA}}">{{shortSHA .PR.CommitSHA}}</span></span>
     <span class="pr-status {{.PR.State}}">{{.PR.State}}</span>
+    {{if and .PR.Additions .PR.Deletions}}<span class="pr-changes">{{.PR.LinesChanged}} lines changed (<span class="added">+{{.PR.Additions}}</span>, <span class="deleted">-{{.PR.Deletions}}</span>)</span>{{end}}
     {{if .LatestOutcome}}<span class="outcome-badge {{.LatestOutcome}}">{{formatOutcome .LatestOutcome}}</span>{{end}}
   </div>
 

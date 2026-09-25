@@ -19,6 +19,7 @@
     <div class="pr-meta">
       <span>{{.Author}}</span>
       <span class="pr-status {{.State}}">{{.State}}</span>
+      {{if and .Additions .Deletions}}<span class="pr-changes">{{.LinesChanged}} lines changed (<span class="added">+{{.Additions}}</span>, <span class="deleted">-{{.Deletions}}</span>)</span>{{end}}
       {{$outcome := index $.OutcomeMap .ID}}{{if $outcome}}<span class="outcome-badge {{$outcome}}">{{formatOutcome $outcome}}</span>{{end}}
       {{if index $.PublishedMap .ID}}<span class="badge published">published</span>{{end}}
     </div>

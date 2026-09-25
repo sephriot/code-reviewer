@@ -15,7 +15,7 @@ var ErrNotFound = errors.New("not found")
 var ErrActiveReviewRequestExists = errors.New("active review request already exists")
 var ErrReviewNotEligible = errors.New("pull request is not eligible for review")
 
-const prSelectColumns = `id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason, gh_updated_at, is_assigned, effective_review_id, effective_review_state`
+const prSelectColumns = `id, repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, created_at, updated_at, deleted_at, filtered_reason, gh_updated_at, is_assigned, effective_review_id, effective_review_state, additions, deletions`
 
 type scanTime time.Time
 
@@ -104,6 +104,8 @@ func migrate(db *sql.DB) error {
 		is_assigned INTEGER NOT NULL DEFAULT 1,
 		effective_review_id INTEGER,
 		effective_review_state TEXT,
+		additions INTEGER,
+		deletions INTEGER,
 		created_at TEXT NOT NULL DEFAULT (datetime('now')),
 		updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 		deleted_at TEXT
@@ -159,6 +161,8 @@ func migrate(db *sql.DB) error {
 	db.Exec("ALTER TABLE pull_requests ADD COLUMN is_assigned INTEGER NOT NULL DEFAULT 1")
 	db.Exec("ALTER TABLE pull_requests ADD COLUMN effective_review_id INTEGER")
 	db.Exec("ALTER TABLE pull_requests ADD COLUMN effective_review_state TEXT")
+	db.Exec("ALTER TABLE pull_requests ADD COLUMN additions INTEGER")
+	db.Exec("ALTER TABLE pull_requests ADD COLUMN deletions INTEGER")
 	db.Exec("ALTER TABLE reviews ADD COLUMN github_review_id INTEGER")
 	db.Exec("ALTER TABLE review_requests ADD COLUMN commit_sha TEXT NOT NULL DEFAULT ''")
 	if _, err := db.Exec(`UPDATE review_requests SET status = 'canceled', updated_at = datetime('now') WHERE status IN ('pending', 'in_progress') AND commit_sha = ''`); err != nil {
@@ -204,7 +208,7 @@ func scanPR(row *sql.Row) (PullRequest, error) {
 		&pr.ID, &pr.Repo, &pr.PRNumber, &pr.Title, &pr.Author,
 		&pr.CommitSHA, &draft, &pr.State, &needsReview, &outdated,
 		&createdAt, &updatedAt, &deletedAt, &filteredReason, &ghUpdatedAt,
-		&isAssigned, &effectiveReviewID, &effectiveReviewState,
+		&isAssigned, &effectiveReviewID, &effectiveReviewState, &pr.Additions, &pr.Deletions,
 	)
 	pr.Draft = draft == 1
 	pr.NeedsReview = needsReview == 1
@@ -249,7 +253,7 @@ func scanPRs(rows *sql.Rows) ([]PullRequest, error) {
 			&pr.ID, &pr.Repo, &pr.PRNumber, &pr.Title, &pr.Author,
 			&pr.CommitSHA, &draft, &pr.State, &needsReview, &outdated,
 			&createdAt, &updatedAt, &deletedAt, &filteredReason, &ghUpdatedAt,
-			&isAssigned, &effectiveReviewID, &effectiveReviewState,
+			&isAssigned, &effectiveReviewID, &effectiveReviewState, &pr.Additions, &pr.Deletions,
 		)
 		if err != nil {
 			return nil, err
@@ -284,8 +288,8 @@ func (d *DB) UpsertPR(pr PullRequest) (int64, error) {
 	var existingID int64
 	err := d.QueryRow("SELECT id FROM pull_requests WHERE repo = ? AND pr_number = ? AND deleted_at IS NULL", pr.Repo, pr.PRNumber).Scan(&existingID)
 	if err == sql.ErrNoRows {
-		res, err := d.Exec(`INSERT INTO pull_requests (repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, filtered_reason, gh_updated_at, is_assigned, effective_review_id, effective_review_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			pr.Repo, pr.PRNumber, pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), nullableTime(pr.GhUpdatedAt), boolToInt(pr.IsAssigned), pr.EffectiveReviewID, nullableStr(pr.EffectiveReviewState))
+		res, err := d.Exec(`INSERT INTO pull_requests (repo, pr_number, title, author, commit_sha, draft, state, needs_review, is_outdated, filtered_reason, gh_updated_at, is_assigned, effective_review_id, effective_review_state, additions, deletions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			pr.Repo, pr.PRNumber, pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), nullableTime(pr.GhUpdatedAt), boolToInt(pr.IsAssigned), pr.EffectiveReviewID, nullableStr(pr.EffectiveReviewState), pr.Additions, pr.Deletions)
 		if err != nil {
 			return 0, err
 		}
@@ -295,11 +299,11 @@ func (d *DB) UpsertPR(pr PullRequest) (int64, error) {
 		return 0, err
 	}
 	if !pr.GhUpdatedAt.IsZero() {
-		_, err = d.Exec(`UPDATE pull_requests SET title=?, author=?, commit_sha=?, draft=?, state=?, needs_review=?, is_outdated=?, filtered_reason=?, gh_updated_at=?, is_assigned=?, effective_review_id=?, effective_review_state=?, updated_at=datetime('now') WHERE id=?`,
-			pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), nullableTime(pr.GhUpdatedAt), boolToInt(pr.IsAssigned), pr.EffectiveReviewID, nullableStr(pr.EffectiveReviewState), existingID)
+		_, err = d.Exec(`UPDATE pull_requests SET title=?, author=?, commit_sha=?, draft=?, state=?, needs_review=?, is_outdated=?, filtered_reason=?, gh_updated_at=?, is_assigned=?, effective_review_id=?, effective_review_state=?, additions=?, deletions=?, updated_at=datetime('now') WHERE id=?`,
+			pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), nullableTime(pr.GhUpdatedAt), boolToInt(pr.IsAssigned), pr.EffectiveReviewID, nullableStr(pr.EffectiveReviewState), pr.Additions, pr.Deletions, existingID)
 	} else {
-		_, err = d.Exec(`UPDATE pull_requests SET title=?, author=?, commit_sha=?, draft=?, state=?, needs_review=?, is_outdated=?, filtered_reason=?, is_assigned=?, effective_review_id=?, effective_review_state=?, updated_at=datetime('now') WHERE id=?`,
-			pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), boolToInt(pr.IsAssigned), pr.EffectiveReviewID, nullableStr(pr.EffectiveReviewState), existingID)
+		_, err = d.Exec(`UPDATE pull_requests SET title=?, author=?, commit_sha=?, draft=?, state=?, needs_review=?, is_outdated=?, filtered_reason=?, is_assigned=?, effective_review_id=?, effective_review_state=?, additions=?, deletions=?, updated_at=datetime('now') WHERE id=?`,
+			pr.Title, pr.Author, pr.CommitSHA, boolToInt(pr.Draft), pr.State, boolToInt(pr.NeedsReview), boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason), boolToInt(pr.IsAssigned), pr.EffectiveReviewID, nullableStr(pr.EffectiveReviewState), pr.Additions, pr.Deletions, existingID)
 	}
 	return existingID, err
 }
@@ -494,8 +498,8 @@ func (d *DB) ApplyReconciliation(change ReconciliationChange) (ReconciliationRes
 		INSERT INTO pull_requests (
 			repo, pr_number, title, author, commit_sha, draft, state,
 			needs_review, is_outdated, filtered_reason, gh_updated_at,
-			is_assigned, effective_review_id, effective_review_state
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
+			is_assigned, effective_review_id, effective_review_state, additions, deletions
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(repo, pr_number) DO UPDATE SET
 			title = excluded.title,
 			author = excluded.author,
@@ -509,6 +513,8 @@ func (d *DB) ApplyReconciliation(change ReconciliationChange) (ReconciliationRes
 			is_assigned = excluded.is_assigned,
 			effective_review_id = excluded.effective_review_id,
 			effective_review_state = excluded.effective_review_state,
+			additions = excluded.additions,
+			deletions = excluded.deletions,
 			updated_at = datetime('now')
 		WHERE
 			pull_requests.title IS NOT excluded.title OR
@@ -522,11 +528,13 @@ func (d *DB) ApplyReconciliation(change ReconciliationChange) (ReconciliationRes
 			pull_requests.gh_updated_at IS NOT excluded.gh_updated_at OR
 			pull_requests.is_assigned IS NOT excluded.is_assigned OR
 			pull_requests.effective_review_id IS NOT excluded.effective_review_id OR
-			pull_requests.effective_review_state IS NOT excluded.effective_review_state`,
+			pull_requests.effective_review_state IS NOT excluded.effective_review_state OR
+			pull_requests.additions IS NOT excluded.additions OR
+			pull_requests.deletions IS NOT excluded.deletions`,
 		pr.Repo, pr.PRNumber, pr.Title, pr.Author, pr.CommitSHA,
 		boolToInt(pr.Draft), pr.State, nullableStr(pr.FilteredReason),
 		nullableTime(pr.GhUpdatedAt), boolToInt(pr.IsAssigned),
-		pr.EffectiveReviewID, nullableStr(pr.EffectiveReviewState),
+		pr.EffectiveReviewID, nullableStr(pr.EffectiveReviewState), pr.Additions, pr.Deletions,
 	)
 	if err != nil {
 		return ReconciliationResult{}, err

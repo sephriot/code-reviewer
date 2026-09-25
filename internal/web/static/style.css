@@ -180,6 +180,9 @@ h2 {
   color: var(--text-muted);
 }
 
+.pr-changes .added { color: var(--success); }
+.pr-changes .deleted { color: var(--danger); }
+
 .badge,
 .status-badge,
 .outcome-badge,
