@@ -103,7 +103,7 @@ func (s *Server) broadcastLoop() {
 	}
 }
 
-func (s *Server) Serve(ctx context.Context) error {
+func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", s.dashboard)
@@ -123,9 +123,12 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	staticFS, _ := fs.Sub(content, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	return mux
+}
 
+func (s *Server) Serve(ctx context.Context) error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.WebHost, s.cfg.WebPort)
-	srv := &http.Server{Addr: addr, Handler: mux}
+	srv := &http.Server{Addr: addr, Handler: s.handler()}
 
 	go func() {
 		<-ctx.Done()
@@ -188,7 +191,7 @@ func (s *Server) apiMuteNotifications(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+		s.githubPRDetail(w, r)
 		return
 	}
 
@@ -283,7 +286,39 @@ func (s *Server) prDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	s.renderPRDetail(w, pr)
+}
 
+func (s *Server) githubPRDetail(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), "/"), "/")
+	if len(parts) != 4 || parts[0] == "" || parts[1] == "" || parts[2] != "pull" {
+		http.NotFound(w, r)
+		return
+	}
+	for _, digit := range parts[3] {
+		if digit < '0' || digit > '9' {
+			http.NotFound(w, r)
+			return
+		}
+	}
+	number, err := strconv.Atoi(parts[3])
+	if err != nil || number <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	pr, err := s.d.GetPRByRepoAndNumber(parts[0]+"/"+parts[1], number)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if pr == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.renderPRDetail(w, pr)
+}
+
+func (s *Server) renderPRDetail(w http.ResponseWriter, pr *db.PullRequest) {
 	reviews, err := s.d.ListReviewsForPR(pr.ID)
 	if err != nil {
 		http.Error(w, err.Error(), 500)

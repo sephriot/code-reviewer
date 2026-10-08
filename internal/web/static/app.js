@@ -153,7 +153,7 @@ function handleEvent(event) {
 
   if (Notification && Notification.permission === 'granted') {
     const n = new Notification(title, { body: msg });
-    const prURL = event.PR ? '/pr/' + event.PR.id : null;
+    const prURL = event.PR ? '/' + event.PR.repo.split('/').map(encodeURIComponent).join('/') + '/pull/' + event.PR.pr_number + '/' : null;
     if (prURL) {
       n.onclick = function() { window.open(prURL, '_blank'); this.close(); };
     }

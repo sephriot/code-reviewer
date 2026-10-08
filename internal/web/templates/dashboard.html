@@ -14,7 +14,7 @@
       </a>
     </div>
     <div class="pr-title">
-      <a href="/pr/{{.ID}}">{{.Title}}</a>
+      <a href="/{{.Repo}}/pull/{{.PRNumber}}/">{{.Title}}</a>
     </div>
     <div class="pr-meta">
       <span>{{.Author}}</span>
@@ -35,7 +35,7 @@
   {{range .Requests}}
     {{$pr := index $.PRMap .PullRequestID}}
     <li class="rr-{{.Status}}" data-rr-id="{{.ID}}">
-      <a href="/pr/{{.PullRequestID}}">{{$pr.Repo}}#{{$pr.PRNumber}}</a>
+      <a href="/{{$pr.Repo}}/pull/{{$pr.PRNumber}}/">{{$pr.Repo}}#{{$pr.PRNumber}}</a>
       <span class="status-badge {{.Status}}">{{formatStatus .Status}}</span>
       <small>{{.CreatedAt | formatTime}}</small>
       <button type="button" class="btn btn-sm btn-danger queue-remove" onclick="removeQueueItem({{.ID}}, this)" title="{{if eq .Status "in_progress"}}Stop review{{else}}Remove from queue{{end}}">{{if eq .Status "in_progress"}}Stop{{else}}Remove{{end}}</button>

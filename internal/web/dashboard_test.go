@@ -59,6 +59,9 @@ func TestDashboardQueueShowsFilteredPR(t *testing.T) {
 	if !strings.Contains(body, "org/filtered#42") {
 		t.Fatalf("queue missing filtered PR label; body:\n%s", body)
 	}
+	if !strings.Contains(body, `href="/org/filtered/pull/42/"`) {
+		t.Fatal("queue missing GitHub-style PR link")
+	}
 	if strings.Contains(body, ">#0</a>") {
 		t.Fatalf("queue rendered #0; body:\n%s", body)
 	}
@@ -88,6 +91,9 @@ func TestPRLineChangesAppearOnDashboardAndDetail(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		if path == "/" {
 			s.dashboard(rr, req)
+			if !strings.Contains(rr.Body.String(), `href="/org/repo/pull/1/"`) {
+				t.Fatal("dashboard missing GitHub-style PR link")
+			}
 		} else {
 			s.prDetail(rr, req)
 		}
@@ -216,6 +222,9 @@ func TestFilteredAndHistoryIncludeGitHubLink(t *testing.T) {
 	if !strings.Contains(fbody, `class="gh-link"`) || !strings.Contains(fbody, "https://github.com/org/filt/pull/11") {
 		t.Fatalf("filtered missing GitHub link; body:\n%s", fbody)
 	}
+	if !strings.Contains(fbody, `href="/org/filt/pull/11/"`) {
+		t.Fatal("filtered missing GitHub-style PR link")
+	}
 
 	hrr := httptest.NewRecorder()
 	s.historyPage(hrr, httptest.NewRequest(http.MethodGet, "/history", nil))
@@ -225,6 +234,9 @@ func TestFilteredAndHistoryIncludeGitHubLink(t *testing.T) {
 	}
 	if !strings.Contains(hbody, `class="gh-link"`) || !strings.Contains(hbody, "https://github.com/org/hist/pull/12") {
 		t.Fatalf("history missing GitHub link; body:\n%s", hbody)
+	}
+	if !strings.Contains(hbody, `href="/org/hist/pull/12/"`) {
+		t.Fatal("history missing GitHub-style PR link")
 	}
 }
 
