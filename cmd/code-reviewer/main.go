@@ -122,6 +122,8 @@ func run(ctx context.Context) error {
 	}()
 
 	if cfg.WebEnabled {
+		stopShortcut := startBrowserShortcut(ctx, cfg.WebHost, cfg.WebPort)
+		defer stopShortcut()
 		log.Printf("web: listening on %s:%d", cfg.WebHost, cfg.WebPort)
 		go func() {
 			if err := webServer.Serve(ctx); err != nil {

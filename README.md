@@ -20,6 +20,8 @@ go build -o code-reviewer ./cmd/code-reviewer/
 
 Open http://127.0.0.1:8000
 
+When running in a terminal on macOS or Linux, press **Space** to open the Web UI in your default browser. Press **Ctrl+C** to stop.
+
 ## Configuration
 
 Precedence: env vars > YAML config > CLI flags.
