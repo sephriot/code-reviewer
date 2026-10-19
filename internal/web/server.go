@@ -855,6 +855,12 @@ func (s *Server) apiAnalytics(w http.ResponseWriter, r *http.Request) {
 		"group":  groupBy,
 		"since":  since,
 	}
+	timing, err := s.d.ReviewTimingAnalytics(s.cfg.GithubUsername, since, time.Now())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	result["review_timing"] = timing
 
 	if groupBy == "outcome" || groupBy == "" {
 		outcomes := []string{

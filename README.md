@@ -100,6 +100,16 @@ internal/
 - `POST /api/review/{id}/publish-comments` — Publish inline comments only
 - `GET /api/analytics?period=30d&group=outcome` — Analytics data
 
+## Review timing analytics
+
+Analytics includes PR-count histograms and daily average/median hours for reviews given and received by `GITHUB_USERNAME`. Timing starts at PR creation and ends at the first submitted review: yours on someone else's PR, or someone else's on yours. Elapsed time includes drafts and weekends. Received reviews exclude bots and self-reviews; repeat reviews and pending reviews do not add samples. Reviews published by this tool under your username count as your reviews.
+
+On startup, a background sync backfills PRs created in the past 365 days, including closed and merged PRs. It covers repositories accessible to `GITHUB_TOKEN`, independently of queue filters, and stores timing separately from the review queue. Completed 30-day ranges are checkpointed so interrupted imports resume after restart. GitHub search ranges are split when they exceed its result limit.
+
+After backfill, the tool refreshes daily while running, looking for PRs updated since the last successful refresh with a one-day overlap. Failed syncs retry hourly. The Analytics page refreshes every minute and shows sync progress, the last successful refresh, and errors; partial or stale results remain visible. Existing timing records are retained, but PRs created more than 365 days ago are not fetched again.
+
+The period filter selects the date of the first review in UTC. PRs without a received review are counted separately by creation date, including closed PRs. The histograms use `<1h`, `1–4h`, `4–12h`, `12–24h`, `1–2d`, `2–7d`, and `≥7d` buckets; exact boundaries enter the next bucket. Daily charts leave gaps when there are no samples. Timing data is also returned under `review_timing` in the analytics API. Rolling back to an older binary leaves the added tables unused.
+
 ## Outcomes
 
 | DB value | Meaning |

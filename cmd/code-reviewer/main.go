@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sephriot/code-reviewer/internal/analytics"
 	"github.com/sephriot/code-reviewer/internal/config"
 	"github.com/sephriot/code-reviewer/internal/db"
 	gh "github.com/sephriot/code-reviewer/internal/github"
@@ -58,6 +59,7 @@ func run(ctx context.Context) error {
 	defer database.Close()
 
 	ghClient := gh.New(cfg.GithubToken, cfg.GithubUsername)
+	go analytics.New(database, ghClient, cfg.GithubUsername).Run(ctx)
 	runner := review.NewRunner(cfg)
 	notifier := notify.New(cfg)
 

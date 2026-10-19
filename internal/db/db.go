@@ -90,6 +90,23 @@ func Open(path string) (*DB, error) {
 
 func migrate(db *sql.DB) error {
 	schema := `
+	CREATE TABLE IF NOT EXISTS review_timing (
+		username TEXT NOT NULL,
+		repo TEXT NOT NULL,
+		pr_number INTEGER NOT NULL,
+		direction TEXT NOT NULL CHECK(direction IN ('given', 'received')),
+		opened_at TEXT NOT NULL,
+		reviewed_at TEXT,
+		gh_updated_at TEXT NOT NULL,
+		PRIMARY KEY(username, repo, pr_number, direction)
+	);
+	CREATE TABLE IF NOT EXISTS review_timing_sync (
+		username TEXT PRIMARY KEY,
+		backfill_since TEXT NOT NULL,
+		backfill_before TEXT NOT NULL,
+		last_synced_at TEXT,
+		last_error TEXT NOT NULL DEFAULT ''
+	);
 	CREATE TABLE IF NOT EXISTS pull_requests (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		repo TEXT NOT NULL,

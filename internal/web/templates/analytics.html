@@ -15,6 +15,29 @@
 
 <div id="analytics-summary" class="analytics-summary"></div>
 
+<section class="review-timing" aria-labelledby="timing-title">
+  <h2 id="timing-title">Time to first review</h2>
+  <p>Elapsed time from PR creation to the first submitted review, including drafts and weekends.
+    Given: your first review on someone else's PR. Received: the first review from someone else on your PR, excluding bots.
+    One sample per PR; repeat reviews and unsubmitted reviews are excluded.</p>
+  <p id="timing-sync" role="status">Loading sync status…</p>
+  <p>Initial history covers PRs created in the past 365 days across accessible repositories, independent of queue filters.
+    The period selects the first-review date (UTC). PRs without a review are counted separately by creation date.</p>
+  <div id="timing-summary" class="analytics-summary"></div>
+  <div class="chart-container">
+    <h3>Review response time distribution</h3>
+    <div class="chart-wrap"><canvas id="timing-histogram" role="img" aria-label="PR counts by response time, given and received"></canvas></div>
+    <div id="timing-buckets"></div>
+  </div>
+  <div class="chart-container">
+    <h3>Daily review response time</h3>
+    <p>Hours by first-review date in UTC. Gaps indicate days with no completed samples.</p>
+    <div class="chart-wrap"><canvas id="timing-daily" role="img" aria-label="Daily average and median review response times in hours"></canvas></div>
+    <details><summary>Daily values</summary><div id="timing-days"></div></details>
+  </div>
+</section>
+<p id="analytics-error" role="alert" hidden></p>
+
 <div class="chart-container">
   <div class="chart-title">Reviews by outcome over time</div>
   <div class="chart-wrap">
@@ -74,11 +97,20 @@ const OUTCOME_LABELS = {
 };
 
 let trendsChart = null;
+let timingHistogram = null;
+let timingDaily = null;
+let analyticsRequest = 0;
 
 async function loadAnalytics() {
+  const request = ++analyticsRequest;
+  const error = document.getElementById('analytics-error');
+  error.hidden = true;
+  try {
   const period = document.getElementById('period').value;
   const res = await fetch('/api/analytics?period=' + period + '&group=outcome');
+  if (!res.ok) throw new Error('Analytics request failed (' + res.status + ').');
   const data = await res.json();
+  if (request !== analyticsRequest) return;
 
   const summary = document.getElementById('analytics-summary');
   summary.innerHTML =
@@ -99,6 +131,97 @@ async function loadAnalytics() {
 
   renderTrendsChart(data.trends || [], data.total || 0);
   renderAuthorsTable(data.authors || []);
+  renderTiming(data.review_timing);
+  } catch (err) {
+    if (request !== analyticsRequest) return;
+    error.textContent = err.message;
+    error.hidden = false;
+  }
+}
+
+function hours(value) {
+  return value == null ? '—' : value.toLocaleString(undefined, {maximumFractionDigits: 2}) + ' h';
+}
+
+function renderTiming(timing) {
+  if (!timing) return;
+  const sync = timing.sync;
+  const status = document.getElementById('timing-sync');
+  const started = sync.backfill_since && !sync.backfill_since.startsWith('0001-');
+  const incomplete = started && sync.backfill_before > sync.backfill_since;
+  status.textContent = !started ? 'Waiting for the initial GitHub sync.' :
+    incomplete ? 'Backfill in progress: remaining history from ' + sync.backfill_since.slice(0, 10) + ' to ' + sync.backfill_before.slice(0, 10) + '. Data is partial.' :
+    sync.last_synced_at ? 'Last successful sync: ' + new Date(sync.last_synced_at).toLocaleString() + '. Refreshes daily.' :
+    'Historical import complete; finishing the initial refresh.';
+  if (sync.last_error) status.textContent += ' Sync failed: ' + sync.last_error + '. Will retry within an hour; displayed data may be incomplete or stale.';
+
+  const summary = document.getElementById('timing-summary');
+  summary.replaceChildren();
+  for (const [key, label] of [['given', 'Given'], ['received', 'Received']]) {
+    const stats = timing[key];
+    const card = document.createElement('div');
+    card.className = 'summary-card';
+    const title = document.createElement('strong');
+    title.textContent = label + ': ' + stats.count + ' PRs';
+    const detail = document.createElement('p');
+    detail.textContent = 'Median ' + hours(stats.median_hours) + ' · Average ' + hours(stats.average_hours);
+    card.append(title, detail);
+    if (key === 'received') {
+      const pending = document.createElement('p');
+      pending.textContent = stats.awaiting + ' PRs created in this period without a submitted human review (open or closed).';
+      card.append(pending);
+    }
+    summary.append(card);
+  }
+  const labels = timing.given.histogram.map(b => b.label);
+  const colors = {given:'#4361ee', received:'#2ec4b6'};
+  if (timingHistogram) timingHistogram.destroy();
+  const options = {
+    responsive:true, maintainAspectRatio:false,
+    scales:{x:{ticks:{color:'#8b949e'}}, y:{beginAtZero:true, title:{display:true, text:'PRs', color:'#8b949e'}, ticks:{precision:0, color:'#8b949e'}}},
+    plugins:{legend:{position:'bottom', labels:{color:'#e6edf3'}}}
+  };
+  timingHistogram = new Chart(document.getElementById('timing-histogram'), {
+    type:'bar', data:{labels, datasets:['given', 'received'].map(key => ({
+      label:key === 'given' ? 'Given' : 'Received', data:timing[key].histogram.map(b => b.count), backgroundColor:colors[key]
+    }))}, options
+  });
+  const bucketRows = labels.map((label, i) => [label, timing.given.histogram[i].count, timing.received.histogram[i].count]);
+  timingTable('timing-buckets', ['Response time', 'Given PRs', 'Received PRs'], bucketRows);
+
+  const given = timing.given.daily || [];
+  const received = timing.received.daily || [];
+  if (timingDaily) timingDaily.destroy();
+  timingDaily = new Chart(document.getElementById('timing-daily'), {
+    type:'line', data:{labels:given.map(d => d.date), datasets:['given', 'received'].flatMap(key => ['median', 'average'].map(stat => ({
+      label:(key === 'given' ? 'Given' : 'Received') + ' ' + stat,
+      data:(timing[key].daily || []).map(d => d[stat + '_hours']),
+      borderColor:colors[key], backgroundColor:colors[key], borderDash:stat === 'average' ? [5, 5] : [],
+      pointRadius:2, spanGaps:false
+    })))}, options:{...options, scales:{...options.scales, y:{beginAtZero:true, title:{display:true, text:'Hours', color:'#8b949e'}, ticks:{color:'#8b949e'}}}}
+  });
+  timingTable('timing-days', ['UTC date', 'Given PRs', 'Given median', 'Given average', 'Received PRs', 'Received median', 'Received average'], given.map((day, i) => {
+    const other = received[i];
+    return [day.date, day.count, hours(day.median_hours), hours(day.average_hours), other.count, hours(other.median_hours), hours(other.average_hours)];
+  }));
+}
+
+function timingTable(id, headings, rows) {
+  const table = document.createElement('table');
+  table.className = 'analytics-table';
+  const header = table.createTHead().insertRow();
+  for (const heading of headings) {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = heading;
+    header.append(th);
+  }
+  const body = table.createTBody();
+  for (const values of rows) {
+    const row = body.insertRow();
+    for (const value of values) row.insertCell().textContent = value;
+  }
+  document.getElementById(id).replaceChildren(table);
 }
 
 function rateBadgeClass(rate, kind) {
@@ -193,5 +316,6 @@ function renderTrendsChart(trends, total) {
 }
 
 loadAnalytics();
+setInterval(loadAnalytics, 60000);
 </script>
 {{end}}

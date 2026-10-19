@@ -520,6 +520,13 @@ h2 {
 
 .analytics-controls { margin-bottom: 1rem; }
 
+.review-timing > h2 { font-size: 1.2rem; }
+.review-timing > p { color: var(--text-muted); margin-bottom: 0.75rem; }
+.review-timing .analytics-summary { flex-wrap: wrap; }
+.review-timing .summary-card { min-width: min(100%, 18rem); }
+.review-timing .chart-container, #timing-days { overflow-x: auto; }
+.review-timing details { margin-top: 0.75rem; }
+
 .analytics-controls select {
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--border);
