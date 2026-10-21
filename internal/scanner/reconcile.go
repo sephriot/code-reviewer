@@ -17,8 +17,9 @@ const (
 )
 
 type EffectiveReview struct {
-	ID    int64
-	State EffectiveReviewState
+	CommitSHA string
+	ID        int64
+	State     EffectiveReviewState
 }
 
 const (
@@ -84,7 +85,7 @@ func DecideReconciliation(in ReconcileInput) ReconcileDecision {
 	}
 
 	autoEligible := decision.Placement == PlacementDashboard &&
-		in.EffectiveReview == nil &&
+		(in.EffectiveReview == nil || in.EffectiveReview.CommitSHA != in.HeadSHA) &&
 		!in.HasCompletedLocalReview
 	// Keep same-SHA active jobs while the PR is open (manual request from any UI list).
 	keepActive := in.State == "open"

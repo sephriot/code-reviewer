@@ -193,8 +193,9 @@ func (s *Scanner) reconcilePR(
 	}
 	if effective != nil {
 		input.EffectiveReview = &EffectiveReview{
-			ID:    effective.ID,
-			State: EffectiveReviewState(effective.State),
+			CommitSHA: effective.CommitSHA,
+			ID:        effective.ID,
+			State:     EffectiveReviewState(effective.State),
 		}
 	}
 	decision := DecideReconciliation(input)
@@ -215,6 +216,7 @@ func (s *Scanner) reconcilePR(
 	}
 	if effective != nil {
 		id := effective.ID
+		pr.IsOutdated = effective.CommitSHA == "" || effective.CommitSHA != details.CommitSHA
 		pr.EffectiveReviewID = &id
 		pr.EffectiveReviewState = string(effective.State)
 	}

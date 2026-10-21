@@ -764,6 +764,9 @@ func (s *Server) currentReviewLabel(pr db.PullRequest) (string, error) {
 	if pr.EffectiveReviewID == nil {
 		return "", nil
 	}
+	if pr.IsOutdated {
+		return "review_outdated", nil
+	}
 	local, err := s.d.GetReviewByGitHubID(*pr.EffectiveReviewID)
 	if err != nil {
 		return "", err

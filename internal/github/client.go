@@ -54,8 +54,9 @@ const (
 )
 
 type EffectiveReview struct {
-	ID    int64
-	State ReviewState
+	CommitSHA string
+	ID        int64
+	State     ReviewState
 }
 
 type Client struct {
@@ -266,7 +267,7 @@ func (c *Client) GetEffectiveReview(ctx context.Context, owner, repo string, num
 	default:
 		return nil, nil
 	}
-	return &EffectiveReview{ID: latest.GetID(), State: state}, nil
+	return &EffectiveReview{ID: latest.GetID(), State: state, CommitSHA: latest.GetCommitID()}, nil
 }
 
 func reviewAfter(left, right *github.PullRequestReview) bool {

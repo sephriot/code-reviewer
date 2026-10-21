@@ -33,7 +33,7 @@ func TestGetEffectiveReviewUsesLatestAuthenticatedUserReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if review == nil || review.ID != 3 || review.State != ReviewStateChangesRequested {
+	if review == nil || review.ID != 3 || review.State != ReviewStateChangesRequested || review.CommitSHA != "reviewed-sha" {
 		t.Fatalf("effective review = %#v, want id=3 changes_requested", review)
 	}
 }
@@ -134,6 +134,7 @@ func TestSubmitReviewPublishesChangesRequestedEvent(t *testing.T) {
 func reviewFixture(id int64, login, state, submitted string) *gogh.PullRequestReview {
 	at, _ := time.Parse(time.RFC3339, submitted)
 	return &gogh.PullRequestReview{
+		CommitID:    gogh.String("reviewed-sha"),
 		ID:          gogh.Int64(id),
 		User:        &gogh.User{Login: gogh.String(login)},
 		State:       gogh.String(state),

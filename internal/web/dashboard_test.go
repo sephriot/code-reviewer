@@ -509,3 +509,33 @@ func TestEffectiveReviewLabelsMapUncorrelatedGitHubStates(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardMarksOldApprovalOutdated(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	reviewID := int64(900)
+	_, err = d.UpsertPR(db.PullRequest{
+		Repo: "org/repo", PRNumber: 90, Title: "updated", Author: "alice",
+		CommitSHA: "new", State: db.PRStateOpen, IsAssigned: true, IsOutdated: true,
+		EffectiveReviewID: &reviewID, EffectiveReviewState: db.EffectiveReviewStateApproved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(&config.Config{}, d, nil, nil)
+	recorder := httptest.NewRecorder()
+	server.dashboard(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", recorder.Code, body)
+	}
+	if !strings.Contains(body, "Reviewed previous commits") || strings.Contains(body, "approved_externally") {
+		t.Fatalf("old approval must be labeled outdated: %s", body)
+	}
+	if dashboardOutcomeRank("review_outdated") != 0 {
+		t.Fatal("outdated approval must stay with PRs needing attention")
+	}
+}

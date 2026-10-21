@@ -122,7 +122,7 @@ func TestScanIncompleteSnapshotPreservesAssignment(t *testing.T) {
 	}
 }
 
-func TestScanRetainedEffectiveReviewKeepsNewHeadOnDashboardWithoutQueue(t *testing.T) {
+func TestScanRetainedOldReviewQueuesNewHeadOnce(t *testing.T) {
 	key := prKey("acme", "repo", 2)
 	additions, deletions := 24, 7
 	fake := &fakeGH{
@@ -134,7 +134,7 @@ func TestScanRetainedEffectiveReviewKeepsNewHeadOnDashboardWithoutQueue(t *testi
 			key: {Owner: "acme", Repo: "repo", Number: 2, Title: "approved", Author: "alice", CommitSHA: "sha-new", State: "open", Additions: &additions, Deletions: &deletions},
 		},
 		reviews: map[string]*gh.EffectiveReview{
-			key: {ID: 22, State: gh.ReviewStateApproved},
+			key: {ID: 22, State: gh.ReviewStateApproved, CommitSHA: "sha-old"},
 		},
 	}
 	scanner, database := testScanner(t, nil, fake, nil, nil)
@@ -167,8 +167,42 @@ func TestScanRetainedEffectiveReviewKeepsNewHeadOnDashboardWithoutQueue(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(requests) != 0 {
-		t.Fatalf("effective review must block queueing: %#v", requests)
+	if len(requests) != 1 || requests[0].CommitSHA != "sha-new" {
+		t.Fatalf("old review must allow current-head queueing: %#v", requests)
+	}
+	if !pr.IsOutdated {
+		t.Fatal("retained old review must be marked outdated")
+	}
+	if err := scanner.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	again, err := database.ListReviewRequests()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 1 || again[0].ID != requests[0].ID {
+		t.Fatalf("repeated scan duplicated request: %#v", again)
+	}
+	if err := database.UpdateReviewRequestStatus(requests[0].ID, db.ReviewRequestStatusDone); err != nil {
+		t.Fatal(err)
+	}
+	fake.reviews[key] = &gh.EffectiveReview{ID: 23, State: gh.ReviewStateApproved, CommitSHA: "sha-new"}
+	if err := scanner.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pr, err = database.GetPR(prID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.IsOutdated {
+		t.Fatal("current-head review must clear outdated status")
+	}
+	current, err := database.ListReviewRequests()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(current) != 0 {
+		t.Fatalf("current-head GitHub review must prevent automatic queueing: %#v", current)
 	}
 }
 

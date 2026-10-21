@@ -516,7 +516,7 @@ func (d *DB) ApplyReconciliation(change ReconciliationChange) (ReconciliationRes
 			repo, pr_number, title, author, commit_sha, draft, state,
 			needs_review, is_outdated, filtered_reason, gh_updated_at,
 			is_assigned, effective_review_id, effective_review_state, additions, deletions
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(repo, pr_number) DO UPDATE SET
 			title = excluded.title,
 			author = excluded.author,
@@ -524,7 +524,7 @@ func (d *DB) ApplyReconciliation(change ReconciliationChange) (ReconciliationRes
 			draft = excluded.draft,
 			state = excluded.state,
 			needs_review = 0,
-			is_outdated = 0,
+			is_outdated = excluded.is_outdated,
 			filtered_reason = excluded.filtered_reason,
 			gh_updated_at = excluded.gh_updated_at,
 			is_assigned = excluded.is_assigned,
@@ -540,7 +540,7 @@ func (d *DB) ApplyReconciliation(change ReconciliationChange) (ReconciliationRes
 			pull_requests.draft IS NOT excluded.draft OR
 			pull_requests.state IS NOT excluded.state OR
 			pull_requests.needs_review != 0 OR
-			pull_requests.is_outdated != 0 OR
+			pull_requests.is_outdated != excluded.is_outdated OR
 			pull_requests.filtered_reason IS NOT excluded.filtered_reason OR
 			pull_requests.gh_updated_at IS NOT excluded.gh_updated_at OR
 			pull_requests.is_assigned IS NOT excluded.is_assigned OR
@@ -549,7 +549,7 @@ func (d *DB) ApplyReconciliation(change ReconciliationChange) (ReconciliationRes
 			pull_requests.additions IS NOT excluded.additions OR
 			pull_requests.deletions IS NOT excluded.deletions`,
 		pr.Repo, pr.PRNumber, pr.Title, pr.Author, pr.CommitSHA,
-		boolToInt(pr.Draft), pr.State, nullableStr(pr.FilteredReason),
+		boolToInt(pr.Draft), pr.State, boolToInt(pr.IsOutdated), nullableStr(pr.FilteredReason),
 		nullableTime(pr.GhUpdatedAt), boolToInt(pr.IsAssigned),
 		pr.EffectiveReviewID, nullableStr(pr.EffectiveReviewState), pr.Additions, pr.Deletions,
 	)

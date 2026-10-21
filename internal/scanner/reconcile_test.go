@@ -32,7 +32,7 @@ func TestDecideReconciliation(t *testing.T) {
 				SnapshotComplete:   true,
 				State:              "open",
 				HeadSHA:            "sha-2",
-				EffectiveReview:    &EffectiveReview{ID: 42, State: EffectiveReviewApproved},
+				EffectiveReview:    &EffectiveReview{ID: 42, State: EffectiveReviewApproved, CommitSHA: "sha-2"},
 			},
 			want: ReconcileDecision{
 				Placement:  PlacementDashboard,
@@ -207,7 +207,7 @@ func TestDecideReconciliation(t *testing.T) {
 				State:                   "open",
 				HeadSHA:                 "sha-13",
 				HasCompletedLocalReview: true,
-				EffectiveReview:         &EffectiveReview{ID: 99, State: EffectiveReviewApproved},
+				EffectiveReview:         &EffectiveReview{ID: 99, State: EffectiveReviewApproved, CommitSHA: "sha-13"},
 				Requests: []RequestFact{
 					{ID: 14, CommitSHA: "sha-13", Status: RequestPending},
 				},

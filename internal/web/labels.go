@@ -5,6 +5,7 @@ import (
 )
 
 var outcomeLabels = map[string]string{
+	"review_outdated":              "Reviewed previous commits",
 	"approve_without_comments":     "Approve without comments",
 	"approve_with_comments":        "Approve with comments",
 	"changes_requested":            "Changes requested",
